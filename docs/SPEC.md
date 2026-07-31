@@ -1,0 +1,340 @@
+# SPEC — Browser Minecraft
+
+The single source of truth for this project. Every session reads this before writing code.
+If something here conflicts with what's in the codebase, this document wins.
+
+---
+
+## Goal
+
+A browser-playable Minecraft recreation that a player can start from nothing and
+**complete by killing the Ender Dragon**. It must look convincingly like Minecraft,
+using real Java Edition textures.
+
+Success test: a player who knows Minecraft can sit down, punch a tree, and follow the
+normal progression all the way to the End without being blocked by a missing feature.
+
+---
+
+## In scope
+
+Everything on the critical path from first tree to dead dragon.
+
+## Out of scope
+
+Do not build these. If a session is running long, these were never the target anyway.
+
+Beacons · wither · warden · ancient cities · villages · villager trading · enchanting ·
+redstone circuits · elytra · raids · ocean monuments · netherite · deepslate tier ·
+horses · boats · minecarts · maps · banners · armour stands · shulkers · weather ·
+multiplayer · world saving
+
+---
+
+## Technical constraints
+
+- Browser only. Runs from a static file server, deployable to GitHub Pages unchanged.
+- Three.js via importmap CDN, pinned to `0.160.0`. No other libraries.
+- ES modules, split across files per ARCHITECTURE.md.
+- Real Java Edition textures from a generated atlas. No placeholder colours.
+- 60fps at 1920x1080 on integrated graphics with a normal view distance.
+- No build step. No bundler. No npm.
+
+---
+
+## World
+
+### Dimensions
+
+| | Overworld | Nether | End |
+|---|---|---|---|
+| Y range | -64 to 320 | 0 to 128 | 0 to 256 |
+| Sea level | 62 | n/a | n/a |
+| Ceiling | none | bedrock at 128 | none |
+| Ambient light | day/night cycle | constant dim red | constant dim purple |
+| Fog | sky-matched, distance | thick red, close | purple, medium |
+
+Nether coordinate ratio: 1 block in the Nether = 8 in the Overworld.
+
+### Overworld generation
+
+- Perlin/simplex heightmap, sea level 62, hills to ~100, occasional peaks to ~140
+- Biomes: plains, forest, desert, mountains. Blended, not hard-edged.
+- Trees: oak in plains/forest, dense in forest. Cactus in desert.
+- Water fills below sea level. Rivers carve through terrain.
+- Caves: two noise layers producing tunnels and caverns, y=-50 to 60
+- Ravines: rare, deep, exposed
+- Lava pools below y=10
+- Bedrock: solid layer at -64, jagged for 4 blocks above
+
+### Ore distribution
+
+| Ore | Y range | Rarity | Tool needed |
+|---|---|---|---|
+| Coal | 0 to 120 | common | wood+ |
+| Iron | -32 to 64 | common | stone+ |
+| Gold | -48 to 32 | uncommon | iron+ |
+| Redstone | -60 to 16 | uncommon | iron+ |
+| Diamond | -60 to 12 | rare | iron+ |
+
+Diamond should take real effort to find but must be reliably findable within
+~10 minutes of dedicated mining at the right depth.
+
+---
+
+## Blocks
+
+Every block: id, display name, texture(s) per face, hardness, tool tier required,
+drop, whether it's solid, transparent, or a light source.
+
+### Overworld
+
+| Block | Hardness | Tool | Drops |
+|---|---|---|---|
+| grass_block | 0.6 | any | dirt |
+| dirt | 0.5 | any | itself |
+| stone | 1.5 | wood+ pickaxe | cobblestone |
+| cobblestone | 2.0 | wood+ pickaxe | itself |
+| sand | 0.5 | any (shovel fast) | itself, falls |
+| gravel | 0.6 | any | itself, falls |
+| oak_log | 2.0 | any (axe fast) | itself |
+| oak_planks | 2.0 | any (axe fast) | itself |
+| oak_leaves | 0.2 | any (shears/hand) | sapling 5%, apple 0.5% |
+| water | — | — | source, flows |
+| lava | — | — | source, flows, damages |
+| coal_ore | 3.0 | wood+ pickaxe | coal |
+| iron_ore | 3.0 | stone+ pickaxe | raw_iron |
+| gold_ore | 3.0 | iron+ pickaxe | raw_gold |
+| redstone_ore | 3.0 | iron+ pickaxe | redstone dust |
+| diamond_ore | 3.0 | iron+ pickaxe | diamond |
+| obsidian | 50.0 | diamond pickaxe | itself |
+| bedrock | ∞ | none | nothing |
+| crafting_table | 2.5 | any | itself |
+| furnace | 3.5 | wood+ pickaxe | itself |
+| chest | 2.5 | any | itself |
+| torch | 0 | any | itself, light level 14 |
+| cactus | 0.4 | any | itself, damages on touch |
+
+### Nether
+
+| Block | Hardness | Tool | Drops |
+|---|---|---|---|
+| netherrack | 0.4 | wood+ pickaxe | itself |
+| soul_sand | 0.5 | any | itself, slows movement |
+| nether_brick | 2.0 | wood+ pickaxe | itself |
+| glowstone | 0.3 | any | glowstone dust, light 15 |
+| nether_quartz_ore | 3.0 | wood+ pickaxe | quartz |
+| nether_portal | — | — | — |
+
+### End
+
+| Block | Hardness | Tool | Drops |
+|---|---|---|---|
+| end_stone | 3.0 | wood+ pickaxe | itself |
+| obsidian (pillars) | 50.0 | diamond pickaxe | itself |
+| end_portal | — | — | — |
+| bedrock (exit portal) | ∞ | none | nothing |
+
+---
+
+## Tools and tiers
+
+| Tier | Mining speed multiplier | Durability | Can mine |
+|---|---|---|---|
+| hand | 1x | ∞ | dirt, sand, gravel, wood, leaves |
+| wood | 2x | 60 | + stone, coal, furnace |
+| stone | 4x | 132 | + iron ore |
+| iron | 6x | 251 | + gold, redstone, diamond |
+| diamond | 8x | 1562 | + obsidian |
+
+Mining wrong-tier blocks: possible but very slow and drops nothing.
+
+### Weapon damage
+
+| Weapon | Damage |
+|---|---|
+| fist | 1 |
+| wood sword | 4 |
+| stone sword | 5 |
+| iron sword | 6 |
+| diamond sword | 7 |
+| bow | 6 at full draw |
+
+### Armour
+
+| Set | Damage reduction |
+|---|---|
+| leather | 28% |
+| iron | 60% |
+| diamond | 80% |
+
+---
+
+## Crafting
+
+2x2 grid in inventory, 3x3 at a crafting table. Shaped and shapeless recipes.
+
+### Critical path recipes
+
+```
+oak_log            -> 4 oak_planks
+2 oak_planks       -> 4 sticks
+4 oak_planks       -> crafting_table
+8 cobblestone      -> furnace
+3 planks/cobble/iron/diamond + 2 sticks  -> pickaxe (T shape)
+1 material + 2 sticks                    -> sword
+3 material + 2 sticks                    -> axe
+1 material + 2 sticks                    -> shovel
+1 coal + 1 stick   -> 4 torches
+1 iron + 1 flint   -> flint_and_steel
+3 iron             -> bucket
+3 string + 3 sticks-> bow
+1 flint + 1 stick + 1 feather -> 4 arrows
+5 iron             -> helmet-shape items (standard armour shapes)
+3 cobblestone + 1 blaze_rod -> brewing_stand
+1 blaze_rod        -> 2 blaze_powder
+1 blaze_powder + 1 ender_pearl -> eye_of_ender
+1 glass bottle from 3 glass
+```
+
+### Smelting
+
+```
+raw_iron   -> iron_ingot
+raw_gold   -> gold_ingot
+sand       -> glass
+raw food   -> cooked food
+cobblestone-> stone
+```
+
+Fuel: coal (8 items), planks (1.5), sticks (0.5), lava bucket (100).
+
+---
+
+## Player
+
+- Health 20 (10 hearts), regenerates when hunger >= 18
+- Hunger 20 (10 drumsticks), depletes with activity
+- Starve at 0 hunger: damage down to 1 heart (Overworld), no death from hunger
+- Fall damage: 1 heart per block above 3
+- Drowning, lava, fire, cactus damage
+- Death: drop inventory, respawn at spawn point or bed
+- Movement: walk, sprint, sneak, jump, swim
+- Reach: 5 blocks
+
+---
+
+## Mobs
+
+### Spawning
+
+Hostile mobs spawn at light level <= 7, on solid blocks, at least 24 blocks from
+the player, despawn beyond 128. Cap the total to protect framerate.
+
+Passive mobs spawn on grass in daylight, do not despawn.
+
+### Hostile
+
+| Mob | HP | Damage | Behaviour | Drops |
+|---|---|---|---|---|
+| zombie | 20 | 3 | walks toward player, burns in daylight | rotten_flesh |
+| skeleton | 20 | 4 (arrow) | keeps distance, shoots, burns in daylight | bone, arrow |
+| creeper | 20 | 22 (explosion) | approaches, hisses, explodes after 1.5s | gunpowder |
+| spider | 16 | 2 | fast, climbs walls, neutral in daylight | string |
+| enderman | 40 | 7 | passive until looked at, teleports, damaged by water | ender_pearl |
+| blaze | 20 | 6 (fireball) | flies, shoots fire in bursts of 3 | blaze_rod |
+| ghast | 10 | explosion | flies, shoots slow fireballs, deflectable | gunpowder |
+
+### Passive
+
+| Mob | HP | Drops |
+|---|---|---|
+| cow | 10 | raw_beef, leather |
+| pig | 10 | raw_porkchop |
+| sheep | 8 | wool, raw_mutton |
+| chicken | 4 | raw_chicken, feather |
+
+### Pathfinding
+
+A* over walkable blocks. Must handle: stepping up 1 block, avoiding drops over 3,
+avoiding lava, going around obstacles. Does not need doors or complex terrain.
+
+---
+
+## Brewing
+
+Brewing stand + blaze powder as fuel.
+
+| Potion | Ingredients |
+|---|---|
+| awkward | water bottle + nether wart |
+| fire resistance | awkward + magma cream |
+| healing | awkward + glistering melon |
+| strength | awkward + blaze powder |
+
+Only fire resistance genuinely matters for the run. Others optional.
+
+---
+
+## Portals
+
+### Nether portal
+
+Obsidian frame, minimum 4x5 (corners optional). Lit with flint and steel.
+Standing in it for 3 seconds transports. Creates a linked portal on the other side.
+Coordinates divide by 8 going in, multiply by 8 coming out.
+
+### End portal
+
+Found in stronghold portal room. 12 end portal frame blocks in a square, each needing
+an eye of ender. Some frames spawn pre-filled. Once all 12 are filled, the portal
+activates. Falling in transports to the End.
+
+### Stronghold location
+
+Throwing an eye of ender: it flies toward the nearest stronghold and either drops
+as an item or shatters (20% chance). Player follows the direction. Strongholds
+generate roughly 1000-2000 blocks from spawn, underground, containing corridors,
+rooms, and one portal room.
+
+---
+
+## The End
+
+- Central island of end stone, roughly 100 blocks across, floating in void
+- Falling into void kills
+- 10 obsidian pillars ringing the centre, 40-70 blocks tall
+- An end crystal on top of each, healing the dragon
+- Exit portal structure at centre, inactive
+- Endermen spawn on the island
+
+### Ender Dragon
+
+- Health 200
+- Regenerates from any living crystal (visible healing beam)
+- Flight phases: circling above the island, strafing runs, perching on the exit portal
+- Only vulnerable at the head; takes reduced damage on the body
+- Melee only sensible when perched. Bow works during flight.
+- Breath attack and wing knockback
+- On death: dramatic death animation, XP, exit portal activates, dragon egg spawns
+
+### Win condition
+
+Dragon dies -> exit portal activates -> player enters -> **victory screen**.
+This is the end of the game. It must be reachable and it must feel earned.
+
+---
+
+## Feel
+
+The thing that makes it read as Minecraft, beyond the textures.
+
+- Per-face brightness: top 100%, sides 80%, bottom 50%
+- Ambient occlusion darkening block corners and crevices
+- Smooth lighting propagation from light sources, 15 levels
+- Distance fog matched to sky colour
+- Block breaking: progressive crack overlay, 10 stages
+- Item drops bob and rotate, magnetise to the player within 1.5 blocks
+- Footstep, break, and place sounds vary by material
+- Day/night cycle roughly 20 minutes real time
+- Hand model visible in first person, swings on click
