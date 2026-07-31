@@ -1,9 +1,10 @@
 // world/world.js — Chunk manager: get/set block by world coordinates,
-// generating chunks on demand. All other systems read and write the world
-// through this module.
+// generating chunks on demand, plus chunk streaming — loading, meshing and
+// unloading around the player within a per-frame time budget. All other
+// systems read and write the world through this module.
 
-import { CHUNK, OVERWORLD, TERRAIN } from '../config.js';
-import { Chunk } from './chunks.js';
+import { CHUNK, OVERWORLD, TERRAIN, VIEW, STREAMING } from '../config.js';
+import { Chunk, buildChunkMesh, disposeChunkMesh } from './chunks.js';
 import { TerrainGenerator } from './terrain.js';
 import { BLOCK, isSolid } from './blocks.js';
 
@@ -13,6 +14,24 @@ export class World {
   constructor({ seed = TERRAIN.SEED } = {}) {
     this.generator = new TerrainGenerator(seed);
     this.chunks = new Map(); // "cx,cz" -> Chunk
+    this.scene = null;       // set by bindScene once rendering starts
+    this.materials = null;
+    this.meshedCount = 0;
+    this._pcx = null;        // player chunk from the last streaming update
+    this._pcz = null;
+    // Candidate chunk offsets around the player, nearest first. Data
+    // generates in the square ring view+1 (so meshing always has 3x3
+    // neighbours); meshes build inside the view-distance circle. The ring
+    // also spans the unload-hysteresis band so kept meshes that turn dirty
+    // still get remeshed.
+    this._offsets = [];
+    const r = VIEW.DISTANCE_CHUNKS + Math.max(1, STREAMING.UNLOAD_MARGIN);
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        this._offsets.push({ dx, dz, d2: dx * dx + dz * dz });
+      }
+    }
+    this._offsets.sort((a, b) => a.d2 - b.d2);
   }
 
   static chunkKey(cx, cz) {
@@ -60,6 +79,7 @@ export class World {
     const chunk = this.getChunk(cx, cz);
     chunk.set(lx, y, lz, id);
     chunk.dirty = true;
+    chunk.modified = true; // player edits — this chunk's data is never dropped
 
     const markDirty = (ncx, ncz) => {
       const n = this.getChunkIfLoaded(ncx, ncz);
@@ -69,6 +89,10 @@ export class World {
     if (lx === SIZE - 1) markDirty(cx + 1, cz);
     if (lz === 0) markDirty(cx, cz - 1);
     if (lz === SIZE - 1) markDirty(cx, cz + 1);
+    // Corner columns also feed the diagonal chunk's baked vertex AO.
+    const ddx = lx === 0 ? -1 : lx === SIZE - 1 ? 1 : 0;
+    const ddz = lz === 0 ? -1 : lz === SIZE - 1 ? 1 : 0;
+    if (ddx !== 0 && ddz !== 0) markDirty(cx + ddx, cz + ddz);
   }
 
   // Terrain height (surface block y) from the generator — pre-decoration,
@@ -113,5 +137,127 @@ export class World {
 
   forEachChunk(cb) {
     for (const chunk of this.chunks.values()) cb(chunk);
+  }
+
+  // -------------------------------------------------------------------------
+  // Chunk streaming (Phase 3): meshes appear around the player, budgeted per
+  // frame so loading never stalls the game loop.
+  // -------------------------------------------------------------------------
+
+  // Wires the world to the scene it renders into. `materials` comes from
+  // chunks.js createChunkMaterials (shared across all chunk meshes).
+  bindScene(scene, materials) {
+    this.scene = scene;
+    this.materials = materials;
+  }
+
+  // Synchronously builds a small area around `pos` before the first frame so
+  // the player starts on visible ground; the rest streams in per frame.
+  // Two passes: one pass only generates missing data (meshing waits for the
+  // next pass by design), the second builds the meshes.
+  prebuild(pos) {
+    this._pcx = Math.floor(pos.x / SIZE);
+    this._pcz = Math.floor(pos.z / SIZE);
+    this._streamPass(this._pcx, this._pcz, Infinity, STREAMING.INITIAL_RADIUS);
+    this._streamPass(this._pcx, this._pcz, Infinity, STREAMING.INITIAL_RADIUS);
+  }
+
+  // Call once per frame with the camera/player position. Generates missing
+  // chunk data, builds missing or dirty meshes nearest-first, and unloads
+  // whatever fell out of range — all within STREAMING.FRAME_BUDGET_MS.
+  updateStreaming(pos) {
+    if (!this.scene) return;
+    const pcx = Math.floor(pos.x / SIZE);
+    const pcz = Math.floor(pos.z / SIZE);
+    if (pcx !== this._pcx || pcz !== this._pcz) {
+      this._pcx = pcx;
+      this._pcz = pcz;
+      this._unloadFar(pcx, pcz);
+    }
+    this._streamPass(pcx, pcz, STREAMING.FRAME_BUDGET_MS, VIEW.DISTANCE_CHUNKS);
+  }
+
+  // One pass over the candidate ring, nearest first. Cheap checks are free;
+  // heavy work (generating a chunk, building a mesh) spends the budget. The
+  // first heavy task of a pass always runs, so progress is guaranteed.
+  _streamPass(pcx, pcz, budgetMs, meshRadius) {
+    const t0 = performance.now();
+    const meshR2 = meshRadius * meshRadius;
+    // Meshes kept by unload hysteresis can still turn dirty (border edits);
+    // remesh them too rather than rendering stale geometry.
+    const keepR = meshRadius + STREAMING.UNLOAD_MARGIN;
+    const keepR2 = keepR * keepR;
+    const genR = meshRadius + 1;
+    for (const o of this._offsets) {
+      const cx = pcx + o.dx;
+      const cz = pcz + o.dz;
+      const chunk = this.getChunkIfLoaded(cx, cz);
+      if (!chunk) {
+        if (Math.max(Math.abs(o.dx), Math.abs(o.dz)) > genR) continue;
+        if (performance.now() - t0 >= budgetMs) return;
+        this.getChunk(cx, cz); // generates; meshing happens on a later pass
+        continue;
+      }
+      const wantsMesh = o.d2 <= meshR2
+        ? !chunk.mesh || chunk.dirty
+        : o.d2 <= keepR2 && !!chunk.mesh && chunk.dirty;
+      if (!wantsMesh) continue;
+      if (!this._neighborsLoaded(cx, cz)) continue;
+      if (performance.now() - t0 >= budgetMs) return;
+      this._remesh(chunk);
+    }
+  }
+
+  // Meshing needs all 8 neighbours generated so culling and AO can read
+  // across chunk borders without triggering generation mid-mesh.
+  _neighborsLoaded(cx, cz) {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!this.getChunkIfLoaded(cx + dx, cz + dz)) return false;
+      }
+    }
+    return true;
+  }
+
+  _remesh(chunk) {
+    if (chunk.mesh) {
+      disposeChunkMesh(chunk);
+      this.meshedCount--;
+    }
+    chunk.mesh = buildChunkMesh(
+      chunk,
+      (cx, cz) => this.getChunkIfLoaded(cx, cz),
+      this.materials,
+    );
+    this.scene.add(chunk.mesh.group);
+    this.meshedCount++;
+    chunk.dirty = false;
+  }
+
+  // Drops meshes outside the view circle and chunk data outside the load
+  // square (with a margin of hysteresis so border chunks don't thrash).
+  // Player-modified chunks keep their data forever.
+  _unloadFar(pcx, pcz) {
+    const meshKeepR = VIEW.DISTANCE_CHUNKS + STREAMING.UNLOAD_MARGIN;
+    const meshKeepR2 = meshKeepR * meshKeepR;
+    const dataKeepR = VIEW.DISTANCE_CHUNKS + 1 + STREAMING.UNLOAD_MARGIN;
+    for (const [key, chunk] of this.chunks) {
+      const dx = chunk.cx - pcx;
+      const dz = chunk.cz - pcz;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) > dataKeepR) {
+        if (chunk.mesh) {
+          disposeChunkMesh(chunk);
+          this.meshedCount--;
+        }
+        if (!chunk.modified) this.chunks.delete(key);
+      } else if (chunk.mesh && dx * dx + dz * dz > meshKeepR2) {
+        disposeChunkMesh(chunk);
+        this.meshedCount--;
+      }
+    }
+  }
+
+  streamStats() {
+    return { loaded: this.chunks.size, meshed: this.meshedCount };
   }
 }

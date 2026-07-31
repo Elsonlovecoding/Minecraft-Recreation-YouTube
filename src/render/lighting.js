@@ -90,3 +90,17 @@ export function createAmbientLight() {
     LIGHTING.AMBIENT_INTENSITY,
   );
 }
+
+// Keeps the sun (and its shadow camera) centred on the player so shadows
+// exist wherever the player flies. The focus snaps to a grid so the shadow
+// map doesn't shimmer every frame; the light direction never changes.
+// The sun's target must be added to the scene alongside the sun.
+export function updateSun(sun, focus) {
+  const snap = RENDER.SHADOW_FOLLOW_SNAP;
+  const fx = Math.round(focus.x / snap) * snap;
+  const fy = Math.round(focus.y / snap) * snap;
+  const fz = Math.round(focus.z / snap) * snap;
+  const [ox, oy, oz] = LIGHTING.SUN_POSITION;
+  sun.position.set(fx + ox, fy + oy, fz + oz);
+  sun.target.position.set(fx, fy, fz);
+}
