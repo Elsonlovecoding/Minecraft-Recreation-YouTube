@@ -7,7 +7,8 @@ import { DEBUG, LIGHTING } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas, getUV, TILE } from './render/atlas.js';
 import { createSky, createFog, createSunLight, createAmbientLight } from './render/lighting.js';
-import { initDebug, updateDebug } from './ui/debug.js';
+import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
+import { World } from './world/world.js';
 
 // ---------------------------------------------------------------------------
 // Test-scene cube building
@@ -240,6 +241,21 @@ async function init() {
 
   const atlasTexture = await loadAtlas();
   buildTestScene(scene, atlasTexture);
+
+  // Phase 2: terrain data. Generated and verified here; rendered in Phase 3
+  // (this scene still shows the Phase 1 test blocks).
+  const world = new World();
+  const genStart = performance.now();
+  world.ensureArea(0, 0, DEBUG.TERRAIN_PREGEN_RADIUS);
+  console.log(
+    `[world] generated ${world.loadedChunkCount} chunks in ` +
+    `${(performance.now() - genStart).toFixed(0)}ms`,
+  );
+  logTerrainProfile(world);
+  logColumn(world, 0, 0);
+  logColumn(world, 40, 40);
+  logBlockCensus(world);
+  window.__world = world; // poke at terrain data from the browser console
 
   camera.position.set(10, 7, 14);
   camera.lookAt(0, 1, 0);

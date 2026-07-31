@@ -60,6 +60,91 @@ export const CAVES = {
   MAX_Y: 60,
 };
 
+// Overworld heightmap, biomes and decoration (world/terrain.js).
+// Noise scales are in cycles per block (1/blocks-per-feature).
+export const TERRAIN = {
+  SEED: 1337,
+
+  // Extra columns computed around a chunk during generation so trees whose
+  // canopy crosses a chunk border come out identical from both sides
+  // (canopy radius 2 + 1 for the tree spacing check).
+  GEN_MARGIN: 3,
+
+  // Very low frequency landmass swell around sea level. Where it dips
+  // negative the terrain drops below sea level and oceans/lakes form.
+  CONTINENT: { SCALE: 1 / 1100, OCTAVES: 2, AMPLITUDE: 11, OFFSET: 1 },
+
+  // Safety floor: the surface never generates closer than this to the
+  // bottom of the world, whatever the noise does.
+  MIN_HEIGHT_ABOVE_BOTTOM: 8,
+
+  // Rolling hill detail shared by all biomes (amplitude set per biome).
+  HILLS: { SCALE: 1 / 160, OCTAVES: 4, PERSISTENCE: 0.5, LACUNARITY: 2 },
+
+  // Climate fields drive biome weights. Both are fBm in [-1, 1].
+  CLIMATE: {
+    TEMPERATURE_SCALE: 1 / 480,
+    MOISTURE_SCALE: 1 / 420,
+    OCTAVES: 3,
+  },
+
+  // Mountains come from their own region mask, not climate, so ranges read
+  // as coherent chains. Ridged noise supplies the relief inside a region.
+  MOUNTAINS: {
+    REGION_SCALE: 1 / 700,
+    REGION_OCTAVES: 2,
+    WEIGHT_START: 0.12,        // region noise where mountains begin to blend in
+    WEIGHT_FULL: 0.55,         // region noise where mountains fully dominate
+    RIDGE_SCALE: 1 / 260,
+    RIDGE_OCTAVES: 3,
+    RIDGE_SHARPNESS: 2.2,      // exponent on the ridge profile; higher = sharper crests
+    BASE_LIFT: 14,             // flat height bonus inside a mountain region
+    RIDGE_AMPLITUDE: 58,       // ridge height on top of the lift (hills ~100, peaks ~140)
+  },
+
+  // Per-biome height contribution (OFFSET above the continent base plus
+  // hill noise * HILL_AMPLITUDE) and tree density (trees per column).
+  BIOMES: {
+    PLAINS: { BASE_WEIGHT: 0.35, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    FOREST: {
+      OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
+      MOISTURE_START: 0.02,    // moisture where forest starts blending in
+      MOISTURE_FULL: 0.38,     // moisture where forest weight saturates
+    },
+    DESERT: {
+      OFFSET: 2, HILL_AMPLITUDE: 3.5,
+      HEAT_START: 0.08,        // temperature where desert starts blending in
+      HEAT_FULL: 0.45,
+      DRY_START: -0.2,         // below this moisture the air is fully dry
+      DRY_FULL: 0.15,          // above this moisture desert weight is zero
+    },
+    MOUNTAINS: { TREE_DENSITY: 0.003 },
+  },
+
+  // When the top two biome weights are within this range the surface block
+  // is hash-dithered between them, so borders feather instead of hard-edging.
+  BIOME_DITHER_RANGE: 0.2,
+
+  SURFACE: {
+    DIRT_DEPTH: 3,             // dirt under grass
+    SAND_DEPTH: 4,             // sand at the desert surface
+    SANDSTONE_DEPTH: 3,        // sandstone under desert sand
+    BEACH_MAX_ABOVE_SEA: 1,    // up to this height above sea, shores turn to sand
+    MOUNTAIN_STONE_MIN_HEIGHT: 92, // mountain surface is bare stone above this
+  },
+
+  TREES: {
+    TRUNK_MIN: 4,              // trunk height range (inclusive)
+    TRUNK_MAX: 6,
+  },
+
+  CACTUS: {
+    DENSITY: 0.015,            // per desert sand column
+    MIN_HEIGHT: 1,
+    MAX_HEIGHT: 3,
+  },
+};
+
 // Ore distribution from SPEC.md. rarity = attempts per chunk (tuning knob).
 export const ORES = {
   coal:     { minY: 0,   maxY: 120, attemptsPerChunk: 16, veinSize: 8, tool: 'wood' },
@@ -257,4 +342,6 @@ export const DEBUG = {
   MOUSE_SENSITIVITY: 0.0022,      // radians per pixel
   MAX_DELTA: 0.1,                 // clamp frame delta (seconds) after tab-away
   HUD_UPDATE_INTERVAL: 0.25,      // seconds between FPS readout updates
+  TERRAIN_PREGEN_RADIUS: 2,       // chunks generated around origin at startup
+                                  // for the Phase 2 terrain diagnostics
 };
