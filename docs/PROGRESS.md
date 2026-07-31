@@ -28,9 +28,10 @@ Phase last completed: **Phase 1 — scaffolding and a visible 3D scene**
   (no mipmaps), full `TILE` registry mirroring docs/ATLAS_MAP.md (indices 0–57),
   `getUV(tileIndex)` with a small inset against tile bleeding.
 - `src/render/lighting.js` — sky dome shader with a 4-stop vertical gradient
-  (below-horizon, horizon, mid, zenith) that goes through the renderer's tone
-  mapping so fog (matched to the horizon colour) blends terrain into the sky
-  exactly; shadow-casting directional sun; hemisphere ambient.
+  (below-horizon, horizon, mid, zenith). The sky is deliberately NOT
+  tone-mapped: r160 applies fog after tone mapping with the fog colour in
+  output sRGB, so the un-tone-mapped sky horizon (= fog colour) matches fully
+  fogged terrain exactly. Shadow-casting directional sun; hemisphere ambient.
 - `src/ui/debug.js` — FPS counter (smoothed) plus camera coordinates overlay.
 - `src/main.js` — game loop on `setAnimationLoop` with clamped delta time;
   test scene: 16x16 grass ground, oak tree with cutout leaves, showcase rows of

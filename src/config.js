@@ -166,7 +166,10 @@ export const LIGHTING = {
   FACE_BRIGHTNESS: { top: 1.0, side: 0.8, bottom: 0.5 },
   AO_STRENGTH: 0.5,               // ambient occlusion darkening at corners
   SUN_INTENSITY: 2.5,
+  SUN_POSITION: [60, 100, 40],    // fixed noon sun until the day/night cycle
   AMBIENT_INTENSITY: 0.9,
+  AMBIENT_SKY_COLOR: 0xcfe5ff,    // hemisphere light from above
+  AMBIENT_GROUND_COLOR: 0x8a7a5a, // earthy bounce from below
 };
 
 // ---------------------------------------------------------------------------
@@ -207,6 +210,8 @@ export const RENDER = {
   TONE_MAPPING_EXPOSURE: 1.0,
   SHADOW_MAP_SIZE: 2048,
   SHADOW_RANGE: 40,               // half-extent of the sun's shadow camera
+  SHADOW_CAMERA_FAR: 300,
+  SHADOW_BIAS: -0.0005,
   BREAK_STAGES: 10,               // progressive crack overlay stages
 };
 

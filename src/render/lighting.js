@@ -6,9 +6,12 @@ import * as THREE from 'three';
 import { SKY, LIGHTING, VIEW, RENDER } from '../config.js';
 
 // Sky dome: a big inward-facing sphere with a vertical gradient shader.
-// Four stops: below-horizon haze, horizon, mid, zenith. The shader includes
-// the renderer's tone mapping and colour space chunks so a fully fogged block
-// (fog colour = horizon colour) matches the sky exactly.
+// Four stops: below-horizon haze, horizon, mid, zenith.
+// Deliberately NOT tone-mapped: in r160 built-in materials apply fog AFTER
+// tone mapping, with the fog colour uniform in the output colour space — so a
+// fully fogged block shows the raw sRGB fog colour. The sky therefore outputs
+// its authored colours through the colour-space conversion only, making the
+// horizon (= fog colour) an exact match.
 const SKY_VERTEX = /* glsl */ `
   varying vec3 vDir;
   void main() {
@@ -32,7 +35,6 @@ const SKY_FRAGMENT = /* glsl */ `
     col = mix(col, zenithColor, smoothstep(midStop, 1.0, h));
     col = mix(belowColor, col, smoothstep(-0.2, 0.0, h));
     gl_FragColor = vec4(col, 1.0);
-    #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
 `;
@@ -67,7 +69,7 @@ export function createFog() {
 // comes with the time-of-day system in a later phase.
 export function createSunLight() {
   const sun = new THREE.DirectionalLight(0xffffff, LIGHTING.SUN_INTENSITY);
-  sun.position.set(60, 100, 40);
+  sun.position.set(...LIGHTING.SUN_POSITION);
   sun.castShadow = true;
   sun.shadow.mapSize.set(RENDER.SHADOW_MAP_SIZE, RENDER.SHADOW_MAP_SIZE);
   const r = RENDER.SHADOW_RANGE;
@@ -76,12 +78,15 @@ export function createSunLight() {
   sun.shadow.camera.top = r;
   sun.shadow.camera.bottom = -r;
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 300;
-  sun.shadow.bias = -0.0005;
+  sun.shadow.camera.far = RENDER.SHADOW_CAMERA_FAR;
+  sun.shadow.bias = RENDER.SHADOW_BIAS;
   return sun;
 }
 
 export function createAmbientLight() {
-  // Sky-blue from above, earthy bounce from below
-  return new THREE.HemisphereLight(0xcfe5ff, 0x8a7a5a, LIGHTING.AMBIENT_INTENSITY);
+  return new THREE.HemisphereLight(
+    LIGHTING.AMBIENT_SKY_COLOR,
+    LIGHTING.AMBIENT_GROUND_COLOR,
+    LIGHTING.AMBIENT_INTENSITY,
+  );
 }
