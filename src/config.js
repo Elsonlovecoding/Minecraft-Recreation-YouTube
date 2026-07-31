@@ -51,6 +51,15 @@ export const VIEW = {
   FAR: 1000,
 };
 
+// Chunk streaming: how terrain loads in around the player without stutter.
+// Chunk data generates in a square ring one chunk beyond the meshed circle so
+// every meshed chunk has all 8 neighbours available for culling and AO.
+export const STREAMING = {
+  INITIAL_RADIUS: 3,      // chunks fully generated+meshed synchronously at boot
+  FRAME_BUDGET_MS: 8,     // max main-thread ms per frame spent generating/meshing
+  UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
+};
+
 // ---------------------------------------------------------------------------
 // Terrain generation
 // ---------------------------------------------------------------------------
@@ -294,10 +303,16 @@ export const RENDER = {
   MAX_PIXEL_RATIO: 2,
   TONE_MAPPING_EXPOSURE: 1.0,
   SHADOW_MAP_SIZE: 2048,
-  SHADOW_RANGE: 40,               // half-extent of the sun's shadow camera
-  SHADOW_CAMERA_FAR: 300,
+  SHADOW_RANGE: 100,              // half-extent of the sun's shadow camera —
+                                  // sized so the shadow cutoff falls in heavy fog
+  SHADOW_CAMERA_FAR: 500,         // depth headroom so shadows survive flying high
   SHADOW_BIAS: -0.0005,
+  SHADOW_FOLLOW_SNAP: 16,         // sun/shadow camera follows the player snapped
+                                  // to this grid (blocks) to avoid shadow shimmer
   BREAK_STAGES: 10,               // progressive crack overlay stages
+  CUTOUT_ALPHA_TEST: 0.5,         // alpha cutoff for leaves/cactus/glass
+  WATER_OPACITY: 0.8,             // translucent water pass
+  WATER_SURFACE_SINK: 0.125,      // water surface sits this far below the block top
 };
 
 // ---------------------------------------------------------------------------
@@ -342,6 +357,9 @@ export const DEBUG = {
   MOUSE_SENSITIVITY: 0.0022,      // radians per pixel
   MAX_DELTA: 0.1,                 // clamp frame delta (seconds) after tab-away
   HUD_UPDATE_INTERVAL: 0.25,      // seconds between FPS readout updates
-  TERRAIN_PREGEN_RADIUS: 2,       // chunks generated around origin at startup
-                                  // for the Phase 2 terrain diagnostics
+  SPAWN_X: 8,                     // where the debug fly camera starts
+  SPAWN_Z: 8,
+  SPAWN_ALTITUDE: 10,             // blocks above the terrain surface at spawn
+  SPAWN_LOOK_AHEAD: 24,           // initial view: this far toward -z...
+  SPAWN_LOOK_DOWN: 4,             // ...and this far below the camera
 };

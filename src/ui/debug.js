@@ -27,8 +27,9 @@ export function initDebug() {
   document.body.appendChild(overlay);
 }
 
-// Call once per frame with the frame delta (seconds) and the camera.
-export function updateDebug(delta, camera) {
+// Call once per frame with the frame delta (seconds), the camera, and
+// optionally the world's streamStats() for the chunk readout.
+export function updateDebug(delta, camera, stats = null) {
   if (!overlay || delta <= 0) return;
 
   // Exponential moving average keeps the readout steady
@@ -42,7 +43,8 @@ export function updateDebug(delta, camera) {
   const p = camera.position;
   overlay.textContent =
     `FPS ${Math.round(smoothedFps)}\n` +
-    `XYZ ${p.x.toFixed(1)} / ${p.y.toFixed(1)} / ${p.z.toFixed(1)}`;
+    `XYZ ${p.x.toFixed(1)} / ${p.y.toFixed(1)} / ${p.z.toFixed(1)}` +
+    (stats ? `\nCHUNKS ${stats.meshed} meshed / ${stats.loaded} loaded` : '');
 }
 
 // ---------------------------------------------------------------------------
