@@ -1,0 +1,4 @@
+# Dev-harness scaffolding only — the game itself has no npm dependencies.
+# (Test harnesses symlink/install three@0.160.0 locally because the sandbox
+# blocks unpkg.com; production loads the CDN via the importmap unchanged.)
+node_modules/

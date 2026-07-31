@@ -7,7 +7,7 @@ import { DEBUG } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
-  createSky, createFog, createSunLight, createAmbientLight, updateSun,
+  createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
 } from './render/lighting.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { World } from './world/world.js';
@@ -56,6 +56,12 @@ function createFlyControls(camera, canvas) {
   const move = new THREE.Vector3();
 
   return {
+    // Dev scaffolding: aim the camera from the console / test harness
+    // (the pointer-lock mouse look overwrites the quaternion every frame).
+    setView(newYaw, newPitch) {
+      yaw = newYaw;
+      pitch = Math.max(-maxPitch, Math.min(maxPitch, newPitch));
+    },
     update(delta) {
       camera.quaternion.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
 
@@ -98,7 +104,12 @@ async function init() {
   const sun = createSunLight();
   scene.add(sun);
   scene.add(sun.target); // the target must be in the scene for updateSun
-  scene.add(createAmbientLight());
+  const ambient = createAmbientLight();
+  scene.add(ambient);
+
+  // Phase 4: the ~20-minute day/night cycle drives the sky palette, fog,
+  // sun/moon, and the baked-light uniforms shared by all chunk materials.
+  const dayNight = createDayNightCycle({ sky, fog: scene.fog, sun, ambient });
 
   const atlasTexture = await loadAtlas();
 
@@ -130,8 +141,10 @@ async function init() {
   window.__world = world; // poke at the world from the browser console
   window.__camera = camera;
   window.__renderer = renderer;
+  window.__dayNight = dayNight; // e.g. __dayNight.setTimeOfDay(0.75) = midnight
 
   const controls = createFlyControls(camera, canvas);
+  window.__controls = controls; // __controls.setView(yaw, pitch)
 
   initDebug();
 
@@ -140,9 +153,8 @@ async function init() {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     controls.update(delta);
     world.updateStreaming(camera.position);
-    updateSun(sun, camera.position);
-    sky.position.copy(camera.position);
-    updateDebug(delta, camera, world.streamStats());
+    dayNight.update(delta, camera.position); // also recentres the sky dome
+    updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);
   });
 }

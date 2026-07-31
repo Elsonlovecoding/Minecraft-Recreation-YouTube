@@ -28,8 +28,9 @@ export function initDebug() {
 }
 
 // Call once per frame with the frame delta (seconds), the camera, and
-// optionally the world's streamStats() for the chunk readout.
-export function updateDebug(delta, camera, stats = null) {
+// optionally the world's streamStats() and the day fraction (0 sunrise,
+// 0.25 noon, 0.5 sunset, 0.75 midnight) for the extra readouts.
+export function updateDebug(delta, camera, stats = null, timeOfDay = null) {
   if (!overlay || delta <= 0) return;
 
   // Exponential moving average keeps the readout steady
@@ -44,7 +45,15 @@ export function updateDebug(delta, camera, stats = null) {
   overlay.textContent =
     `FPS ${Math.round(smoothedFps)}\n` +
     `XYZ ${p.x.toFixed(1)} / ${p.y.toFixed(1)} / ${p.z.toFixed(1)}` +
-    (stats ? `\nCHUNKS ${stats.meshed} meshed / ${stats.loaded} loaded` : '');
+    (stats ? `\nCHUNKS ${stats.meshed} meshed / ${stats.loaded} loaded` : '') +
+    (timeOfDay !== null ? `\nTIME ${timeOfDay.toFixed(3)} (${timeLabel(timeOfDay)})` : '');
+}
+
+function timeLabel(t) {
+  if (t < 0.05 || t >= 0.95) return 'sunrise';
+  if (t < 0.45) return 'day';
+  if (t < 0.56) return 'sunset';
+  return 'night';
 }
 
 // ---------------------------------------------------------------------------

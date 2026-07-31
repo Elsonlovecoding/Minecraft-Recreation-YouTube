@@ -3,7 +3,7 @@
 // unloading around the player within a per-frame time budget. All other
 // systems read and write the world through this module.
 
-import { CHUNK, OVERWORLD, TERRAIN, VIEW, STREAMING } from '../config.js';
+import { CHUNK, OVERWORLD, TERRAIN, VIEW, STREAMING, LIGHTING } from '../config.js';
 import { Chunk, buildChunkMesh, disposeChunkMesh } from './chunks.js';
 import { TerrainGenerator } from './terrain.js';
 import { BLOCK, isSolid } from './blocks.js';
@@ -85,14 +85,22 @@ export class World {
       const n = this.getChunkIfLoaded(ncx, ncz);
       if (n) n.dirty = true;
     };
-    if (lx === 0) markDirty(cx - 1, cz);
-    if (lx === SIZE - 1) markDirty(cx + 1, cz);
-    if (lz === 0) markDirty(cx, cz - 1);
-    if (lz === SIZE - 1) markDirty(cx, cz + 1);
-    // Corner columns also feed the diagonal chunk's baked vertex AO.
-    const ddx = lx === 0 ? -1 : lx === SIZE - 1 ? 1 : 0;
-    const ddz = lz === 0 ? -1 : lz === SIZE - 1 ? 1 : 0;
-    if (ddx !== 0 && ddz !== 0) markDirty(cx + ddx, cz + ddz);
+    // An edit changes baked light up to MAX_LIGHT blocks away (light spreads
+    // by Manhattan distance; a sky-lit shaft moves the change down its own
+    // column, never sideways, so the horizontal reach still bounds it).
+    // Remesh every loaded neighbour the edited column can touch — this also
+    // covers the 1-block reach of border culling and baked vertex AO.
+    const reach = LIGHTING.MAX_LIGHT;
+    if (lx < reach) markDirty(cx - 1, cz);
+    if (SIZE - 1 - lx < reach) markDirty(cx + 1, cz);
+    if (lz < reach) markDirty(cx, cz - 1);
+    if (SIZE - 1 - lz < reach) markDirty(cx, cz + 1);
+    // Diagonals: horizontal Manhattan distance to the nearest column of the
+    // diagonal chunk.
+    if (lx + lz + 2 <= reach) markDirty(cx - 1, cz - 1);
+    if (SIZE - lx + lz + 1 <= reach) markDirty(cx + 1, cz - 1);
+    if (lx + 1 + SIZE - lz <= reach) markDirty(cx - 1, cz + 1);
+    if (SIZE - lx + SIZE - lz <= reach) markDirty(cx + 1, cz + 1);
   }
 
   // Terrain height (surface block y) from the generator — pre-decoration,
