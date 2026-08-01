@@ -9,7 +9,7 @@
 // the first-person hand — this module owns "what an item looks like".
 
 import * as THREE from 'three';
-import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER } from '../config.js';
+import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK } from '../config.js';
 import { BLOCK, blockIdByName, faceTiles, isSolid } from '../world/blocks.js';
 import { getUV, getAtlasTexture } from '../render/atlas.js';
 
@@ -215,8 +215,27 @@ export function createItemManager({ world, scene }) {
       v.y -= ITEMS.GRAVITY * dt;
     }
 
-    // Vertical sweep (point through cells, no tunnelling on long falls)
-    let ny = p.y + v.y * dt;
+    moveWithCollision(e, dt);
+
+    if (e.grounded) {
+      const f = Math.exp(-ITEMS.GROUND_FRICTION * dt);
+      v.x *= f;
+      v.z *= f;
+    }
+  }
+
+  // Integrates e.vel over dt with per-axis cell collision. The item's
+  // midpoint is the collision probe both ways — a rising item stops with its
+  // top under a ceiling (never poking into the cell, which would trip the
+  // squeeze rescue and teleport it through). Used by normal physics AND the
+  // magnet pull, so walls block magnetised items too.
+  function moveWithCollision(e, dt) {
+    const p = e.pos;
+    const v = e.vel;
+    const half = e.halfHeight;
+
+    // Vertical sweep (through every crossed cell, no tunnelling)
+    const ny = p.y + v.y * dt;
     if (v.y <= 0) {
       // The ground can vanish (mined out from under the item)
       if (e.grounded && !solidAt(p.x, p.y - 2 * ITEMS.REST_CLEARANCE, p.z)) {
@@ -238,9 +257,9 @@ export function createItemManager({ world, scene }) {
     } else {
       e.grounded = false;
       let blocked = false;
-      for (let cy = Math.floor(p.y) + 1; cy <= Math.floor(ny); cy++) {
+      for (let cy = Math.floor(p.y + half) + 1; cy <= Math.floor(ny + half); cy++) {
         if (solidAt(p.x, cy, p.z)) {
-          p.y = cy - EPS;
+          p.y = cy - half - EPS; // midpoint just below the solid cell
           v.y = 0;
           blocked = true;
           break;
@@ -249,9 +268,8 @@ export function createItemManager({ world, scene }) {
       if (!blocked) p.y = ny;
     }
 
-    // Horizontal, axis by axis (items are points; a solid target cell stops
-    // the axis)
-    const yCell = p.y + e.halfHeight;
+    // Horizontal, axis by axis (a solid cell at the midpoint stops the axis)
+    const yCell = p.y + half;
     const nx = p.x + v.x * dt;
     if (v.x !== 0) {
       if (solidAt(nx, yCell, p.z)) v.x = 0;
@@ -261,12 +279,6 @@ export function createItemManager({ world, scene }) {
     if (v.z !== 0) {
       if (solidAt(p.x, yCell, nz)) v.z = 0;
       else p.z = nz;
-    }
-
-    if (e.grounded) {
-      const f = Math.exp(-ITEMS.GROUND_FRICTION * dt);
-      v.x *= f;
-      v.z *= f;
     }
   }
 
@@ -280,8 +292,19 @@ export function createItemManager({ world, scene }) {
 
     for (let i = entities.length - 1; i >= 0; i--) {
       const e = entities[i];
+      // An item whose chunk was unloaded freezes (age and all): its physics
+      // would otherwise call world.getBlock, which regenerates the chunk
+      // synchronously outside the streaming budget — a hitch on every chunk
+      // border crossing while any far-away drop exists.
+      if (!world.getChunkIfLoaded(
+        Math.floor(e.pos.x / CHUNK.SIZE),
+        Math.floor(e.pos.z / CHUNK.SIZE),
+      )) continue;
       e.age += dt;
-      if (e.age >= ITEMS.DESPAWN_SECONDS || e.pos.y < OVERWORLD.MIN_Y - 16) {
+      if (
+        e.age >= ITEMS.DESPAWN_SECONDS ||
+        e.pos.y < OVERWORLD.MIN_Y - ITEMS.VOID_DESPAWN_DEPTH
+      ) {
         remove(i);
         continue;
       }
@@ -300,15 +323,15 @@ export function createItemManager({ world, scene }) {
       }
 
       if (active && dist <= ITEMS.MAGNET_RADIUS && dist > EPS) {
-        // Magnetised: fly straight at the body centre, physics overridden
+        // Magnetised: fly straight at the body centre — but still through
+        // the collision move, so a wall between item and player blocks the
+        // pull instead of letting it vacuum drops through solid blocks.
         const s = ITEMS.MAGNET_SPEED / dist;
         e.vel.x = dx * s;
         e.vel.y = dy * s;
         e.vel.z = dz * s;
         e.grounded = false;
-        e.pos.x += e.vel.x * dt;
-        e.pos.y += e.vel.y * dt;
-        e.pos.z += e.vel.z * dt;
+        moveWithCollision(e, dt);
       } else {
         stepPhysics(e, dt);
       }

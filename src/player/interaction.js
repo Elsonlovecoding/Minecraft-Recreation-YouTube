@@ -16,7 +16,7 @@
 
 import * as THREE from 'three';
 import {
-  PLAYER, INTERACTION, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
+  PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
   OVERWORLD, CHUNK,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
@@ -201,7 +201,7 @@ function createCrackTextures(stages) {
 }
 
 // Pixel-art skin for the first-person arm: classic skin tones with per-pixel
-// variation, a darker cuff line at the shoulder end.
+// variation (deterministic, so the arm looks the same every run).
 function createArmTexture() {
   const size = 16;
   const rand = mulberry32(0x5709);
@@ -291,21 +291,38 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
       transparent: true,
       depthWrite: false,
       toneMapped: false,
+      // Multiply-with-alpha: out = dst * (src.rgb + 1 - src.a). Crack texels
+      // DARKEN whatever the face renders as — so cracks track the terrain's
+      // baked light and stay dark at night instead of glowing fullbright.
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.DstColorFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
     }),
   );
   crackMesh.visible = false;
   scene.add(crackMesh);
 
   // --- first-person hand (camera child; main.js adds the camera to the scene)
+  // Hand meshes skip the depth test and draw after the world (vanilla draws
+  // the hand over everything), so facing a wall can't swallow the arm.
+  const HAND_RENDER_ORDER = 3; // above chunks (0) and the face outline (1)
   const hand = new THREE.Group();
   const arm = new THREE.Mesh(
     new THREE.BoxGeometry(...H.ARM_SIZE),
-    new THREE.MeshBasicMaterial({ map: createArmTexture(), toneMapped: false }),
+    new THREE.MeshBasicMaterial({
+      map: createArmTexture(),
+      toneMapped: false,
+      depthTest: false,
+      depthWrite: false,
+    }),
   );
   // The arm reaches forward from the bottom-right screen corner
-  arm.position.set(0, 0, -H.ARM_SIZE[2] * 0.25);
+  arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
+  arm.renderOrder = HAND_RENDER_ORDER;
   hand.add(arm);
   let heldMesh = null; // mini-block of the current selection
+  let heldMaterial = null; // shared item material cloned for over-world drawing
   const handBase = new THREE.Vector3(...H.POSITION);
   const handTilt = new THREE.Euler(...H.ARM_TILT);
   hand.position.copy(handBase);
@@ -326,7 +343,16 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     }
     if (wantBlock) {
       heldMesh = createBlockMesh(id, H.BLOCK_SCALE);
-      heldMesh.position.set(0, H.BLOCK_SCALE * 0.15, -H.ARM_SIZE[2] * 0.45);
+      if (!heldMaterial) {
+        heldMaterial = heldMesh.material.clone(); // shares the atlas texture
+        heldMaterial.depthTest = false;
+        heldMaterial.depthWrite = false;
+      }
+      heldMesh.material = heldMaterial;
+      heldMesh.renderOrder = HAND_RENDER_ORDER;
+      heldMesh.position.set(
+        0, H.BLOCK_SCALE * H.BLOCK_LIFT, -H.ARM_SIZE[2] * H.BLOCK_FORWARD,
+      );
       hand.add(heldMesh);
     }
     arm.visible = !wantBlock;
@@ -371,7 +397,11 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
       const count = Array.isArray(drop.count)
         ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
         : drop.count;
-      if (count > 0) items.spawn(drop.item, count, { x: x + 0.5, y: y + 0.25, z: z + 0.5 });
+      if (count > 0) {
+        items.spawn(drop.item, count, {
+          x: x + 0.5, y: y + ITEMS.DROP_SPAWN_Y_OFFSET, z: z + 0.5,
+        });
+      }
     }
   }
 
@@ -381,6 +411,10 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     if (breakPlan.drops) spawnDrops(def, target.x, target.y, target.z);
     breakCooldown = INTERACTION.BREAK_COOLDOWN_SECONDS;
     resetBreak();
+    // The targeted block no longer exists; drop the stale target so a place
+    // in this same frame can't build against the removed face. The next
+    // update re-raycasts.
+    target = null;
   }
 
   function updateBreaking(dt) {
@@ -451,13 +485,13 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     if (swingT < 1) swingT = Math.min(1, swingT + dt / H.SWING_SECONDS);
     const s = Math.sin(Math.PI * Math.min(swingT, 1));
     hand.position.set(
-      handBase.x - 0.35 * H.SWING_DIP * s,
+      handBase.x - H.SWING_SIDE * H.SWING_DIP * s,
       handBase.y - H.SWING_DIP * s,
-      handBase.z - 0.25 * H.SWING_DIP * s,
+      handBase.z - H.SWING_FORWARD * H.SWING_DIP * s,
     );
     hand.rotation.set(
       handTilt.x - H.SWING_ROTATION * s,
-      handTilt.y + 0.25 * H.SWING_ROTATION * s,
+      handTilt.y + H.SWING_YAW * H.SWING_ROTATION * s,
       handTilt.z,
     );
   }

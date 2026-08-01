@@ -45,6 +45,7 @@ export class PlayerBody {
     this.swimSprinting = false;   // vanilla swim mechanic: sprinting submerged
     this.submersion = 0;          // fraction of body height under the waterline
     this.eyeInWater = false;
+    this._standingEyeInWater = false; // water at full standing eye height
     this.maxBreath = PLAYER.BREATH_SECONDS;
     this.breath = this.maxBreath;
     this.fallDistance = 0;        // blocks fallen so far while airborne
@@ -55,9 +56,10 @@ export class PlayerBody {
     this._jumpTimer = PLAYER.JUMP_COOLDOWN_SECONDS; // ready to jump at spawn
   }
 
-  // input: { forward: -1..1, strafe: -1..1, yaw, jump, sneak, sprint }
+  // input: { forward: -1..1, strafe: -1..1, yaw, pitch, jump, sneak, sprint }
   // where sprint is intent (key held / double-tap latch); the body applies
-  // the vanilla rules for whether it actually takes effect.
+  // the vanilla rules for whether it actually takes effect. pitch (radians,
+  // positive looking up) only steers the swim-sprint mechanic.
   step(input, dt) {
     if (dt <= 0) return;
     const p = this.position;
@@ -73,12 +75,14 @@ export class PlayerBody {
     this.sprinting =
       !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming;
     // Vanilla swim mechanic: sprinting while fully submerged tips the body
-    // prone and swims fast toward the look direction. Entry requires the eye
-    // under water (from the previous step's sense); the mode drops as soon as
-    // water physics no longer apply or the sprint intent ends.
+    // prone and swims fast toward the look direction. Entry AND persistence
+    // key off the STANDING eye height (previous step's sense) — if a
+    // full-height head would be above the surface, the prone mode drops, so
+    // surface swimming can't self-sustain on its own lowered eye and drain
+    // breath forever.
     this.swimSprinting =
       !!input.sprint && input.forward > 0 && !this.sneaking &&
-      this.swimming && this.eyeInWater;
+      this.swimming && this._standingEyeInWater;
 
     // Wish direction on the horizontal plane, camera-yaw relative
     const sin = Math.sin(input.yaw);
@@ -144,9 +148,15 @@ export class PlayerBody {
         if (input.jump) v.y += c.SWIM_UP_ACCEL * dt;
         if (input.sneak) v.y -= c.SWIM_DOWN_ACCEL * dt;
       } else {
-        let a = -c.WATER_GRAVITY * (1 - c.WATER_BUOYANCY * this.submersion);
-        if (input.jump) a += c.SWIM_UP_ACCEL;
-        if (input.sneak) a -= c.SWIM_DOWN_ACCEL;
+        // A dry centre column (submersion 0 — only a box corner clips the
+        // pool) keeps full gravity and no swim thrust: space still never
+        // jumps, but it can't levitate the player over dry land either.
+        const submerged = this.submersion > 0;
+        let a = submerged
+          ? -c.WATER_GRAVITY * (1 - c.WATER_BUOYANCY * this.submersion)
+          : -c.GRAVITY;
+        if (input.jump && submerged) a += c.SWIM_UP_ACCEL;
+        if (input.sneak && submerged) a -= c.SWIM_DOWN_ACCEL;
         v.y += a * dt;
         v.y *= Math.exp(-c.WATER_DRAG * dt);
       }
@@ -223,6 +233,12 @@ export class PlayerBody {
     this.eyeInWater =
       this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z)) ===
       BLOCK.WATER;
+    // Sensed at the full standing eye regardless of pose — the swim-sprint
+    // gate above reads this next step.
+    this._standingEyeInWater =
+      this.world.getBlock(
+        Math.floor(p.x), Math.floor(p.y + c.EYE_HEIGHT), Math.floor(p.z),
+      ) === BLOCK.WATER;
     this.breath = this.eyeInWater
       ? Math.max(0, this.breath - dt)
       : Math.min(this.maxBreath, this.breath + dt * c.BREATH_REFILL_RATE);
@@ -500,6 +516,7 @@ export function createPlayerController({ world, camera, canvas }) {
     body.velocity.x = 0;
     body.velocity.y = 0;
     body.velocity.z = 0;
+    body.swimSprinting = false; // never carry the prone mode across a toggle
     if (mode === 'walk') {
       // Never re-enter walking inside terrain: lift to the nearest free spot
       let guard = 512;

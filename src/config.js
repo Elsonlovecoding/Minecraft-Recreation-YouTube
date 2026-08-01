@@ -313,6 +313,8 @@ export const ITEMS = {
   BLOCK_SCALE: 0.25,              // edge length of a dropped mini-block
   SPRITE_SCALE: 0.35,             // edge length of a dropped flat item sprite
   REST_CLEARANCE: 0.02,           // items rest this far above the ground plane
+  DROP_SPAWN_Y_OFFSET: 0.25,      // drops spawn this far above the broken cell floor
+  VOID_DESPAWN_DEPTH: 16,         // items despawn this far below the world bottom
 };
 
 // ---------------------------------------------------------------------------
@@ -331,10 +333,16 @@ export const INTERACTION = {
     POSITION: [0.42, -0.44, -0.62],  // camera-space resting spot (right, down, fwd)
     ARM_SIZE: [0.22, 0.22, 0.65],    // first-person arm box dimensions
     ARM_TILT: [0.35, -0.25, 0.1],    // resting rotation (radians)
+    ARM_FORWARD: 0.25,               // arm reach forward, fraction of its length
     BLOCK_SCALE: 0.36,               // held mini-block edge length
+    BLOCK_LIFT: 0.15,                // held block raise, fraction of its size
+    BLOCK_FORWARD: 0.45,             // held block reach, fraction of arm length
     SWING_SECONDS: 0.28,             // one swing animation
     SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
     SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)
+    SWING_SIDE: 0.35,                // sideways dip, fraction of SWING_DIP
+    SWING_FORWARD: 0.25,             // forward dip, fraction of SWING_DIP
+    SWING_YAW: 0.25,                 // yaw twist, fraction of SWING_ROTATION
   },
 };
 
