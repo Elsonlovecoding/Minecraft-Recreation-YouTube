@@ -10,10 +10,12 @@ import {
 } from './render/lighting.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { initHud, updateHud } from './ui/hud.js';
+import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
+import { createInventory } from './player/inventory.js';
 import { createItemManager } from './entities/items.js';
 
 async function init() {
@@ -50,10 +52,14 @@ async function init() {
 
   // Phase 6: dropped items and block interaction (break/place/outline/hand).
   // The camera joins the scene so the first-person hand (a camera child)
-  // renders.
+  // renders. Phase 7: the inventory owns items/selection; pickups flow into
+  // it and the inventory screen (E) sits over the game.
   scene.add(camera);
+  const inventory = createInventory();
   const items = createItemManager({ world, scene });
-  const interaction = createInteraction({ world, camera, scene, canvas, player, items });
+  const interaction = createInteraction({
+    world, camera, scene, canvas, player, items, inventory,
+  });
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -75,16 +81,27 @@ async function init() {
   window.__controls = player; // back-compat alias (setView lives here too)
   window.__items = items;
   window.__interaction = interaction;
+  window.__inventory = inventory;
 
   initDebug();
-  initHud();
+  initHud(inventory);
+  const screens = createScreens({ inventory, canvas, items, player });
+  window.__screens = screens;
+
+  // Pickups go to the inventory (existing stacks first, then the first empty
+  // slot); the return value tells the item manager how many were accepted.
+  // A dropped worn tool carries its durability back in via addStack.
+  const onPickup = (name, count, durability) =>
+    durability != null
+      ? count - inventory.addStack({ name, count, durability })
+      : count - inventory.add(name, count);
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     player.update(delta);
     interaction.update(delta);
-    items.update(delta, player.position, interaction.notifyPickup);
+    items.update(delta, player.position, onPickup);
     world.updateStreaming(camera.position);
     dayNight.update(delta, camera.position); // also recentres the sky dome
     updateHud(player);

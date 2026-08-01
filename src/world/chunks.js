@@ -2,7 +2,9 @@
 // is a CHUNK.SIZE x CHUNK.HEIGHT x CHUNK.SIZE column of block ids in a flat
 // Uint8Array, rendered as one merged mesh per material pass (opaque / cutout /
 // translucent water). Only faces touching air or a transparent block are
-// emitted; interior faces never exist. Per-face brightness and vertex AO are
+// emitted; interior faces never exist — except non-self-culling transparent
+// blocks (leaves, cactus), whose same-id interior planes render as one quad
+// each so canopies read dense. Per-face brightness and vertex AO are
 // baked into vertex colours; flood-filled sky/block light (render/lighting.js)
 // is baked into a per-vertex `light` attribute that the patched chunk
 // materials combine with the time-of-day uniforms.
@@ -67,14 +69,20 @@ const PASS_WATER = 3;   // alpha-blended
 
 const NUM_IDS = BLOCKS.length;
 const IS_TRANSPARENT = new Uint8Array(NUM_IDS); // does not occlude neighbours
-const OCCLUDES_AO = new Uint8Array(NUM_IDS);    // full opaque cube: darkens corners
+const OCCLUDES_AO = new Uint8Array(NUM_IDS);    // darkens AO corners (registry flag)
+const SELF_CULL = new Uint8Array(NUM_IDS);      // merge same-id runs (water, glass);
+                                                // 0 for leaves/cactus: interior
+                                                // planes render, one quad each
+const INSET = new Float32Array(NUM_IDS);        // side faces pulled into the cell
 const PASS = new Uint8Array(NUM_IDS);
 const TILES = [];                               // per id: [px,nx,py,ny,pz,nz] or null
 
 for (let id = 0; id < NUM_IDS; id++) {
   const def = BLOCKS[id];
   IS_TRANSPARENT[id] = def.transparent ? 1 : 0;
-  OCCLUDES_AO[id] = def.solid && !def.transparent ? 1 : 0;
+  OCCLUDES_AO[id] = def.occludesAO ? 1 : 0;
+  SELF_CULL[id] = def.selfCull ? 1 : 0;
+  INSET[id] = def.inset;
   TILES[id] = def.tiles;
   PASS[id] = !def.tiles ? PASS_NONE
     : id === BLOCK.WATER ? PASS_WATER
@@ -237,6 +245,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         const y = iy + MIN_Y;
         const tiles = TILES[id];
         const bucket = buckets[pass];
+        const inset = INSET[id];
 
         // Water surface sits slightly below the block top wherever the
         // block above isn't water (top face and the lip of side faces).
@@ -250,15 +259,33 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           const ny = y + d[1];
           if (ny < MIN_Y) continue; // world-bottom face, never visible
 
-          // Face culling: emit only against air or a transparent block, and
-          // merge same-id transparent runs (water-water, leaf-leaf).
-          const nid = getId(lx + d[0], ny, lz + d[2]);
-          if (!IS_TRANSPARENT[nid] || nid === id) continue;
-          // Where two DIFFERENT transparent blocks touch (leaves|cactus,
-          // water|glass) only the lower id emits the shared plane — the
-          // cutout/water materials are DoubleSide, so one quad reads from
-          // both sides while a coplanar pair would z-fight.
-          if (nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid) continue;
+          // Inset side faces (cactus) sit inside their own cell — nothing can
+          // occlude or z-fight with them, so they skip culling entirely.
+          const insetSide = inset > 0 && d[1] === 0;
+          if (!insetSide) {
+            // Face culling: emit only against air or a transparent block.
+            const nid = getId(lx + d[0], ny, lz + d[2]);
+            if (!IS_TRANSPARENT[nid]) continue;
+            if (nid === id) {
+              // Same-id transparent runs merge into one surface (water,
+              // glass) — except non-self-culling blocks (leaves, stacked
+              // cactus tops), whose interior planes DO render: exactly one
+              // DoubleSide quad per shared plane, from the positive face,
+              // so canopies read dense with no coplanar z-fight pairs.
+              if (SELF_CULL[id]) continue;
+              if (d[0] + d[1] + d[2] < 0) continue;
+            } else if (nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid) {
+              // Where two DIFFERENT transparent blocks touch (leaves|cactus,
+              // water|glass) only the lower id emits the shared plane — the
+              // cutout/water materials are DoubleSide, so one quad reads from
+              // both sides while a coplanar pair would z-fight.
+              continue;
+            }
+          }
+          // Cactus side faces render pulled in by the inset (full width and
+          // height — only the plane moves); top/bottom faces stay full size.
+          const ox = insetSide ? -d[0] * inset : 0;
+          const oz = insetSide ? -d[2] * inset : 0;
 
           // The cell in front of the face: every vertex samples it, and it
           // stands in for corner cells that light can't reach.
@@ -304,7 +331,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           const brightness = face.brightness;
           for (let k = 0; k < 4; k++) {
             const c = face.corners[k];
-            bucket.pos.push(lx + c[0], c[1] ? topY : y, lz + c[2]);
+            bucket.pos.push(lx + c[0] + ox, c[1] ? topY : y, lz + c[2] + oz);
             bucket.uv.push(c[3] ? u1 : u0, c[4] ? v1 : v0);
             const shade = brightness * ao[k];
             bucket.col.push(shade, shade, shade);

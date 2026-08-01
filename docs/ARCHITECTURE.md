@@ -53,6 +53,8 @@ src/
   ui/
     hud.js               hotbar, health, hunger, crosshair
     screens.js           inventory, crafting, furnace, death, victory
+    icons.js             item icons for hud/screens: assets/items sprites,
+                         isometric atlas-rendered block cubes (Phase 7 split)
     debug.js             fps, coords, chunk count
 
 assets/

@@ -121,21 +121,36 @@ function getSpriteMaterial(name) {
   return material;
 }
 
-// Visual for an item name: block items become mini-cubes, everything else a
-// flat sprite quad from assets/items/. Returns { mesh, halfHeight }.
-function createItemVisual(name) {
+// How an item name renders, shared by dropped items, the first-person hand
+// and the UI icons (ui/icons.js): block items as their block ({ blockId }),
+// everything else as a flat texture from assets/items/ ({ sprite }).
+export function itemVisualInfo(name) {
   const alias = VISUAL_ALIAS[name];
   const blockId = alias?.block ?? (alias?.sprite ? null : blockIdByName(name));
   if (blockId !== null && blockId !== undefined && faceTiles(blockId)) {
-    const size = ITEMS.BLOCK_SCALE;
-    return { mesh: createBlockMesh(blockId, size), halfHeight: size / 2 };
+    return { blockId };
   }
-  const spriteName = alias?.sprite ?? name;
+  return { sprite: alias?.sprite ?? name };
+}
+
+// Flat sprite quad for a non-block item (shared geometry, cached material).
+// Also used by player/interaction.js for the held tool in the hand.
+export function createSpriteMesh(name, size) {
   if (!spriteGeometry) spriteGeometry = new THREE.PlaneGeometry(1, 1);
-  const mesh = new THREE.Mesh(spriteGeometry, getSpriteMaterial(spriteName));
-  const size = ITEMS.SPRITE_SCALE;
+  const mesh = new THREE.Mesh(spriteGeometry, getSpriteMaterial(name));
   mesh.scale.setScalar(size);
-  return { mesh, halfHeight: size / 2 };
+  return mesh;
+}
+
+// Visual for an item name. Returns { mesh, halfHeight }.
+function createItemVisual(name) {
+  const info = itemVisualInfo(name);
+  if (info.blockId !== undefined) {
+    const size = ITEMS.BLOCK_SCALE;
+    return { mesh: createBlockMesh(info.blockId, size), halfHeight: size / 2 };
+  }
+  const size = ITEMS.SPRITE_SCALE;
+  return { mesh: createSpriteMesh(info.sprite, size), halfHeight: size / 2 };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +165,9 @@ export function createItemManager({ world, scene }) {
 
   // Spawns a dropped item entity. `pos` is the item's base point (bottom).
   // Velocity defaults to the broken-block pop: up plus random scatter.
-  function spawn(name, count, pos, vel) {
+  // `durability` (optional) rides along so a dropped worn tool comes back
+  // worn, not repaired.
+  function spawn(name, count, pos, vel, durability) {
     const { mesh, halfHeight } = createItemVisual(name);
     const group = new THREE.Group();
     group.add(mesh);
@@ -160,6 +177,7 @@ export function createItemManager({ world, scene }) {
     const entity = {
       name,
       count,
+      durability: durability ?? null,
       pos: { x: pos.x, y: pos.y, z: pos.z },
       vel: vel
         ? { x: vel.x, y: vel.y, z: vel.z }
@@ -170,6 +188,7 @@ export function createItemManager({ world, scene }) {
           },
       age: 0,
       grounded: false,
+      retry: 0, // pause left before re-offering a pickup the inventory refused
       phase: Math.random() * TAU, // bob/spin offset so drops don't sync
       group,
       inner: mesh,
@@ -284,6 +303,11 @@ export function createItemManager({ world, scene }) {
 
   // Per-frame update. `playerPos` is the player's FEET position (body
   // convention); magnet and pickup measure from the body centre.
+  // onPickup(name, count, durability) returns how many the inventory
+  // accepted (undefined = all): a refused item stays in the world, keeps its
+  // physics, and waits ITEMS.PICKUP_RETRY_SECONDS before offering itself (or
+  // magnetising) again, so a full inventory doesn't vacuum drops around
+  // forever.
   function update(dt, playerPos, onPickup) {
     if (dt <= 0) return;
     const cx = playerPos.x;
@@ -313,16 +337,22 @@ export function createItemManager({ world, scene }) {
       const dy = cy - (e.pos.y + e.halfHeight);
       const dz = cz - e.pos.z;
       const dist = Math.hypot(dx, dy, dz);
-      const active = e.age >= ITEMS.PICKUP_DELAY_SECONDS;
+      if (e.retry > 0) e.retry -= dt;
+      const active = e.age >= ITEMS.PICKUP_DELAY_SECONDS && e.retry <= 0;
 
       if (active && dist <= ITEMS.PICKUP_RADIUS) {
-        const { name, count } = e;
-        remove(i);
-        if (onPickup) onPickup(name, count);
-        continue;
+        const accepted = onPickup
+          ? (onPickup(e.name, e.count, e.durability) ?? e.count)
+          : e.count;
+        if (accepted >= e.count) {
+          remove(i);
+          continue;
+        }
+        if (accepted > 0) e.count -= accepted;
+        e.retry = ITEMS.PICKUP_RETRY_SECONDS; // inventory full — try later
       }
 
-      if (active && dist <= ITEMS.MAGNET_RADIUS && dist > EPS) {
+      if (active && e.retry <= 0 && dist <= ITEMS.MAGNET_RADIUS && dist > EPS) {
         // Magnetised: fly straight at the body centre — but still through
         // the collision move, so a wall between item and player blocks the
         // pull instead of letting it vacuum drops through solid blocks.

@@ -214,7 +214,9 @@ export const PLAYER = {
   AIR_ACCEL: 8,                 // blocks/s² of steering while airborne
   AIR_DRAG: 1.9,                // 1/s horizontal damping while airborne
   SPRINT_DOUBLE_TAP_SECONDS: 0.3, // double-tap W within this starts a sprint
-  SPRINT_JUMP_BOOST: 4,         // forward blocks/s added by a sprinting jump
+  SPRINT_JUMP_BOOST: 1.8,       // forward blocks/s added by a sprinting jump —
+                                // tuned so repeated sprint-jumping averages the
+                                // vanilla ~7.1 blocks/s vs 5.6 flat sprinting
   SLOW_BLOCK_FACTOR: 0.4,       // speed multiplier on `slows` blocks (soul sand)
 
   // Auto-step (no jump needed) and the sneak edge guard. Vanilla's step
@@ -277,6 +279,13 @@ export const ARMOR_REDUCTION = {
 // Mining a block above your tool tier: possible but very slow, drops nothing.
 export const WRONG_TIER_SPEED_MULTIPLIER = 0.3;
 
+// Non-cube block shapes (consumed by the block registry, mesher and physics).
+export const SHAPES = {
+  CACTUS_INSET: 1 / 16,           // cactus side faces AND collision box sit this
+                                  // far inside the cell on x/z (vanilla: sides
+                                  // render 1/16..15/16, top/bottom full size)
+};
+
 // ---------------------------------------------------------------------------
 // Mobs
 // ---------------------------------------------------------------------------
@@ -302,7 +311,8 @@ export const ITEMS = {
   BOB_HEIGHT: 0.1,
   ROTATE_SPEED: 1.5,              // radians per second
   DESPAWN_SECONDS: 300,
-  MAX_STACK: 64,
+  PICKUP_RETRY_SECONDS: 0.5,      // pause before re-offering an item the
+                                  // inventory had no room for
   GRAVITY: 16,                    // blocks/s² on dropped items
   GROUND_FRICTION: 8,             // 1/s horizontal damping once resting
   WATER_FLOAT_SPEED: 0.8,         // blocks/s items rise toward the water surface
@@ -318,25 +328,61 @@ export const ITEMS = {
 };
 
 // ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+export const INVENTORY = {
+  SIZE: 36,                       // total slots
+  HOTBAR_SIZE: 9,                 // slots 0-8 are the hotbar
+  MAX_STACK: 64,                  // default stack cap (per-item overrides — tools,
+                                  // armour, pearls — live in the item registry)
+};
+
+// ---------------------------------------------------------------------------
+// UI (HUD hotbar and inventory screen) — sizes only; the pixel-art styling
+// itself is inline in ui/hud.js / ui/screens.js like the other generated art
+// ---------------------------------------------------------------------------
+
+export const UI = {
+  HOTBAR_SLOT_PX: 46,             // hotbar slot size
+  HOTBAR_BOTTOM_PX: 8,            // hotbar offset from the bottom screen edge
+  SCREEN_SLOT_PX: 46,             // inventory-screen slot size
+  ICON_SCALE: 0.8,                // item icon size as a fraction of its slot
+  BLOCK_ICON_PX: 64,              // canvas resolution of isometric block icons
+  DURABILITY_BAR_PX: 3,           // height of the durability bar in a slot
+};
+
+// ---------------------------------------------------------------------------
 // Block interaction (break / place / outline / hand)
 // ---------------------------------------------------------------------------
 
 export const INTERACTION = {
   BREAK_COOLDOWN_SECONDS: 0.3,    // pause after a break before the next starts
   PLACE_REPEAT_SECONDS: 0.25,     // hold-to-place repeat interval
+  WHEEL_STEP_DELTA: 50,           // wheel delta (pixels) per hotbar step — a
+                                  // discrete notch (~100) steps once; trackpad
+                                  // micro-deltas accumulate to this
+  WHEEL_LINE_PIXELS: 33,          // deltaMode line -> pixel normalisation
   OUTLINE_COLOR: 0x000000,        // targeted face outline
   OUTLINE_OPACITY: 0.75,
   OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)
   CRACK_INFLATE: 0.008,           // crack overlay cube inflation over the block
   CRACK_TEXTURE_SIZE: 16,         // pixels per generated crack stage tile
   HAND: {
-    POSITION: [0.42, -0.44, -0.62],  // camera-space resting spot (right, down, fwd)
+    POSITION: [0.52, -0.49, -0.72],  // camera-space resting spot (right, down, fwd)
     ARM_SIZE: [0.22, 0.22, 0.65],    // first-person arm box dimensions
     ARM_TILT: [0.35, -0.25, 0.1],    // resting rotation (radians)
     ARM_FORWARD: 0.25,               // arm reach forward, fraction of its length
-    BLOCK_SCALE: 0.36,               // held mini-block edge length
-    BLOCK_LIFT: 0.15,                // held block raise, fraction of its size
-    BLOCK_FORWARD: 0.45,             // held block reach, fraction of arm length
+    BLOCK_SCALE: 0.15,               // held mini-block edge length — small, sits
+                                     // in the lower-right corner like vanilla
+    BLOCK_TILT: [0, 0.785, 0],       // held block yawed ~45° (vanilla angle)
+    BLOCK_OFFSET: [0.14, -0.01, -0.13], // held block offset from POSITION
+    SPRITE_SCALE: 0.34,              // held flat-item sprite edge length (tools)
+    SPRITE_TILT: [-0.2, 3.04, 0.1], // sprite angled like a vanilla held tool —
+                                     // the ~180° yaw shows the mirrored back
+                                     // face so the handle points at the hand
+                                     // corner (vanilla orientation)
+    SPRITE_OFFSET: [0.1, 0.03, -0.13],  // held sprite offset from POSITION
     SWING_SECONDS: 0.28,             // one swing animation
     SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
     SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)
