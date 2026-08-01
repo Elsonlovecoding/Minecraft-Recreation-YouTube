@@ -174,19 +174,75 @@ export const PLAYER = {
   STARVE_FLOOR_HEALTH: 2,       // starvation stops at 1 heart in the overworld
   REACH: 5,                     // block interaction distance
 
-  WALK_SPEED: 4.3,              // blocks per second
+  // Body (AABB) and first-person camera
+  WIDTH: 0.6,
+  HEIGHT: 1.8,
+  EYE_HEIGHT: 1.62,
+  SNEAK_EYE_HEIGHT: 1.27,       // eye drops while sneaking (the box stays 1.8)
+  EYE_LERP_RATE: 12,            // 1/s — how fast the eye eases between heights
+  MOUSE_SENSITIVITY: 0.0022,    // radians of look per pixel of mouse movement
+  PITCH_MARGIN: 0.01,           // radians short of straight up/down the pitch clamps
+  SPRINT_FOV_BOOST: 8,          // degrees of extra FOV while sprinting
+  FOV_LERP_RATE: 12,            // 1/s FOV ease in/out of sprint
+  STEP_SMOOTH_RATE: 12,         // 1/s — camera easing after a 1-block auto-step
+  VIEW_BOB: {
+    AMP_Y: 0.045,               // vertical bob amplitude (blocks)
+    AMP_X: 0.018,               // lateral sway amplitude (blocks)
+    CYCLES_PER_BLOCK: 0.35,     // stride cycles per block walked
+    FADE_RATE: 8,               // 1/s bob fade in/out
+  },
+
+  // Speeds (blocks per second)
+  WALK_SPEED: 4.3,
   SPRINT_SPEED: 5.6,
   SNEAK_SPEED: 1.3,
   SWIM_SPEED: 2.2,
-  JUMP_VELOCITY: 8.5,           // initial upward velocity, clears ~1.25 blocks
-  GRAVITY: 32,                  // blocks per second squared
 
+  // Vertical physics
+  JUMP_VELOCITY: 8.5,           // initial upward velocity, clears ~1.1 blocks
+  JUMP_COOLDOWN_SECONDS: 0.5,   // vanilla's 10-tick jump delay — a full jump
+                                // arc is longer, so it only bites when the
+                                // arc is cut short (low ceilings), stopping
+                                // ceiling-bounce sprint-boost compounding
+  GRAVITY: 32,                  // blocks per second squared
+  TERMINAL_VELOCITY: 78,        // fastest possible fall (blocks per second)
+
+  // Movement feel — continuous-time equivalents of the vanilla tick physics
+  GROUND_RESPONSE: 12,          // 1/s exponential approach to the wanted velocity
+                                // on the ground (acceleration AND friction)
+  AIR_ACCEL: 8,                 // blocks/s² of steering while airborne
+  AIR_DRAG: 1.9,                // 1/s horizontal damping while airborne
+  SPRINT_DOUBLE_TAP_SECONDS: 0.3, // double-tap W within this starts a sprint
+  SPRINT_JUMP_BOOST: 4,         // forward blocks/s added by a sprinting jump
+  SLOW_BLOCK_FACTOR: 0.4,       // speed multiplier on `slows` blocks (soul sand)
+
+  // 1-block auto-step (no jump needed) and the sneak edge guard
+  STEP_HEIGHT: 1.0,             // walk straight up ledges this tall
+  SNEAK_EDGE_DROP: 1.0,         // sneaking refuses moves with no floor within this
+  SNEAK_CLAMP_INCREMENT: 0.05,  // granularity of the sneak edge clamp
+
+  // Swimming
+  SWIM_MIN_SUBMERSION: 0.35,    // waterline fraction of body height where water
+                                // physics take over from walking
+  SHALLOW_JUMP_MAX_SUBMERSION: 0.7, // grounded below this submersion, jumps are real
+  WATER_DRAG: 4.5,              // 1/s velocity damping in water
+  WATER_GRAVITY: 8,             // blocks/s² downward pull in water
+  WATER_BUOYANCY: 1.4,          // buoyant lift as a multiple of water gravity at
+                                // full submersion — floats eyes just above water
+  WATER_RESPONSE: 5,            // 1/s horizontal approach rate while swimming
+  SWIM_UP_ACCEL: 16,            // blocks/s² while holding jump in water
+  SWIM_DOWN_ACCEL: 12,          // blocks/s² while holding sneak in water
+  WATER_EXIT_JUMP: 6,           // upward blocks/s hop when swimming into a bank
+  BREATH_SECONDS: 15,           // air supply while the eye is underwater
+  BREATH_REFILL_RATE: 4,        // refill speed multiplier once surfaced
+  BREATH_BUBBLES: 10,           // bubbles on the HUD breath meter
+
+  // Falling (damage itself is applied by the stats phase)
   FALL_DAMAGE_THRESHOLD: 3,     // safe fall height in blocks
   FALL_DAMAGE_PER_BLOCK: 2,     // 1 heart per block beyond the threshold
 
-  EYE_HEIGHT: 1.62,
-  WIDTH: 0.6,
-  HEIGHT: 1.8,
+  // Safe spawn: nearest dry, clear surface column to this point
+  SPAWN: { X: 8, Z: 8, SEARCH_RADIUS: 48 },
 };
 
 // ---------------------------------------------------------------------------
@@ -395,14 +451,9 @@ export const DRAGON = {
 // ---------------------------------------------------------------------------
 
 export const DEBUG = {
-  FLY_SPEED: 12,                  // blocks per second
+  FLY_SPEED: 12,                  // fly mode blocks per second
   FLY_SPEED_FAST: 40,             // holding Ctrl
-  MOUSE_SENSITIVITY: 0.0022,      // radians per pixel
+  FLY_TOGGLE_CODE: 'F4',          // key that toggles the debug fly mode
   MAX_DELTA: 0.1,                 // clamp frame delta (seconds) after tab-away
   HUD_UPDATE_INTERVAL: 0.25,      // seconds between FPS readout updates
-  SPAWN_X: 8,                     // where the debug fly camera starts
-  SPAWN_Z: 8,
-  SPAWN_ALTITUDE: 10,             // blocks above the terrain surface at spawn
-  SPAWN_LOOK_AHEAD: 24,           // initial view: this far toward -z...
-  SPAWN_LOOK_DOWN: 4,             // ...and this far below the camera
 };

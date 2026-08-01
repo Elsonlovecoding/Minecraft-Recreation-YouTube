@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 4 — lighting (flood-filled light, AO, day/night cycle)**
+Phase last completed: **Phase 5 — the player (physics, collision, first-person controller, swimming, safe spawn)**
 
 ---
 
@@ -22,7 +22,13 @@ Phase last completed: **Phase 4 — lighting (flood-filled light, AO, day/night 
   (light falloff curve, AO strength, torch/night tints, sun orbit), the
   `DAY_NIGHT.KEYFRAMES` palette table, `CELESTIAL` sun/moon quads, sky/fog
   colours per dimension, render settings, atlas layout, portal numbers,
-  dragon numbers, debug camera.
+  dragon numbers. Phase 5 replaced the debug-camera spawn keys with the full
+  `PLAYER` movement block (body/camera dimensions, speeds, jump + vanilla
+  0.5s jump cooldown, gravity/terminal velocity, ground/air/water response
+  rates, sprint double-tap + FOV boost, 1-block step height, sneak edge
+  guard, swimming/buoyancy/breath, view bob, mouse sensitivity, safe-spawn
+  search) — `DEBUG` now only holds fly-mode speeds, `FLY_TOGGLE_CODE` ('F4'),
+  `MAX_DELTA` and the HUD readout interval.
 - `src/render/renderer.js` — WebGLRenderer with ACESFilmicToneMapping,
   SRGBColorSpace output, PCFSoftShadowMap, pixel-ratio clamp, window resize
   handler; perspective camera factory.
@@ -67,19 +73,69 @@ Phase last completed: **Phase 4 — lighting (flood-filled light, AO, day/night 
   keeps the follow-the-player shadow-camera snapping from Phase 3.
 - `src/ui/debug.js` — FPS counter (smoothed), camera coordinates, and
   meshed/loaded chunk counts overlay.
-- `src/main.js` — game loop on `setAnimationLoop` with clamped delta time;
-  free-fly debug camera (click for pointer lock, WASD + Space/Shift, Ctrl
-  for fast, mouse look). Phase 3: the Phase 1 test scene is gone — the
-  world renders as streamed chunk meshes. Boot: load atlas, create shared
-  chunk materials, spawn the camera `DEBUG.SPAWN_ALTITUDE` above the
-  surface at `DEBUG.SPAWN_X/Z`, `world.prebuild` a small area
-  synchronously, then stream per frame (`world.updateStreaming`) alongside
-  `dayNight.update` (Phase 4 — drives sky, fog, sun/moon and the chunk
-  light uniforms; also recentres the sky dome). Terrain console diagnostics
-  still log at boot; `window.__world`, `window.__camera`,
-  `window.__renderer`, `window.__dayNight` (`setTimeOfDay(t)`: 0 sunrise,
-  0.25 noon, 0.5 sunset, 0.75 midnight) and `window.__controls`
-  (`setView(yaw, pitch)`) are exposed as dev scaffolding.
+- `src/main.js` — game loop on `setAnimationLoop` with clamped delta time.
+  Phase 5: the free-fly debug camera is gone from this file — boot creates
+  the player controller (which finds a safe spawn and owns the camera),
+  then `world.prebuild` around it, then per frame: `player.update`,
+  `world.updateStreaming(camera.position)`, `dayNight.update` (drives sky,
+  fog, sun/moon and the chunk light uniforms; also recentres the sky dome),
+  `updateHud`, `updateDebug`, render. Terrain console diagnostics still log
+  at boot; `window.__world`, `window.__camera`, `window.__renderer`,
+  `window.__dayNight` (`setTimeOfDay(t)`: 0 sunrise, 0.25 noon, 0.5 sunset,
+  0.75 midnight) and `window.__player` (with `window.__controls` as a
+  back-compat alias; `setView(yaw, pitch)` lives there) are dev scaffolding.
+- `src/player/controller.js` — Phase 5, three parts:
+  (1) **`PlayerBody`** — pure physics, no DOM/three.js types (node tests
+  drive it directly): 0.6x1.8 AABB stepped against `world.getBlock` with
+  exact swept per-axis collision (Y then X then Z like vanilla; every cell
+  layer crossed is scanned in movement order, so terminal-velocity falls
+  can never tunnel through ground, verified at dt=0.1). Movement feel is
+  the vanilla tick physics in continuous form: on ground an exponential
+  approach to the wished velocity (`GROUND_RESPONSE` ~ vanilla ground drag;
+  acceleration and friction in one, framerate-independent), airborne only
+  weak steering + light drag, gravity integrated with midpoint velocity so
+  jump height doesn't shrink at low fps, terminal velocity 78. Walk /
+  sprint (forward-only; sprint-jump boost along facing; 0.5s vanilla jump
+  cooldown so cut-short arcs under 2-high ceilings can't compound the
+  boost) / sneak (slower, and refuses moves that would lose all floor
+  within `SNEAK_EDGE_DROP` — vanilla-style per-axis shrink) / jump.
+  Grounding comes from the direction of the Y hit (downward = landing,
+  upward = ceiling, never grounded). 1-block auto-step: on a grounded
+  horizontal hit, retry the move from a raised start and keep whichever
+  result travels farther, settling onto the step. Swimming: `submersion`
+  (waterline fraction of body height) drives buoyancy — at rest the body
+  floats with eyes just above the surface; jump/sneak swim up/down, water
+  drag on all axes, real jumps in shallow water, and a vanilla-style
+  re-applied exit hop while pressing into a bank that keeps working while
+  any part of the body clips water (bank climb-out verified 30-240fps).
+  Breath meter: depletes while the eye is in water, refills 4x surfaced,
+  clamps at 0 (drowning damage is the stats phase's job). Fall tracking:
+  `fallDistance` while airborne, `lastLanding` reports the exact drop on
+  the landing step (for stats), water contact resets it. `slows` blocks
+  (soul sand) scale target speed.
+  (2) **`findSpawnPosition`** — ring search from `PLAYER.SPAWN` for the
+  nearest dry (>= sea level), harmless (no cactus, not a canopy) surface
+  column with 2 blocks of standing clearance; feet land exactly on the
+  surface — never inside terrain, never in the air, never in water.
+  (3) **`createPlayerController`** — pointer-lock input + first-person
+  camera: mouse look with clamped pitch, camera at eye height (1.62,
+  easing to 1.27 sneaking), sprint via Ctrl or double-tap W (latch drops on
+  W release; FOV widens ~8 degrees while sprinting), subtle ground-speed
+  view bob, step-ups eased out of the camera (`STEP_SMOOTH_RATE`), and the
+  old debug fly camera folded in behind `DEBUG.FLY_TOGGLE_CODE` (F4 — no
+  gravity/collision, DEBUG fly speeds; leaving fly mode lifts out of any
+  overlap before walking resumes). Game keys are `preventDefault`ed while
+  locked so Ctrl+S/Ctrl+D chords can't fire browser shortcuts (reserved
+  Ctrl+W can't be — the hint leads with double-tap sprint instead), and
+  the `requestPointerLock` promise rejection during the browser's ~1.3s
+  post-Esc cooldown is swallowed (hint stays up, next click retries).
+  Dev scaffolding: `setView(yaw, pitch)`, `debugForceInput(on)` so a
+  harness can drive keys without pointer lock.
+- `src/ui/hud.js` — Phase 5 slice of the HUD: centred crosshair
+  (difference-blend; hidden while the pointer is unlocked so it never draws
+  over the "Click to play" hint) and the breath meter — `PLAYER.BREATH_BUBBLES`
+  bubbles above the future hotbar position, visible only while air is
+  missing, like vanilla. Hotbar/hearts/hunger arrive with inventory/stats.
 - `src/world/blocks.js` — full block registry (50 blocks: all SPEC.md tables
   plus stronghold/decorative blocks the atlas supports). Per block: id, name,
   per-face tiles resolved to BoxGeometry order `[px,nx,py,ny,pz,nz]`,
@@ -197,13 +253,43 @@ with depth; square sun and moon render on the dome (occluded by terrain,
 sun sits in the sunset glow); remesh+relight ~4.2ms/chunk in SwiftShader
 (inside the 8ms streaming budget; real GPUs are faster).
 
+Phase 5 verification: 50 node physics checks driving the real `PlayerBody`
+against a synthetic voxel world (rest exactly on the floor; terminal-velocity
+falls land without tunnelling even at dt=0.1; landing reports the exact drop;
+walk/sprint/sneak/swim speeds converge to config; friction stops in under a
+block; jump peaks ~1.1 and is unaffected by framerate; walls clamp flush;
+1-block auto-step up and into 2-high gaps but never 2 blocks; ceiling clamp;
+ceiling-bounce jump spam stays bounded (no sprint-boost compounding); sneaking
+never leaves a 1x1 pillar while plain walking falls off; buoyancy equilibrium
+floats the eye above water; breath depletes/clamps/refills; water entry
+cancels fall distance; bank climb-out succeeds at 30/60/90/144/240fps).
+37 spawn checks across 30 seeds plus far-out spawn points on real generated
+worlds (feet flush on solid, dry, harmless ground with clearance). 38
+headless-Chromium gameplay checks against the running game (zero console
+errors; spawn on the surface at eye height; measured walk/sprint/sneak
+speeds; double-tap and Ctrl sprint with FOV kick; sneak eye drop and edge
+refusal; auto-step without jumping; 2-block wall blocks; 320-block fall lands
+flush, never dipping below the surface; float/dive/surface with the bubble
+meter appearing and hiding; fly toggle on/off; a cross-country walk that
+never sinks into terrain). An adversarial multi-agent review (4 lenses, every
+finding independently verified with repros) confirmed and led to fixes for:
+ceiling-hit grounding (hover exploit), framerate-dependent water exit, the
+jump cooldown, Ctrl-chord browser shortcuts, the pointer-lock cooldown
+rejection, breath frozen in fly mode, and crosshair-over-hint stacking.
+
 ---
 
 ## Partially built
 
 - The rest of `src/` exists as empty stub modules with responsibility headers
-  (world/caves.js, player/, entities/, systems/, dimensions/, ui/hud.js,
-  ui/screens.js).
+  (world/caves.js, player/interaction.js, player/inventory.js,
+  player/stats.js, entities/, systems/, dimensions/, ui/screens.js).
+- `ui/hud.js` is the Phase 5 slice only (crosshair + breath bubbles);
+  hotbar, hearts and hunger come with inventory/stats.
+- The controller exposes but does not consume damage inputs — stats.js later
+  wires `body.lastLanding` (fall damage), `body.breath === 0` (drowning),
+  and `damagesOnContact` blocks (cactus/lava contact does nothing yet;
+  cactus still collides as a full cube).
 - Lava is fully wired into lighting (emits 15, blocks light) but nothing
   places it until the caves phase; a fullbright/emissive treatment for lava
   and glowstone faces themselves is later polish (they currently render lit
@@ -245,11 +331,36 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 5 is either caves/ores (fill in `world/caves.js`, hook into
-  the generator — carved caves get correct darkness and torch light for
-  free from the Phase 4 flood fill) or the player (controller.js
-  physics/collision + interaction.js break/place). Both build directly on
-  what exists; nothing needs restructuring.
+- Likely Phase 6 is either interaction.js (raycast, break/place, block
+  outline, crack overlay — the player can already walk to any block) or
+  caves/ores (fill in `world/caves.js`, hook into the generator — carved
+  caves get correct darkness and torch light for free from the Phase 4
+  flood fill). Both build directly on what exists.
+- Player API for later phases: `controller.body` is the physics truth —
+  `position` (feet centre), `velocity`, `onGround`, `swimming`,
+  `submersion`, `eyeInWater`, `breath`/`maxBreath`, `sneaking`,
+  `sprinting`, `fallDistance`, and per-step one-frame signals
+  `lastLanding` (blocks fallen, set on the landing step) and `lastStepUp`.
+  `controller.mode` is 'walk' | 'fly'. Reach checks for interaction should
+  ray from `__camera` (it sits at the eye, bob included).
+- `PlayerBody` is deliberately DOM-free and constructible in node with any
+  `{ getBlock }` — keep it that way; the physics test harness depends on it.
+  `findSpawnPosition(world, overrides)` is also pure and node-testable.
+- Movement/physics tuning all lives in `config.js` `PLAYER` (response rates,
+  water feel, bob, spawn search); fly mode in `DEBUG`. The sneak edge guard
+  and auto-step both key off `STEP_HEIGHT`-sized probes — if slabs/stairs
+  ever arrive, revisit `STEP_HEIGHT`/`SNEAK_EDGE_DROP` (0.6 in vanilla).
+- Browser-chrome caveat: reserved Ctrl+W (close tab) cannot be prevented —
+  that's why the hint leads with double-tap sprint, and why fly mode's
+  Ctrl-fast + W is a known sharp edge (debug-only, left as is). All other
+  game-key chords are `preventDefault`ed while pointer-locked.
+- Water physics constants interlock: the exit hop stays correct as long as
+  it keeps re-applying while the body clips water (don't regress it to
+  `swimming`-only — that stalls below the bank lip at >=90fps), and
+  `WATER_BUOYANCY` > 1 is what floats the eye above water at rest.
+- The old debug camera survives as fly mode (F4): no collision, no gravity,
+  breath refills, `DEBUG.FLY_SPEED/_FAST`. Toggling back to walk lifts the
+  body out of any solid overlap before physics resumes.
 - Break/place should just call `world.setBlock` — it dirties the chunk and
   every loaded neighbour within light range (up to the 3x3), and the
   streaming pass remeshes dirty chunks nearest-first within the frame
@@ -303,3 +414,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 2 | Block registry (50 blocks), seeded deterministic terrain gen (blended biomes, trees, cacti, water, bedrock), Chunk storage, World chunk manager with on-demand generation, terrain console diagnostics | Rendering the terrain (Phase 3 meshing), caves/ores/rivers/lava (caves.js), chest/portal special rendering |
 | 3 | Chunk meshing (merged mesh per chunk per pass, face culling, per-face atlas UVs, brightness + vertex AO), opaque/cutout/water passes, budgeted chunk streaming with load/unload around the player, sun/shadow follow, chunk counts in debug overlay; test scene removed | Caves/ores/rivers/lava (caves.js), block-light propagation (torches), player controller/interaction, non-cube shapes for torch/cactus/portals, day/night cycle |
 | 4 | Flood-filled sky+block light (15 levels, per-chunk 3x3 window, seam-free), per-block light opacity, smooth per-vertex light baked with AO into meshes, unlit vanilla-style chunk materials with day-factor/torch-tint uniforms, ~20-min day/night cycle (keyframed sky palette, fog always = horizon, sunrise/sunset glow, square sun+moon), light-radius remesh dirtying on edits, TIME in debug overlay | Caves/ores/rivers/lava (caves.js), player controller/interaction, non-cube special shapes, emissive lava/glowstone polish, mob-facing `getLight` helper |
+| 5 | The player (controller.js): AABB body with exact swept collision (no tunnelling), vanilla-feel accel/friction, walk/sprint(double-tap W or Ctrl, FOV kick)/sneak(edge guard, lowered eye)/jump(0.5s vanilla cooldown), 1-block auto-step with camera smoothing, swimming (buoyant float, breath meter) with framerate-independent bank climb-out, safe surface spawn, first-person pointer-lock camera with view bob, debug fly camera behind F4; hud.js crosshair + breath bubbles; PLAYER config block; adversarially reviewed + 125 automated checks | Break/place (interaction.js), stats.js consuming lastLanding/breath/contact damage, hotbar/hearts HUD, caves/ores (caves.js), non-cube special shapes |

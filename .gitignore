@@ -3,3 +3,6 @@
 # blocks unpkg.com; production loads the CDN via the importmap unchanged.)
 # No trailing slash: the local node_modules may be a symlink, not a directory.
 node_modules
+# Dev-harness ESM shim for node unit tests (uncommitted; the game needs no npm)
+package.json
+package-lock.json

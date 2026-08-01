@@ -20,6 +20,7 @@
     }
     #lock-hint {
       position: fixed;
+      z-index: 20; /* above the HUD layer */
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
@@ -47,7 +48,7 @@
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
-  <div id="lock-hint">Click to look around<br>WASD move &middot; Space up &middot; Shift down &middot; Ctrl fast</div>
+  <div id="lock-hint">Click to play<br>WASD move &middot; Space jump &middot; Shift sneak<br>double-tap W (or Ctrl) sprint &middot; F4 fly</div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
