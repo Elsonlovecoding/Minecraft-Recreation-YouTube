@@ -1,6 +1,5 @@
-// main.js — bootstrap and game loop. Wires renderer, atlas, sky, lights and
-// the streamed chunk terrain together, with a free-fly debug camera until
-// player/controller.js exists.
+// main.js — bootstrap and game loop. Wires renderer, atlas, sky, lights,
+// the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
 import { DEBUG } from './config.js';
@@ -10,85 +9,10 @@ import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
 } from './render/lighting.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
+import { initHud, updateHud } from './ui/hud.js';
 import { World } from './world/world.js';
 import { createChunkMaterials } from './world/chunks.js';
-
-// ---------------------------------------------------------------------------
-// Free-fly debug camera (temporary — replaced by player/controller.js later)
-// ---------------------------------------------------------------------------
-
-function createFlyControls(camera, canvas) {
-  const keys = new Set();
-  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  euler.setFromQuaternion(camera.quaternion, 'YXZ');
-  let yaw = euler.y;
-  let pitch = euler.x;
-  const maxPitch = Math.PI / 2 - 0.01;
-  const hint = document.getElementById('lock-hint');
-
-  canvas.addEventListener('click', () => {
-    if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
-  });
-
-  document.addEventListener('pointerlockchange', () => {
-    const locked = document.pointerLockElement === canvas;
-    if (hint) hint.classList.toggle('hidden', locked);
-    if (!locked) keys.clear();
-  });
-
-  document.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement !== canvas) return;
-    yaw -= e.movementX * DEBUG.MOUSE_SENSITIVITY;
-    pitch -= e.movementY * DEBUG.MOUSE_SENSITIVITY;
-    pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (document.pointerLockElement !== canvas) return;
-    keys.add(e.code);
-    if (e.code === 'Space') e.preventDefault();
-  });
-
-  document.addEventListener('keyup', (e) => keys.delete(e.code));
-
-  const forward = new THREE.Vector3();
-  const right = new THREE.Vector3();
-  const move = new THREE.Vector3();
-
-  return {
-    // Dev scaffolding: aim the camera from the console / test harness
-    // (the pointer-lock mouse look overwrites the quaternion every frame).
-    setView(newYaw, newPitch) {
-      yaw = newYaw;
-      pitch = Math.max(-maxPitch, Math.min(maxPitch, newPitch));
-    },
-    update(delta) {
-      camera.quaternion.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
-
-      // WASD moves on the horizontal plane relative to yaw; Space/Shift fly
-      forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
-      right.set(-forward.z, 0, forward.x);
-      move.set(0, 0, 0);
-      if (keys.has('KeyW')) move.add(forward);
-      if (keys.has('KeyS')) move.sub(forward);
-      if (keys.has('KeyD')) move.add(right);
-      if (keys.has('KeyA')) move.sub(right);
-      if (keys.has('Space')) move.y += 1;
-      if (keys.has('ShiftLeft') || keys.has('ShiftRight')) move.y -= 1;
-
-      if (move.lengthSq() > 0) {
-        const fast = keys.has('ControlLeft') || keys.has('ControlRight');
-        const speed = fast ? DEBUG.FLY_SPEED_FAST : DEBUG.FLY_SPEED;
-        move.normalize().multiplyScalar(speed * delta);
-        camera.position.add(move);
-      }
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Bootstrap
-// ---------------------------------------------------------------------------
+import { createPlayerController } from './player/controller.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -118,13 +42,9 @@ async function init() {
   const world = new World();
   world.bindScene(scene, createChunkMaterials(atlasTexture));
 
-  const spawnY = world.getHighestSolidY(DEBUG.SPAWN_X, DEBUG.SPAWN_Z) + DEBUG.SPAWN_ALTITUDE;
-  camera.position.set(DEBUG.SPAWN_X, spawnY, DEBUG.SPAWN_Z);
-  camera.lookAt(
-    DEBUG.SPAWN_X,
-    spawnY - DEBUG.SPAWN_LOOK_DOWN,
-    DEBUG.SPAWN_Z - DEBUG.SPAWN_LOOK_AHEAD,
-  );
+  // Phase 5: the player — spawned safely on the surface, camera at eye
+  // height. The old fly camera lives behind DEBUG.FLY_TOGGLE_CODE.
+  const player = createPlayerController({ world, camera, canvas });
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -142,18 +62,19 @@ async function init() {
   window.__camera = camera;
   window.__renderer = renderer;
   window.__dayNight = dayNight; // e.g. __dayNight.setTimeOfDay(0.75) = midnight
-
-  const controls = createFlyControls(camera, canvas);
-  window.__controls = controls; // __controls.setView(yaw, pitch)
+  window.__player = player;
+  window.__controls = player; // back-compat alias (setView lives here too)
 
   initDebug();
+  initHud();
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
-    controls.update(delta);
+    player.update(delta);
     world.updateStreaming(camera.position);
     dayNight.update(delta, camera.position); // also recentres the sky dome
+    updateHud(player);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);
   });
