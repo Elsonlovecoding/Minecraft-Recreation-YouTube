@@ -259,7 +259,10 @@ export class PlayerBody {
   // Exact swept AABB move along one axis: scans every cell layer the box
   // crosses in movement order, so no speed can tunnel through a wall. On a
   // hit the face clamps flush against the block and the move stops there.
-  // Returns true if it collided.
+  // Blocks with a horizontal `inset` (cactus) collide as their narrower box:
+  // the blocking plane moves into the cell and the transverse overlap test
+  // shrinks, so the body slides past — or falls off — the 1/16 rim instead of
+  // snagging on it. Returns true if it collided.
   _sweep(axis, amount) {
     if (amount === 0) return false;
     const p = this.position;
@@ -278,19 +281,41 @@ export class PlayerBody {
     const cell = [0, 0, 0];
     for (let ci = c0; dir > 0 ? ci <= c1 : ci >= c1; ci += dir) {
       cell[axis] = ci;
+      // Nearest blocking plane in this layer — planes differ where full
+      // cubes and inset boxes mix, so the whole layer is scanned.
+      let plane = null;
       for (let ui = u0; ui <= u1; ui++) {
         cell[u] = ui;
         for (let wi = w0; wi <= w1; wi++) {
           cell[w] = wi;
-          if (isSolid(this.world.getBlock(cell[0], cell[1], cell[2]))) {
-            let moved = (dir > 0 ? ci : ci + 1) - face;
-            // A layer behind the face can only test solid if the body is
-            // already embedded; never shove it backwards.
-            if (dir > 0 ? moved < 0 : moved > 0) moved = 0;
-            p[AXIS[axis]] += moved;
-            return true;
+          const def = blockDef(this.world.getBlock(cell[0], cell[1], cell[2]));
+          if (!def.solid) continue;
+          let candidate;
+          if (def.inset > 0) {
+            // Skip when the body misses the narrowed box on a transverse
+            // horizontal axis, or can't reach its face this step.
+            if (u !== 1 && (min[u] >= cell[u] + 1 - def.inset - EPS ||
+                            max[u] <= cell[u] + def.inset + EPS)) continue;
+            if (w !== 1 && (min[w] >= cell[w] + 1 - def.inset - EPS ||
+                            max[w] <= cell[w] + def.inset + EPS)) continue;
+            const boxInset = axis === 1 ? 0 : def.inset;
+            candidate = dir > 0 ? ci + boxInset : ci + 1 - boxInset;
+            if (dir > 0 ? candidate - face > amount : candidate - face < amount) continue;
+          } else {
+            candidate = dir > 0 ? ci : ci + 1;
+          }
+          if (plane === null || (dir > 0 ? candidate < plane : candidate > plane)) {
+            plane = candidate;
           }
         }
+      }
+      if (plane !== null) {
+        let moved = plane - face;
+        // A layer behind the face can only test solid if the body is
+        // already embedded; never shove it backwards.
+        if (dir > 0 ? moved < 0 : moved > 0) moved = 0;
+        p[AXIS[axis]] += moved;
+        return true;
       }
     }
     p[AXIS[axis]] += amount;

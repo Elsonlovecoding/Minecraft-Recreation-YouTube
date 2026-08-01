@@ -10,9 +10,11 @@
 // Pure logic (raycastVoxel, miningPlan, placement checks) is exported for the
 // node test harness; everything DOM/three.js lives in createInteraction.
 //
-// Until the inventory phase, collected drops live in a simple counts map
-// here: the most recently picked-up block becomes the placeable selection,
-// and placing decrements it. inventory.js replaces this scaffolding.
+// Phase 7: the real inventory (player/inventory.js) drives everything the
+// proto-inventory scaffolding used to — the hotbar selection is what the hand
+// shows, what mining checks and what right-click places; breaking a block
+// with a tool wears its durability. Number keys 1-9 and the scroll wheel
+// change the selection here (gameplay input, pointer-locked only).
 
 import * as THREE from 'three';
 import {
@@ -20,7 +22,7 @@ import {
   OVERWORLD, CHUNK,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
-import { createBlockMesh } from '../entities/items.js';
+import { createBlockMesh, createSpriteMesh, itemVisualInfo } from '../entities/items.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 
@@ -233,8 +235,9 @@ function createArmTexture() {
 // ---------------------------------------------------------------------------
 
 // Wires targeting, breaking, placing and the first-person hand into the game.
-// `player` is the Phase 5 controller (body + mode), `items` the item manager.
-export function createInteraction({ world, camera, scene, canvas, player, items }) {
+// `player` is the Phase 5 controller (body + mode), `items` the item manager,
+// `inventory` the Phase 7 inventory (selection, stacks, durability).
+export function createInteraction({ world, camera, scene, canvas, player, items, inventory }) {
   const H = INTERACTION.HAND;
 
   // --- targeting state
@@ -251,11 +254,6 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
   let breakProgress = 0;    // 0..1
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
-
-  // --- proto-inventory scaffolding (replaced by the inventory phase)
-  const collected = new Map(); // item name -> count
-  let heldItem = null;         // debug-settable tool name ('iron_pickaxe')
-  let selectedBlock = null;    // block item name the right click places
 
   // --- targeted face outline
   const outline = new THREE.LineLoop(
@@ -321,8 +319,10 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
   arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
   arm.renderOrder = HAND_RENDER_ORDER;
   hand.add(arm);
-  let heldMesh = null; // mini-block of the current selection
-  let heldMaterial = null; // shared item material cloned for over-world drawing
+  let heldMesh = null; // mini-block or sprite of the current selection
+  let heldMaterial = null; // shared atlas material cloned for over-world drawing
+  const spriteMaterialCache = new Map(); // item name -> depth-free material clone
+  let shownItem = false; // item name the hand currently shows (false = never set)
   const handBase = new THREE.Vector3(...H.POSITION);
   const handTilt = new THREE.Euler(...H.ARM_TILT);
   hand.position.copy(handBase);
@@ -334,29 +334,49 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     swingT = 0;
   }
 
+  // The hand shows the selected hotbar item: block items as a small angled
+  // mini-cube in the lower-right corner (vanilla placement), other items as
+  // their sprite, an empty slot as the bare arm.
   function refreshHeldMesh() {
-    const id = selectedBlock ? blockIdByName(selectedBlock) : null;
-    const wantBlock = id !== null && (collected.get(selectedBlock) ?? 0) > 0;
+    const name = inventory.selectedName;
+    if (name === shownItem) return;
+    shownItem = name;
     if (heldMesh) {
       hand.remove(heldMesh);
       heldMesh = null;
     }
-    if (wantBlock) {
-      heldMesh = createBlockMesh(id, H.BLOCK_SCALE);
-      if (!heldMaterial) {
-        heldMaterial = heldMesh.material.clone(); // shares the atlas texture
-        heldMaterial.depthTest = false;
-        heldMaterial.depthWrite = false;
+    if (name) {
+      const info = itemVisualInfo(name);
+      if (info.blockId !== undefined) {
+        heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
+        if (!heldMaterial) {
+          heldMaterial = heldMesh.material.clone(); // shares the atlas texture
+          heldMaterial.depthTest = false;
+          heldMaterial.depthWrite = false;
+        }
+        heldMesh.material = heldMaterial;
+        heldMesh.position.set(...H.BLOCK_OFFSET);
+        heldMesh.rotation.set(...H.BLOCK_TILT);
+      } else {
+        heldMesh = createSpriteMesh(info.sprite, H.SPRITE_SCALE);
+        let material = spriteMaterialCache.get(info.sprite);
+        if (!material) {
+          material = heldMesh.material.clone(); // shares the sprite texture
+          material.depthTest = false;
+          material.depthWrite = false;
+          spriteMaterialCache.set(info.sprite, material);
+        }
+        heldMesh.material = material;
+        heldMesh.position.set(...H.SPRITE_OFFSET);
+        heldMesh.rotation.set(...H.SPRITE_TILT);
       }
-      heldMesh.material = heldMaterial;
       heldMesh.renderOrder = HAND_RENDER_ORDER;
-      heldMesh.position.set(
-        0, H.BLOCK_SCALE * H.BLOCK_LIFT, -H.ARM_SIZE[2] * H.BLOCK_FORWARD,
-      );
       hand.add(heldMesh);
     }
-    arm.visible = !wantBlock;
+    arm.visible = !heldMesh;
   }
+  inventory.subscribe(refreshHeldMesh);
+  refreshHeldMesh();
 
   // --- input
   const locked = () => document.pointerLockElement === canvas;
@@ -382,6 +402,26 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
       mouseRight = false;
     }
   });
+
+  // Hotbar selection: number keys 1-9 and the scroll wheel (scroll down =
+  // next slot, like vanilla), only while playing. preventDefault keeps
+  // Ctrl+digit (sprint key held) from switching browser tabs where possible.
+  document.addEventListener('keydown', (e) => {
+    if (!locked()) return;
+    const m = /^Digit([1-9])$/.exec(e.code);
+    if (m) {
+      e.preventDefault();
+      inventory.select(Number(m[1]) - 1);
+    }
+  });
+  document.addEventListener(
+    'wheel',
+    (e) => {
+      if (!locked() || e.deltaY === 0) return;
+      inventory.selectNext(e.deltaY > 0 ? 1 : -1);
+    },
+    { passive: true },
+  );
 
   // --- breaking
 
@@ -409,6 +449,12 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     const def = blockDef(target.id);
     world.setBlock(target.x, target.y, target.z, BLOCK.AIR);
     if (breakPlan.drops) spawnDrops(def, target.x, target.y, target.z);
+    // Breaking a real block with a tool wears it (instant-break blocks like
+    // torches don't, matching vanilla). damageSelected is a no-op for items
+    // without durability; a tool that hits 0 vanishes from the slot.
+    if (def.hardness > 0 && parseHeldTool(inventory.selectedName)) {
+      inventory.damageSelected(1);
+    }
     breakCooldown = INTERACTION.BREAK_COOLDOWN_SECONDS;
     resetBreak();
     // The targeted block no longer exists; drop the stale target so a place
@@ -427,7 +473,7 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     if (key !== breakKey) {
       breakKey = key;
       breakProgress = 0;
-      breakPlan = miningPlan(blockDef(target.id), heldItem);
+      breakPlan = miningPlan(blockDef(target.id), inventory.selectedName);
     }
     if (swingT >= 1) startSwing(); // keep swinging while mining
     if (breakPlan.time <= 0) {
@@ -444,20 +490,20 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     if (!target) return;
     const [fx, fy, fz] = target.face;
     if (fx === 0 && fy === 0 && fz === 0) return; // ray started inside it
-    if (!selectedBlock || (collected.get(selectedBlock) ?? 0) <= 0) return;
-    const id = blockIdByName(selectedBlock);
-    if (id === null) return;
+    const name = inventory.selectedName;
+    if (!name) return;
+    const id = blockIdByName(name);
+    if (id === null) return; // the selection isn't a placeable block
     const x = target.x + fx;
     const y = target.y + fy;
     const z = target.z + fz;
     // Outside the world's vertical range setBlock is a silent no-op — don't
-    // let it eat the collected count.
+    // let it eat the stack count.
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
     if (!isReplaceable(world.getBlock(x, y, z))) return;
     if (placementBlockedByPlayer(x, y, z, player.body.position)) return;
     world.setBlock(x, y, z, id);
-    collected.set(selectedBlock, collected.get(selectedBlock) - 1);
-    refreshHeldMesh(); // count may have hit zero
+    inventory.consumeSelected(1); // the hand refreshes via the subscription
     startSwing();
   }
 
@@ -467,16 +513,6 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
     if (placeTimer > 0) return;
     placeTimer = INTERACTION.PLACE_REPEAT_SECONDS;
     tryPlace();
-  }
-
-  // --- pickup (wired to the item manager by main.js)
-
-  function notifyPickup(name, count) {
-    collected.set(name, (collected.get(name) ?? 0) + count);
-    if (blockIdByName(name) !== null) {
-      selectedBlock = name; // the freshest block pickup becomes the selection
-      refreshHeldMesh();
-    }
   }
 
   // --- per-frame update
@@ -541,28 +577,14 @@ export function createInteraction({ world, camera, scene, canvas, player, items 
 
   return {
     update,
-    notifyPickup,
-    collected, // read-only by convention (debug/tests)
     get target() {
       return target;
     },
     get breakProgress() {
       return breakProgress;
     },
-    get selectedBlock() {
-      return selectedBlock;
-    },
-    // Dev scaffolding until the inventory phase: pick what the hand holds.
-    setHeldItem(name) {
-      heldItem = name ?? null;
-      resetBreak();
-    },
-    setSelectedBlock(name) {
-      selectedBlock = name;
-      refreshHeldMesh();
-    },
     debugState() {
-      return { mouseLeft, mouseRight, heldItem, swingT, hand, outline, crackMesh };
+      return { mouseLeft, mouseRight, shownItem, swingT, hand, arm, outline, crackMesh };
     },
     // Test scaffolding: drive the mouse without real events.
     debugSetMouse(left, right) {

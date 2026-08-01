@@ -18,6 +18,18 @@
 //                (later) item registry; empty array = drops nothing
 //   solid        has a collision box
 //   transparent  does NOT fully occlude neighbouring faces (meshing/culling)
+//   selfCull     transparent blocks only: cull faces between same-id
+//                neighbours so runs merge into one surface (water, glass).
+//                Leaves and cactus override to false — every interior plane
+//                renders (one quad per plane), so canopies read as a dense
+//                mass and stacked cacti show their top faces through the
+//                side-face gap.
+//   occludesAO   contributes to ambient occlusion corners. Defaults to
+//                solid && !transparent; leaves override to true so canopy
+//                interiors darken like vanilla.
+//   inset        horizontal shrink of the visual side faces AND the collision
+//                box (blocks): cactus renders and collides 1/16 in from the
+//                cell edge, so stacked cacti read as continuous.
 //   light        emitted light level 0-15
 //   opacity      light levels absorbed per block during propagation:
 //                15 = blocks light entirely (default for non-transparent),
@@ -25,6 +37,7 @@
 //                water and leaves absorb partially
 
 import { TILE } from '../render/atlas.js';
+import { SHAPES } from '../config.js';
 
 // Numeric block ids. Chunk data is a Uint8Array of these, so keep ids < 256.
 // Append new blocks at the end — never renumber existing ids.
@@ -102,6 +115,9 @@ function register(id, name, displayName, props) {
     drops,
     solid = true,
     transparent = false,
+    selfCull = true,
+    occludesAO = solid && !transparent,
+    inset = 0,
     light = 0,
     opacity = transparent ? 0 : 15,
     falls = false,
@@ -124,6 +140,9 @@ function register(id, name, displayName, props) {
     drops: drops ?? [{ item: name, count: 1 }],
     solid,
     transparent,
+    selfCull,
+    occludesAO,
+    inset,
     light,
     opacity,
     falls,
@@ -170,6 +189,7 @@ register(BLOCK.OAK_PLANKS, 'oak_planks', 'Oak Planks', {
 });
 register(BLOCK.OAK_LEAVES, 'oak_leaves', 'Oak Leaves', {
   faces: { all: TILE.OAK_LEAVES }, hardness: 0.2, transparent: true, opacity: 1,
+  selfCull: false, occludesAO: true,
   drops: [
     { item: 'oak_sapling', count: 1, chance: 0.05 },
     { item: 'apple', count: 1, chance: 0.005 },
@@ -237,6 +257,7 @@ register(BLOCK.TORCH, 'torch', 'Torch', {
 register(BLOCK.CACTUS, 'cactus', 'Cactus', {
   faces: { top: TILE.CACTUS_TOP, bottom: TILE.CACTUS_TOP, side: TILE.CACTUS_SIDE },
   hardness: 0.4, transparent: true, damagesOnContact: true, special: 'cactus',
+  selfCull: false, inset: SHAPES.CACTUS_INSET,
 });
 register(BLOCK.SANDSTONE, 'sandstone', 'Sandstone', {
   faces: { top: TILE.SANDSTONE_TOP, bottom: TILE.SANDSTONE_TOP, side: TILE.SANDSTONE },
