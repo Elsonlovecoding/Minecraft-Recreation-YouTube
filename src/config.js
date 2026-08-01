@@ -197,6 +197,7 @@ export const PLAYER = {
   SPRINT_SPEED: 5.6,
   SNEAK_SPEED: 1.3,
   SWIM_SPEED: 2.2,
+  SWIM_SPRINT_SPEED: 5.6,       // vanilla swim-sprint pace (sprint fully submerged)
 
   // Vertical physics
   JUMP_VELOCITY: 8.5,           // initial upward velocity, clears ~1.1 blocks
@@ -216,15 +217,15 @@ export const PLAYER = {
   SPRINT_JUMP_BOOST: 4,         // forward blocks/s added by a sprinting jump
   SLOW_BLOCK_FACTOR: 0.4,       // speed multiplier on `slows` blocks (soul sand)
 
-  // 1-block auto-step (no jump needed) and the sneak edge guard
-  STEP_HEIGHT: 1.0,             // walk straight up ledges this tall
-  SNEAK_EDGE_DROP: 1.0,         // sneaking refuses moves with no floor within this
+  // Auto-step (no jump needed) and the sneak edge guard. Vanilla's step
+  // height is 0.6: slabs and stairs auto-step, full blocks require a jump.
+  STEP_HEIGHT: 0.6,             // walk straight up ledges this tall
+  SNEAK_EDGE_DROP: 0.6,         // sneaking refuses moves with no floor within this
   SNEAK_CLAMP_INCREMENT: 0.05,  // granularity of the sneak edge clamp
 
   // Swimming
   SWIM_MIN_SUBMERSION: 0.35,    // waterline fraction of body height where water
                                 // physics take over from walking
-  SHALLOW_JUMP_MAX_SUBMERSION: 0.7, // grounded below this submersion, jumps are real
   WATER_DRAG: 4.5,              // 1/s velocity damping in water
   WATER_GRAVITY: 8,             // blocks/s² downward pull in water
   WATER_BUOYANCY: 1.4,          // buoyant lift as a multiple of water gravity at
@@ -236,6 +237,7 @@ export const PLAYER = {
   BREATH_SECONDS: 15,           // air supply while the eye is underwater
   BREATH_REFILL_RATE: 4,        // refill speed multiplier once surfaced
   BREATH_BUBBLES: 10,           // bubbles on the HUD breath meter
+  SWIM_EYE_HEIGHT: 0.62,        // eye height while swim-sprinting (prone body)
 
   // Falling (damage itself is applied by the stats phase)
   FALL_DAMAGE_THRESHOLD: 3,     // safe fall height in blocks
@@ -293,11 +295,55 @@ export const MOBS = {
 
 export const ITEMS = {
   MAGNET_RADIUS: 1.5,             // items magnetise to the player within this
+  MAGNET_SPEED: 6,                // blocks/s pull toward the player while magnetised
+  PICKUP_RADIUS: 0.6,             // distance to the player's centre that collects
+  PICKUP_DELAY_SECONDS: 0.4,      // fresh drops pop before they can be collected
   BOB_SPEED: 2.0,                 // bobbing cycles per second
   BOB_HEIGHT: 0.1,
   ROTATE_SPEED: 1.5,              // radians per second
   DESPAWN_SECONDS: 300,
   MAX_STACK: 64,
+  GRAVITY: 16,                    // blocks/s² on dropped items
+  GROUND_FRICTION: 8,             // 1/s horizontal damping once resting
+  WATER_FLOAT_SPEED: 0.8,         // blocks/s items rise toward the water surface
+  WATER_FLOAT_RESPONSE: 4,        // 1/s approach rate to the float speed
+  WATER_HORIZONTAL_DRAG: 2,       // 1/s horizontal damping while floating
+  POP_SPEED_UP: 3.2,              // upward pop when a broken block drops
+  POP_SPEED_SIDE: 1.6,            // random horizontal scatter on drop
+  BLOCK_SCALE: 0.25,              // edge length of a dropped mini-block
+  SPRITE_SCALE: 0.35,             // edge length of a dropped flat item sprite
+  REST_CLEARANCE: 0.02,           // items rest this far above the ground plane
+  DROP_SPAWN_Y_OFFSET: 0.25,      // drops spawn this far above the broken cell floor
+  VOID_DESPAWN_DEPTH: 16,         // items despawn this far below the world bottom
+};
+
+// ---------------------------------------------------------------------------
+// Block interaction (break / place / outline / hand)
+// ---------------------------------------------------------------------------
+
+export const INTERACTION = {
+  BREAK_COOLDOWN_SECONDS: 0.3,    // pause after a break before the next starts
+  PLACE_REPEAT_SECONDS: 0.25,     // hold-to-place repeat interval
+  OUTLINE_COLOR: 0x000000,        // targeted face outline
+  OUTLINE_OPACITY: 0.75,
+  OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)
+  CRACK_INFLATE: 0.008,           // crack overlay cube inflation over the block
+  CRACK_TEXTURE_SIZE: 16,         // pixels per generated crack stage tile
+  HAND: {
+    POSITION: [0.42, -0.44, -0.62],  // camera-space resting spot (right, down, fwd)
+    ARM_SIZE: [0.22, 0.22, 0.65],    // first-person arm box dimensions
+    ARM_TILT: [0.35, -0.25, 0.1],    // resting rotation (radians)
+    ARM_FORWARD: 0.25,               // arm reach forward, fraction of its length
+    BLOCK_SCALE: 0.36,               // held mini-block edge length
+    BLOCK_LIFT: 0.15,                // held block raise, fraction of its size
+    BLOCK_FORWARD: 0.45,             // held block reach, fraction of arm length
+    SWING_SECONDS: 0.28,             // one swing animation
+    SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
+    SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)
+    SWING_SIDE: 0.35,                // sideways dip, fraction of SWING_DIP
+    SWING_FORWARD: 0.25,             // forward dip, fraction of SWING_DIP
+    SWING_YAW: 0.25,                 // yaw twist, fraction of SWING_ROTATION
+  },
 };
 
 // ---------------------------------------------------------------------------

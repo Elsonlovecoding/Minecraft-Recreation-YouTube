@@ -353,9 +353,16 @@ Object.freeze(BLOCK);
 // ---------------------------------------------------------------------------
 
 const AIR_DEF = BLOCKS[BLOCK.AIR];
+const ID_BY_NAME = new Map(BLOCKS.map((def) => [def.name, def.id]));
 
 export function blockDef(id) {
   return BLOCKS[id] ?? AIR_DEF;
+}
+
+// Block id for a registry name ('dirt' -> BLOCK.DIRT), or null when the name
+// is not a block (item-only drops like 'coal').
+export function blockIdByName(name) {
+  return ID_BY_NAME.get(name) ?? null;
 }
 
 export function isSolid(id) {

@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 5 — the player (physics, collision, first-person controller, swimming, safe spawn)**
+Phase last completed: **Phase 6 — block interaction (raycast targeting, breaking with cracks, placing, dropped items, first-person hand) + Phase 5 movement bug fixes**
 
 ---
 
@@ -211,6 +211,74 @@ Phase last completed: **Phase 5 — the player (physics, collision, first-person
   `logTerrainProfile` (ASCII heightmap side-view with water and biome strip),
   `logColumn` (run-length block spans of one column), `logBlockCensus`
   (block counts across loaded chunks).
+- `src/player/interaction.js` — Phase 6 block interaction, in two layers:
+  (1) **Pure logic** (node-tested): `raycastVoxel` — Amanatides & Woo voxel
+  DDA from the camera eye along the look direction, PLAYER.REACH (5) blocks,
+  visiting every crossed cell in order (no corner skipping, negative coords
+  exact); returns cell, id, entered-face normal and distance; targets
+  anything with a non-null hardness (so torches and leaves yes; air, fluids
+  and portal interiors are looked through). `miningPlan(def, heldItem)` —
+  SPEC rules: hardness = seconds at 1x; a held tool of the block's preferred
+  class applies its tier speed multiplier; the tier gate uses that class
+  (wrong class counts as hand), below `minTier` the time is divided by
+  `WRONG_TIER_SPEED_MULTIPLIER` and NOTHING drops; hardness 0 = instant,
+  Infinity (bedrock) = never. `isReplaceable` (air + fluids),
+  `placementBlockedByPlayer` (block-cell vs player-AABB overlap, exact face
+  contact allowed), `parseHeldTool` ('wooden_pickaxe' → class+tier).
+  (2) **createInteraction** — per frame: raycast, black LineLoop outline
+  floated `OUTLINE_OFFSET` off the targeted face; hold-left-to-break with
+  progress reset on target change, `BREAK_COOLDOWN_SECONDS` between breaks,
+  crack overlay (inflated cube over the block, 10 generated destroy-stage
+  CanvasTextures — cumulative seeded random-walk cracks, so stages grow one
+  fracture); on completion `world.setBlock(air)` + drop spawning per the
+  registry drops table (chance and [min,max] counts honoured; the crack
+  material uses multiply-with-alpha blending so cracks darken the face's
+  own lit colour — dark at night, never a fullbright glow); right-click
+  places the selected block against the targeted face into air/fluid cells
+  only, never overlapping the player, never outside the world's vertical
+  range, repeating every `PLACE_REPEAT_SECONDS` while held; `finishBreak`
+  nulls the target so a same-frame place can't build against a face that
+  was just broken; first-person hand (camera child, drawn depth-free over
+  the world like vanilla so point-blank walls can't swallow it) — a
+  generated pixel-skin arm, or a mini-cube of the block about to be placed —
+  swings on click, on place and continuously while mining. Until the
+  inventory phase a proto-inventory lives here: collected drops in a counts
+  map, the freshest block pickup becomes the placeable selection, placing
+  decrements it (`setHeldItem`/`setSelectedBlock`/`debugSetMouse` are dev
+  scaffolding, `window.__interaction` exposed).
+- `src/entities/items.js` — dropped item entities: point physics with the
+  item's midpoint as the collision probe both ways (cell-sweep landing with
+  no tunnelling; a rising item stops UNDER a ceiling — it can never poke
+  into the cell and get squeeze-popped through, verified in a flooded
+  cavern under a submerged roof), ground vanishing re-falls, a block placed
+  into an item's cell pops it on top (the intended squeeze path), water
+  float + drag; visuals as bobbing/rotating mini-blocks (atlas per-face UVs
+  + face-brightness vertex colours, shared geometry/material caches) or
+  flat item sprites from assets/items/*.png; magnetise to the player's body
+  centre within `ITEMS.MAGNET_RADIUS` (1.5) — the pull goes through the
+  same collision move, so walls block it (no vacuuming drops through solid
+  blocks); collected at `PICKUP_RADIUS` after `PICKUP_DELAY_SECONDS`,
+  despawn after `DESPAWN_SECONDS` or `VOID_DESPAWN_DEPTH` below the world;
+  items whose chunk is unloaded freeze entirely (physics would otherwise
+  regenerate the chunk synchronously outside the streaming budget on every
+  border crossing); broken-block drops pop up with random scatter.
+  `createBlockMesh` is shared with the hand. `window.__items` exposed.
+- Phase 5 movement bug fixes (this session, overriding earlier notes):
+  step height is vanilla 0.6 (`STEP_HEIGHT`/`SNEAK_EDGE_DROP` 0.6) — full
+  1-block ledges now require a jump, and sneaking refuses 1-block drops like
+  vanilla; while ANY part of the body touches water, space swims up slowly
+  (no more normal jumps from shallow pools or pool edges — the shallow-jump
+  special case and `SHALLOW_JUMP_MAX_SUBMERSION` are gone; bank exits still
+  ride the water exit hop; a dry centre column — only a box corner clipping
+  the pool, submersion 0 — keeps full gravity and no swim thrust, so the
+  pool edge can't levitate the player over dry land); sprinting while fully
+  submerged triggers the vanilla swim mechanic: `body.swimSprinting` swims
+  fast (`SWIM_SPRINT_SPEED`) toward the look direction (pitch-driven
+  vertical, `input.pitch` now part of the body input), lowers the eye to
+  `SWIM_EYE_HEIGHT` (prone feel) and widens the FOV like a land sprint.
+  Entry AND persistence key off the STANDING eye height, so surfacing drops
+  the prone mode — surface swimming can't self-sustain on its own lowered
+  eye and drain breath. `toggleFly` clears the flag.
 
 Phase 2 verification (still holds): Node checks against the real modules —
 chunk-order determinism (byte-identical chunks regardless of generation
@@ -276,16 +344,85 @@ finding independently verified with repros) confirmed and led to fixes for:
 ceiling-hit grounding (hover exploit), framerate-dependent water exit, the
 jump cooldown, Ctrl-chord browser shortcuts, the pointer-lock cooldown
 rejection, breath frozen in fly mode, and crosshair-over-hint stacking.
+(Phase 5 note: the auto-step checks above were written against the old
+1-block step height; Phase 6 corrected it to vanilla 0.6 — full blocks now
+require a jump, re-verified below.)
+
+Phase 6 verification: 70 node checks against the real modules — raycast
+geometry (axis-aligned/diagonal/negative directions, boundary origins,
+through-water, inside-block starts, reach limit), mining plans for every
+tool/tier/block matrix corner (dirt/stone/ores/obsidian/bedrock/torch,
+wrong-class = hand gate, wrong tier slow + no drops), replaceability,
+player-overlap placement rejection (incl. straddled cells and exact face
+contact), and the movement fixes (1-block ledge blocks walking / jump
+clears it / flat speed unchanged; shallow-pool and pool-edge space = slow
+swim, never jump velocity; submerged ascent kept; swim-sprint engage speed
++ pitch dive + disengage; bank climb-out at 30/60/144fps; pillar + 1-block
+drop sneak guards; dry jump height; landing report). 25 headless-Chromium
+gameplay checks against the running game (boot with zero console errors;
+crosshair raycast + top-face targeting + visible outline; hold-to-break
+with crack overlay and continuous hand swing; drop magnetised and picked
+up; pickup drives the held mini-block and place selection; in-player
+placement rejected; place onto a targeted face consumes the count;
+wrong-tier stone survives punching, wooden pickaxe breaks it, cobblestone
+entity bobs in the world and magnetises within 1.5; the 1-block wall no
+longer auto-steps and a jump clears it; shallow-water space swims up
+slowly; submerged sprint engages swim mode and lowers the eye; hand is a
+camera child). Screenshots confirm the look: black face outline, spreading
+cracks, pixel arm and held dirt mini-block, placed blocks, a cobblestone
+drop resting on grass.
+
+An adversarial multi-agent review (4 lenses — correctness, spec fidelity,
+regression, edge cases — each independently probing the real modules in
+node and the running browser game) then confirmed and led to fixes for:
+rising items tunnelling up through solid ceilings (midpoint collision both
+ways now; flooded-cavern and dry-bonk probes); items in unloaded chunks
+forcing synchronous chunk regeneration on every border crossing (frozen
+until the chunk reloads); same-frame placement against a just-broken face
+(stale target nulled); placing at the world ceiling eating the collected
+count (vertical range guard); pool-edge levitation (full gravity on a dry
+centre column); surface swim-sprint self-sustaining and draining breath
+(standing-eye rule); the crack overlay glowing fullbright at night
+(multiply-with-alpha blending); the magnet vacuuming drops through walls
+(collision-checked pull); the hand being swallowed by point-blank walls
+(depth-free draw over the world); a stale `swimSprinting` flag across the
+fly toggle; plus config extraction of remaining tunables and comment
+fixes. 14 regression checks were added for these — 109 automated checks
+total (84 node + 25 browser), all passing, zero console errors.
 
 ---
 
 ## Partially built
 
 - The rest of `src/` exists as empty stub modules with responsibility headers
-  (world/caves.js, player/interaction.js, player/inventory.js,
-  player/stats.js, entities/, systems/, dimensions/, ui/screens.js).
+  (world/caves.js, player/inventory.js, player/stats.js, entities/entity.js,
+  entities/mobs.js, entities/pathfinding.js, entities/dragon.js, systems/,
+  dimensions/, ui/screens.js).
 - `ui/hud.js` is the Phase 5 slice only (crosshair + breath bubbles);
   hotbar, hearts and hunger come with inventory/stats.
+- Phase 6 deliberate slices, replaced by later phases:
+  - The proto-inventory (counts map in interaction.js, freshest pickup =
+    selection) is scaffolding — inventory.js will own items/hotbar and take
+    over `notifyPickup`, the held-item and the place selection.
+    `setHeldItem('iron_pickaxe')` from the console is how to try tools now.
+  - Dropped items and the hand are not lit by world light (unlit atlas
+    material, correct per-face brightness only) — a `getLight` sample can
+    tint them when the mob phase adds it.
+  - `sand`/`gravel` have `falls: true` in the registry, but there is no
+    falling-block entity yet; mined support just leaves them floating.
+  - No break/place/footstep sounds yet (SPEC "feel" row; no audio system).
+  - `oak_sapling` and `glowstone_dust` drops have no shipped item texture;
+    items.js renders stand-ins (leaves mini-block / blaze powder sprite)
+    via its VISUAL_ALIAS map.
+  - Breaking water/lava directly is impossible (not targetable) — bucket
+    interactions are an item-phase concern.
+  - Dropped items never merge into stacks and have no count cap beyond the
+    300s despawn — sustained mining without pickup accumulates one draw
+    call per item. Stack merging belongs to the inventory phase.
+  - Generated-art internals (crack random-walk shape, arm skin palette) are
+    deliberately inline in interaction.js — they are the art itself, not
+    gameplay tunables; everything gameplay-facing (offsets, timings, sizes,
+    swing shape fractions) lives in config.js.
 - The controller exposes but does not consume damage inputs — stats.js later
   wires `body.lastLanding` (fall damage), `body.breath === 0` (drowning),
   and `damagesOnContact` blocks (cactus/lava contact does nothing yet;
@@ -331,11 +468,20 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 6 is either interaction.js (raycast, break/place, block
-  outline, crack overlay — the player can already walk to any block) or
-  caves/ores (fill in `world/caves.js`, hook into the generator — carved
-  caves get correct darkness and torch light for free from the Phase 4
-  flood fill). Both build directly on what exists.
+- Likely Phase 7 is caves/ores (fill in `world/caves.js` — carved caves get
+  correct darkness and torch light for free from the Phase 4 flood fill, and
+  breaking ore already drops the right items) or inventory/stats + hotbar
+  HUD (interaction.js hands over its proto-inventory: replace `notifyPickup`
+  / `setHeldItem` / `setSelectedBlock` with the real inventory, keep the
+  `miningPlan` rules).
+- Phase 6 APIs for later phases: `interaction.notifyPickup(name, count)` is
+  the pickup sink main.js wires into `items.update`; `interaction.target`
+  is the live raycast result ({x,y,z,id,face,distance} or null);
+  `items.spawn(name, count, pos, vel?)` drops anything (mob drops later);
+  `createBlockMesh(blockId, size)` (entities/items.js) builds the mini-block
+  used by both dropped items and the held block — reuse it for item frames /
+  inventory icons rather than re-deriving atlas cubes. Tool durability is
+  deliberately not tracked yet (inventory owns item instances).
 - Player API for later phases: `controller.body` is the physics truth —
   `position` (feet centre), `velocity`, `onGround`, `swimming`,
   `submersion`, `eyeInWater`, `breath`/`maxBreath`, `sneaking`,
@@ -347,9 +493,9 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   `{ getBlock }` — keep it that way; the physics test harness depends on it.
   `findSpawnPosition(world, overrides)` is also pure and node-testable.
 - Movement/physics tuning all lives in `config.js` `PLAYER` (response rates,
-  water feel, bob, spawn search); fly mode in `DEBUG`. The sneak edge guard
-  and auto-step both key off `STEP_HEIGHT`-sized probes — if slabs/stairs
-  ever arrive, revisit `STEP_HEIGHT`/`SNEAK_EDGE_DROP` (0.6 in vanilla).
+  water feel, bob, spawn search); fly mode in `DEBUG`. `STEP_HEIGHT` and
+  `SNEAK_EDGE_DROP` are the vanilla 0.6 as of Phase 6 — when slabs/stairs
+  arrive they will auto-step for free; full blocks require a jump.
 - Browser-chrome caveat: reserved Ctrl+W (close tab) cannot be prevented —
   that's why the hint leads with double-tap sprint, and why fly mode's
   Ctrl-fast + W is a known sharp edge (debug-only, left as is). All other
@@ -415,3 +561,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 3 | Chunk meshing (merged mesh per chunk per pass, face culling, per-face atlas UVs, brightness + vertex AO), opaque/cutout/water passes, budgeted chunk streaming with load/unload around the player, sun/shadow follow, chunk counts in debug overlay; test scene removed | Caves/ores/rivers/lava (caves.js), block-light propagation (torches), player controller/interaction, non-cube shapes for torch/cactus/portals, day/night cycle |
 | 4 | Flood-filled sky+block light (15 levels, per-chunk 3x3 window, seam-free), per-block light opacity, smooth per-vertex light baked with AO into meshes, unlit vanilla-style chunk materials with day-factor/torch-tint uniforms, ~20-min day/night cycle (keyframed sky palette, fog always = horizon, sunrise/sunset glow, square sun+moon), light-radius remesh dirtying on edits, TIME in debug overlay | Caves/ores/rivers/lava (caves.js), player controller/interaction, non-cube special shapes, emissive lava/glowstone polish, mob-facing `getLight` helper |
 | 5 | The player (controller.js): AABB body with exact swept collision (no tunnelling), vanilla-feel accel/friction, walk/sprint(double-tap W or Ctrl, FOV kick)/sneak(edge guard, lowered eye)/jump(0.5s vanilla cooldown), 1-block auto-step with camera smoothing, swimming (buoyant float, breath meter) with framerate-independent bank climb-out, safe surface spawn, first-person pointer-lock camera with view bob, debug fly camera behind F4; hud.js crosshair + breath bubbles; PLAYER config block; adversarially reviewed + 125 automated checks | Break/place (interaction.js), stats.js consuming lastLanding/breath/contact damage, hotbar/hearts HUD, caves/ores (caves.js), non-cube special shapes |
+| 6 | Block interaction (interaction.js): voxel DDA raycast (5 reach), black targeted-face outline, hold-to-break timed by hardness × tool class/tier with wrong-tier very-slow-no-drops, 10-stage generated crack overlay (multiply-blended, night-correct), right-click place onto the targeted face (air/fluid cells only, never inside the player or outside the world, hold-repeat, no stale-face placement), registry-table drops; dropped item entities (items.js): mini-block/sprite visuals, bob + rotate, midpoint collision both ways (no ceiling tunnelling), water float, wall-blocked 1.5-block magnetise, pickup, despawn, unloaded-chunk freeze; first-person depth-free hand (pixel arm or held mini-block) swinging on click/place/mining; proto-inventory scaffolding; Phase 5 fixes: step height 0.6 (jump for full blocks), space-in-any-water swims up slowly (no pool-edge levitation), submerged sprint = vanilla swim mechanic (fast, pitch-driven, prone eye, standing-eye surface disengage); INTERACTION/ITEMS config blocks; adversarially reviewed (4 lenses, all confirmed findings fixed) + 109 automated checks | Inventory/hotbar replacing the proto-inventory, tool durability, item stack merging, falling sand/gravel entities, item/hand world-light tinting, sounds, caves/ores (caves.js), non-cube special shapes |
