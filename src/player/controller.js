@@ -42,6 +42,7 @@ export class PlayerBody {
     this.sprinting = false;
     this.touchingWater = false;   // any part of the box overlaps water
     this.swimming = false;        // deep enough that water physics take over
+    this.swimSprinting = false;   // vanilla swim mechanic: sprinting submerged
     this.submersion = 0;          // fraction of body height under the waterline
     this.eyeInWater = false;
     this.maxBreath = PLAYER.BREATH_SECONDS;
@@ -71,6 +72,13 @@ export class PlayerBody {
     const moving = input.forward !== 0 || input.strafe !== 0;
     this.sprinting =
       !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming;
+    // Vanilla swim mechanic: sprinting while fully submerged tips the body
+    // prone and swims fast toward the look direction. Entry requires the eye
+    // under water (from the previous step's sense); the mode drops as soon as
+    // water physics no longer apply or the sprint intent ends.
+    this.swimSprinting =
+      !!input.sprint && input.forward > 0 && !this.sneaking &&
+      this.swimming && this.eyeInWater;
 
     // Wish direction on the horizontal plane, camera-yaw relative
     const sin = Math.sin(input.yaw);
@@ -84,9 +92,17 @@ export class PlayerBody {
     }
 
     let targetSpeed = c.WALK_SPEED;
-    if (this.swimming) targetSpeed = c.SWIM_SPEED;
-    else if (this.sneaking) targetSpeed = c.SNEAK_SPEED;
+    if (this.swimming) {
+      targetSpeed = this.swimSprinting ? c.SWIM_SPRINT_SPEED : c.SWIM_SPEED;
+    } else if (this.sneaking) targetSpeed = c.SNEAK_SPEED;
     else if (this.sprinting) targetSpeed = c.SPRINT_SPEED;
+    // Swim-sprinting follows the look pitch: the horizontal share shrinks as
+    // the vertical share (applied below) grows.
+    if (this.swimSprinting) {
+      const cosPitch = Math.cos(input.pitch || 0);
+      wx *= cosPitch;
+      wz *= cosPitch;
+    }
     const under = blockDef(
       this.world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.05), Math.floor(p.z)),
     );
@@ -115,10 +131,18 @@ export class PlayerBody {
     let dy;
     const canJump =
       input.jump && this.onGround && this._jumpTimer >= c.JUMP_COOLDOWN_SECONDS;
-    if (this.swimming) {
-      if (canJump && this.submersion < c.SHALLOW_JUMP_MAX_SUBMERSION) {
-        v.y = c.JUMP_VELOCITY; // shallow water: a real jump gets you out
-        this._jumpTimer = 0;
+    if (this.touchingWater) {
+      // While ANY part of the body is in water, space swims upward slowly —
+      // never a normal jump (even grounded in a shallow pool). Climbing out
+      // onto a bank rides the water exit hop below instead.
+      if (this.swimSprinting) {
+        // Swim toward the look direction (vanilla swim): velocity approaches
+        // the pitch-driven vertical wish; jump/sneak still steer up/down.
+        const k = 1 - Math.exp(-c.WATER_RESPONSE * dt);
+        const wishY = Math.sin(input.pitch || 0) * c.SWIM_SPRINT_SPEED;
+        v.y += (wishY - v.y) * k;
+        if (input.jump) v.y += c.SWIM_UP_ACCEL * dt;
+        if (input.sneak) v.y -= c.SWIM_DOWN_ACCEL * dt;
       } else {
         let a = -c.WATER_GRAVITY * (1 - c.WATER_BUOYANCY * this.submersion);
         if (input.jump) a += c.SWIM_UP_ACCEL;
@@ -193,8 +217,9 @@ export class PlayerBody {
       this.fallDistance = this._fallStartY - p.y;
     }
 
-    // Breath
-    const eyeY = p.y + (this.sneaking ? c.SNEAK_EYE_HEIGHT : c.EYE_HEIGHT);
+    // Breath (the prone swim-sprint body carries its eye much lower)
+    const eyeY = p.y + (this.swimSprinting ? c.SWIM_EYE_HEIGHT
+      : this.sneaking ? c.SNEAK_EYE_HEIGHT : c.EYE_HEIGHT);
     this.eyeInWater =
       this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z)) ===
       BLOCK.WATER;
@@ -524,6 +549,7 @@ export function createPlayerController({ world, camera, canvas }) {
             forward: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
             strafe: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
             yaw,
+            pitch,
             jump: keys.has('Space'),
             sneak: keys.has('ShiftLeft') || keys.has('ShiftRight'),
             sprint:
@@ -543,9 +569,11 @@ export function createPlayerController({ world, camera, canvas }) {
     let bobX = 0;
     let bobY = 0;
     if (delta > 0) {
-      // Eye eases between stand/sneak heights; auto-steps ease out
-      const eyeTarget =
-        mode === 'walk' && body.sneaking ? PLAYER.SNEAK_EYE_HEIGHT : PLAYER.EYE_HEIGHT;
+      // Eye eases between stand/sneak/swim heights; auto-steps ease out
+      const eyeTarget = mode !== 'walk' ? PLAYER.EYE_HEIGHT
+        : body.swimSprinting ? PLAYER.SWIM_EYE_HEIGHT
+        : body.sneaking ? PLAYER.SNEAK_EYE_HEIGHT
+        : PLAYER.EYE_HEIGHT;
       eyeHeight += (eyeTarget - eyeHeight) * (1 - Math.exp(-PLAYER.EYE_LERP_RATE * delta));
       stepSmooth *= Math.exp(-PLAYER.STEP_SMOOTH_RATE * delta);
       if (stepSmooth < 0.001) stepSmooth = 0;
@@ -567,9 +595,10 @@ export function createPlayerController({ world, camera, canvas }) {
       p.z + rz * bobX,
     );
     camera.quaternion.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
-    // Sprinting widens the FOV a touch
-    const fovTarget =
-      baseFov + (mode === 'walk' && body.sprinting ? PLAYER.SPRINT_FOV_BOOST : 0);
+    // Sprinting (on land or as a swim) widens the FOV a touch
+    const fovTarget = baseFov +
+      (mode === 'walk' && (body.sprinting || body.swimSprinting)
+        ? PLAYER.SPRINT_FOV_BOOST : 0);
     if (delta > 0) fov += (fovTarget - fov) * (1 - Math.exp(-PLAYER.FOV_LERP_RATE * delta));
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov;

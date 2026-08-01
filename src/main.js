@@ -13,6 +13,8 @@ import { initHud, updateHud } from './ui/hud.js';
 import { World } from './world/world.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createPlayerController } from './player/controller.js';
+import { createInteraction } from './player/interaction.js';
+import { createItemManager } from './entities/items.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -46,6 +48,13 @@ async function init() {
   // height. The old fly camera lives behind DEBUG.FLY_TOGGLE_CODE.
   const player = createPlayerController({ world, camera, canvas });
 
+  // Phase 6: dropped items and block interaction (break/place/outline/hand).
+  // The camera joins the scene so the first-person hand (a camera child)
+  // renders.
+  scene.add(camera);
+  const items = createItemManager({ world, scene });
+  const interaction = createInteraction({ world, camera, scene, canvas, player, items });
+
   const buildStart = performance.now();
   world.prebuild(camera.position);
   console.log(
@@ -64,6 +73,8 @@ async function init() {
   window.__dayNight = dayNight; // e.g. __dayNight.setTimeOfDay(0.75) = midnight
   window.__player = player;
   window.__controls = player; // back-compat alias (setView lives here too)
+  window.__items = items;
+  window.__interaction = interaction;
 
   initDebug();
   initHud();
@@ -72,6 +83,8 @@ async function init() {
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     player.update(delta);
+    interaction.update(delta);
+    items.update(delta, player.position, interaction.notifyPickup);
     world.updateStreaming(camera.position);
     dayNight.update(delta, camera.position); // also recentres the sky dome
     updateHud(player);
