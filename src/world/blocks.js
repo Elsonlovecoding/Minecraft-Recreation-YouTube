@@ -19,6 +19,10 @@
 //   solid        has a collision box
 //   transparent  does NOT fully occlude neighbouring faces (meshing/culling)
 //   light        emitted light level 0-15
+//   opacity      light levels absorbed per block during propagation:
+//                15 = blocks light entirely (default for non-transparent),
+//                0 = light passes freely (default for transparent);
+//                water and leaves absorb partially
 
 import { TILE } from '../render/atlas.js';
 
@@ -99,6 +103,7 @@ function register(id, name, displayName, props) {
     solid = true,
     transparent = false,
     light = 0,
+    opacity = transparent ? 0 : 15,
     falls = false,
     fluid = false,
     damagesOnContact = false,
@@ -120,6 +125,7 @@ function register(id, name, displayName, props) {
     solid,
     transparent,
     light,
+    opacity,
     falls,
     fluid,
     damagesOnContact,
@@ -163,14 +169,14 @@ register(BLOCK.OAK_PLANKS, 'oak_planks', 'Oak Planks', {
   faces: { all: TILE.OAK_PLANKS }, hardness: 2.0, tool: 'axe',
 });
 register(BLOCK.OAK_LEAVES, 'oak_leaves', 'Oak Leaves', {
-  faces: { all: TILE.OAK_LEAVES }, hardness: 0.2, transparent: true,
+  faces: { all: TILE.OAK_LEAVES }, hardness: 0.2, transparent: true, opacity: 1,
   drops: [
     { item: 'oak_sapling', count: 1, chance: 0.05 },
     { item: 'apple', count: 1, chance: 0.005 },
   ],
 });
 register(BLOCK.WATER, 'water', 'Water', {
-  faces: { all: TILE.WATER_STILL }, solid: false, transparent: true,
+  faces: { all: TILE.WATER_STILL }, solid: false, transparent: true, opacity: 1,
   fluid: true, drops: [],
 });
 register(BLOCK.LAVA, 'lava', 'Lava', {
@@ -362,6 +368,12 @@ export function isTransparent(id) {
 
 export function lightLevel(id) {
   return blockDef(id).light;
+}
+
+// Light levels absorbed per block during propagation (0 = passes freely,
+// 15 = fully blocks).
+export function lightOpacity(id) {
+  return blockDef(id).opacity;
 }
 
 // Face tiles in BoxGeometry order [px, nx, py, ny, pz, nz]; null for

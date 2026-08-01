@@ -3,12 +3,15 @@
 // Uint8Array, rendered as one merged mesh per material pass (opaque / cutout /
 // translucent water). Only faces touching air or a transparent block are
 // emitted; interior faces never exist. Per-face brightness and vertex AO are
-// baked into vertex colours.
+// baked into vertex colours; flood-filled sky/block light (render/lighting.js)
+// is baked into a per-vertex `light` attribute that the patched chunk
+// materials combine with the time-of-day uniforms.
 
 import * as THREE from 'three';
 import { CHUNK, OVERWORLD, LIGHTING, RENDER } from '../config.js';
 import { BLOCK, BLOCKS } from './blocks.js';
 import { getUV } from '../render/atlas.js';
+import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
 
 const SIZE = CHUNK.SIZE;
 const HEIGHT = CHUNK.HEIGHT;
@@ -31,6 +34,7 @@ export class Chunk {
     this.dirty = true;    // block data changed since the mesh was last built
     this.mesh = null;     // { group, geometries } once meshed (world.js owns it)
     this.modified = false; // touched by setBlock — data is never discarded
+    this._lightMeta = null; // lighting cache (render/lighting.js), lazy
   }
 
   // lx/lz must be 0..SIZE-1 (world.js converts world coords); y is a world
@@ -47,6 +51,7 @@ export class Chunk {
   set(lx, y, lz, id) {
     if (y < MIN_Y || y >= MIN_Y + HEIGHT) return;
     this.blocks[Chunk.index(lx, y, lz)] = id;
+    this._lightMeta = null; // heightmap/emitters may have changed
   }
 }
 
@@ -124,18 +129,23 @@ function tileUV(tile) {
 // Materials (shared by every chunk; created once in main.js)
 // ---------------------------------------------------------------------------
 
+// Chunk materials are unlit (MeshBasicMaterial): like the game itself, all
+// shading comes from the baked per-face brightness, AO and flood-filled light
+// (patchChunkMaterial injects the light response). Scene lights and shadow
+// maps no longer touch terrain — the Phase 3 sun shadows are retired in
+// favour of the vanilla look.
 export function createChunkMaterials(atlasTexture) {
-  const opaque = new THREE.MeshLambertMaterial({
+  const opaque = new THREE.MeshBasicMaterial({
     map: atlasTexture,
     vertexColors: true,
   });
-  const cutout = new THREE.MeshLambertMaterial({
+  const cutout = new THREE.MeshBasicMaterial({
     map: atlasTexture,
     vertexColors: true,
     alphaTest: RENDER.CUTOUT_ALPHA_TEST,
     side: THREE.DoubleSide,
   });
-  const water = new THREE.MeshLambertMaterial({
+  const water = new THREE.MeshBasicMaterial({
     map: atlasTexture,
     vertexColors: true,
     transparent: true,
@@ -143,14 +153,10 @@ export function createChunkMaterials(atlasTexture) {
     depthWrite: false,
     side: THREE.DoubleSide,
   });
-  // Explicit depth material so cutout blocks cast hole-punched shadows
-  // instead of full-cube ones.
-  const cutoutDepth = new THREE.MeshDepthMaterial({
-    depthPacking: THREE.RGBADepthPacking,
-    map: atlasTexture,
-    alphaTest: RENDER.CUTOUT_ALPHA_TEST,
-  });
-  return { opaque, cutout, water, cutoutDepth };
+  patchChunkMaterial(opaque);
+  patchChunkMaterial(cutout);
+  patchChunkMaterial(water);
+  return { opaque, cutout, water };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +164,13 @@ export function createChunkMaterials(atlasTexture) {
 // ---------------------------------------------------------------------------
 
 function newBucket() {
-  return { pos: [], nor: [], col: [], uv: [], idx: [], count: 0 };
+  return { pos: [], col: [], lig: [], uv: [], idx: [], count: 0 };
 }
 
 // Builds the merged meshes for one chunk. getChunkAt(cx, cz) must return the
 // already-generated Chunk for every coordinate in the 3x3 neighbourhood —
-// world.js only meshes chunks whose neighbours all exist, so culling and AO
-// read identical data no matter which chunk meshes first.
+// world.js only meshes chunks whose neighbours all exist, so culling, AO and
+// light read identical data no matter which chunk meshes first.
 // Returns { group, geometries }; positions are chunk-local in x/z (the group
 // is placed at the chunk origin) and world-space in y.
 export function buildChunkMesh(chunk, getChunkAt, materials) {
@@ -183,11 +189,41 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     return c.get(lx & SIZE_MASK, y, lz & SIZE_MASK);
   };
 
+  // Flood-filled sky/block light over the 3x3 window (render/lighting.js).
+  // The returned arrays are shared scratch, consumed before the next mesh.
+  // `blocks` in the window is the same data getId reads, flattened; AO and
+  // light sample it below at chunk-local coords lx+SIZE, lz+SIZE, iy.
+  const light = computeLightWindow(nbrs);
+  const wSky = light.sky;
+  const wBlk = light.block;
+  const wIds = light.blocks;
+  const W = SIZE * 3;
+
   const buckets = [null, newBucket(), newBucket(), newBucket()];
   const aoStrength = LIGHTING.AO_STRENGTH;
   const waterSink = RENDER.WATER_SURFACE_SINK;
   const blocks = chunk.blocks;
   const ao = [1, 1, 1, 1];
+  const vSky = [0, 0, 0, 0];
+  const vBlk = [0, 0, 0, 0];
+
+  // One window cell sampled for AO + vertex light, written to the s* outs.
+  // Outside the world vertically: air, full sky above, darkness below.
+  let sOcc = 0;
+  let sSky = 0;
+  let sBlk = 0;
+  const sample = (lx, iy, lz) => {
+    if (iy < 0 || iy >= HEIGHT) {
+      sOcc = 0;
+      sSky = iy >= HEIGHT ? 15 : 0;
+      sBlk = 0;
+      return;
+    }
+    const i = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + iy;
+    sOcc = OCCLUDES_AO[wIds[i]];
+    sSky = wSky[i];
+    sBlk = wBlk[i];
+  };
 
   for (let lz = 0; lz < SIZE; lz++) {
     for (let lx = 0; lx < SIZE; lx++) {
@@ -224,20 +260,43 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           // both sides while a coplanar pair would z-fight.
           if (nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid) continue;
 
-          // Vertex AO from the three cells around each corner (skipped for
-          // water — the surface should stay evenly lit).
-          if (pass !== PASS_WATER) {
-            for (let k = 0; k < 4; k++) {
-              const [o1, o2, o3] = face.ao[k];
-              const s1 = OCCLUDES_AO[getId(lx + o1[0], y + o1[1], lz + o1[2])];
-              const s2 = OCCLUDES_AO[getId(lx + o2[0], y + o2[1], lz + o2[2])];
-              const occ = s1 && s2
-                ? 3
-                : s1 + s2 + OCCLUDES_AO[getId(lx + o3[0], y + o3[1], lz + o3[2])];
+          // The cell in front of the face: every vertex samples it, and it
+          // stands in for corner cells that light can't reach.
+          const fy = iy + d[1];
+          let fSky = 15;
+          let fBlk = 0;
+          if (fy < HEIGHT) {
+            const fIdx = ((lz + d[2] + SIZE) * W + (lx + d[0] + SIZE)) * HEIGHT + fy;
+            fSky = wSky[fIdx];
+            fBlk = wBlk[fIdx];
+          }
+
+          // Vertex AO and smooth light from the three cells around each
+          // corner (in the plane just outside the face) plus the front cell.
+          // AO is skipped for water — the surface should stay evenly lit —
+          // but water still takes the smooth light so depth darkens it.
+          for (let k = 0; k < 4; k++) {
+            const [o1, o2, o3] = face.ao[k];
+            sample(lx + o1[0], iy + o1[1], lz + o1[2]);
+            const s1 = sOcc;
+            const sky1 = sSky;
+            const blk1 = sBlk;
+            sample(lx + o2[0], iy + o2[1], lz + o2[2]);
+            const s2 = sOcc;
+            const sky2 = sSky;
+            const blk2 = sBlk;
+            sample(lx + o3[0], iy + o3[1], lz + o3[2]);
+            // Light can't turn a sealed corner: if both edge cells occlude,
+            // the diagonal cell's light is unreachable — use the front cell.
+            const sealed = s1 !== 0 && s2 !== 0;
+            if (pass !== PASS_WATER) {
+              const occ = sealed ? 3 : s1 + s2 + sOcc;
               ao[k] = 1 - (aoStrength * occ) / 3;
+            } else {
+              ao[k] = 1;
             }
-          } else {
-            ao[0] = ao[1] = ao[2] = ao[3] = 1;
+            vSky[k] = (fSky + sky1 + sky2 + (sealed ? fSky : sSky)) * (1 / 60);
+            vBlk[k] = (fBlk + blk1 + blk2 + (sealed ? fBlk : sBlk)) * (1 / 60);
           }
 
           const { u0, v0, u1, v1 } = tileUV(tiles[fi]);
@@ -246,15 +305,20 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           for (let k = 0; k < 4; k++) {
             const c = face.corners[k];
             bucket.pos.push(lx + c[0], c[1] ? topY : y, lz + c[2]);
-            bucket.nor.push(d[0], d[1], d[2]);
             bucket.uv.push(c[3] ? u1 : u0, c[4] ? v1 : v0);
             const shade = brightness * ao[k];
             bucket.col.push(shade, shade, shade);
+            bucket.lig.push(vSky[k], vBlk[k]);
           }
 
-          // Split the quad along the diagonal with less occlusion so AO
-          // interpolates without the classic anisotropy artefact.
-          if (ao[0] + ao[3] > ao[1] + ao[2]) {
+          // Split the quad along the diagonal with less occlusion (and less
+          // light) so shading interpolates without the classic anisotropy
+          // artefact.
+          const w0 = ao[0] + vSky[0] + vBlk[0];
+          const w1 = ao[1] + vSky[1] + vBlk[1];
+          const w2 = ao[2] + vSky[2] + vBlk[2];
+          const w3 = ao[3] + vSky[3] + vBlk[3];
+          if (w0 + w3 > w1 + w2) {
             bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
           } else {
             bucket.idx.push(base, base + 1, base + 3, base, base + 3, base + 2);
@@ -271,28 +335,24 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   group.updateMatrix();
 
   const geometries = [];
-  const addMesh = (bucket, material, { shadows = false, depthMaterial = null } = {}) => {
+  // No normals: the unlit chunk materials never read them. `light` carries
+  // vec2(sky, block) light levels normalised to 0..1 for the shader patch.
+  const addMesh = (bucket, material) => {
     if (bucket.count === 0) return;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(bucket.pos, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(bucket.nor, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(bucket.col, 3));
+    geometry.setAttribute('light', new THREE.Float32BufferAttribute(bucket.lig, 2));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uv, 2));
     geometry.setIndex(bucket.idx);
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    if (depthMaterial) mesh.customDepthMaterial = depthMaterial;
     mesh.matrixAutoUpdate = false;
     group.add(mesh);
     geometries.push(geometry);
   };
 
-  addMesh(buckets[PASS_OPAQUE], materials.opaque, { shadows: true });
-  addMesh(buckets[PASS_CUTOUT], materials.cutout, {
-    shadows: true,
-    depthMaterial: materials.cutoutDepth,
-  });
+  addMesh(buckets[PASS_OPAQUE], materials.opaque);
+  addMesh(buckets[PASS_CUTOUT], materials.cutout);
   addMesh(buckets[PASS_WATER], materials.water);
 
   return { group, geometries };

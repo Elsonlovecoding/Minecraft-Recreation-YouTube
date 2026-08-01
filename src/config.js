@@ -250,6 +250,8 @@ export const ITEMS = {
 
 export const TIME = {
   DAY_LENGTH_SECONDS: 1200,       // full day/night cycle ~20 minutes
+  START_TIME: 0.04,               // day fraction at boot (just after sunrise);
+                                  // t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
 };
 
 export const LIGHTING = {
@@ -258,9 +260,15 @@ export const LIGHTING = {
   GLOWSTONE_LIGHT: 15,
   // Per-face brightness multipliers (the Minecraft look)
   FACE_BRIGHTNESS: { top: 1.0, side: 0.8, bottom: 0.5 },
-  AO_STRENGTH: 0.5,               // ambient occlusion darkening at corners
-  SUN_INTENSITY: 2.5,
-  SUN_POSITION: [60, 100, 40],    // fixed noon sun until the day/night cycle
+  AO_STRENGTH: 0.45,              // ambient occlusion darkening at corners
+  // Brightness multiplier per missing light level: level L renders at
+  // LIGHT_FALLOFF^(15-L), so level 0 bottoms out near-black, not pure black.
+  LIGHT_FALLOFF: 0.8,
+  TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
+  NIGHT_SKY_TINT: 0x8fa8e8,       // cool moonlight tint on skylight at night
+  SUN_INTENSITY: 2.5,             // directional light (entities in later phases)
+  SUN_DISTANCE: 300,              // directional light offset from the focus point
+  SUN_TILT: 0.25,                 // z-lean of the sun's orbital plane
   AMBIENT_INTENSITY: 0.9,
   AMBIENT_SKY_COLOR: 0xcfe5ff,    // hemisphere light from above
   AMBIENT_GROUND_COLOR: 0x8a7a5a, // earthy bounce from below
@@ -271,7 +279,8 @@ export const LIGHTING = {
 // ---------------------------------------------------------------------------
 
 export const SKY = {
-  // Gradient stops from straight up to below the horizon
+  // Gradient stops from straight up to below the horizon (daytime palette;
+  // the day/night cycle interpolates DAY_NIGHT.KEYFRAMES through these)
   ZENITH_COLOR: 0x3a6fd8,
   MID_COLOR: 0x6f9ce8,
   HORIZON_COLOR: 0xbcd8f5,
@@ -281,6 +290,40 @@ export const SKY = {
   FOG_COLOR: 0xbcd8f5,
   FOG_NEAR: 40,
   FOG_FAR: 140,
+};
+
+// Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
+// the day fraction t in [0,1): t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75
+// midnight. Colours are the sky gradient stops; fog always uses HORIZON so
+// terrain fades into the sky at every point of the cycle.
+//   SUN_LEVEL   scales the directional sun + hemisphere ambient (entities)
+//   SKY_DARKEN  levels subtracted from baked skylight (0 day .. 11 deep night)
+//   GLOW        strength of the warm horizon glow around the sun's position
+export const DAY_NIGHT = {
+  KEYFRAMES: [
+    { T: 0.000, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
+      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
+    { T: 0.050, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
+    { T: 0.450, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
+    { T: 0.500, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
+      BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
+    { T: 0.560, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
+    { T: 0.940, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
+  ],
+  GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
+};
+
+// The visible sun and moon: square quads riding the sky dome.
+export const CELESTIAL = {
+  DISTANCE: 820,                  // from the camera; inside the sky dome radius
+  SUN_SIZE: 150,
+  MOON_SIZE: 95,
+  SUN_COLOR: 0xfff7d0,
+  MOON_COLOR: 0xdfe4f2,
 };
 
 export const NETHER_SKY = {
