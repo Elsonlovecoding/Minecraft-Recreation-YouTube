@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 6 — block interaction (raycast targeting, breaking with cracks, placing, dropped items, first-person hand) + Phase 5 movement bug fixes**
+Phase last completed: **Phase 7 — inventory (36 slots, hotbar HUD, inventory screen, held items, tool durability) + Phase 6 bug fixes (held-item scale, hollow leaves, cactus gaps, sprint-jump speed)**
 
 ---
 
@@ -131,11 +131,46 @@ Phase last completed: **Phase 6 — block interaction (raycast targeting, breaki
   post-Esc cooldown is swallowed (hint stays up, next click retries).
   Dev scaffolding: `setView(yaw, pitch)`, `debugForceInput(on)` so a
   harness can drive keys without pointer lock.
-- `src/ui/hud.js` — Phase 5 slice of the HUD: centred crosshair
-  (difference-blend; hidden while the pointer is unlocked so it never draws
-  over the "Click to play" hint) and the breath meter — `PLAYER.BREATH_BUBBLES`
-  bubbles above the future hotbar position, visible only while air is
-  missing, like vanilla. Hotbar/hearts/hunger arrive with inventory/stats.
+- `src/ui/hud.js` — crosshair (difference-blend; hidden while the pointer is
+  unlocked so it never draws over the "Click to play" hint), breath meter
+  (bubbles above the hotbar, visible only while air is missing), and the
+  Phase 7 hotbar: the inventory's first 9 slots as vanilla-styled slots with
+  real item icons (ui/icons.js), stack counts, durability bars
+  (green-to-red, hidden at full) and a white selected-slot highlight;
+  re-renders via the inventory subscription. Hearts/hunger arrive with stats.
+- `src/player/inventory.js` — Phase 7 inventory core, pure logic (no
+  DOM/three.js; node tests drive it directly): `INVENTORY.SIZE` 36 slots,
+  slots 0-8 the hotbar; a slot is null or { name, count, durability? }.
+  Stacking to `INVENTORY.MAX_STACK` 64 with per-item overrides in the item
+  registry (tools/armour/bow/flint_and_steel/shears/buckets/stew/potion
+  stack 1; ender_pearl/egg 16); tool durability from `TOOL_TIERS`, armour
+  from the vanilla piece x material factor table, and such stacks never
+  merge. `add` (pickups: existing stacks first in slot order — hotbar
+  before main — then first empty slots), `addStack` (preserves worn
+  durability), `canAccept` (gates the item magnet), `select`/`selectNext`
+  (wrapping), `consumeSelected`, `damageSelected` ('broken' clears the
+  slot), and the vanilla screen semantics: `clickSlot` (pick up / put down
+  / merge to cap / swap), `rightClickSlot` (half up / place one / no-op on
+  incompatible), `shiftClick` (to the other region, merging first).
+  `subscribe(fn)` notifies the HUD, screen and hand on every change.
+- `src/ui/icons.js` — item icons for the hotbar and screens plus the shared
+  slot renderer (icon + count + durability bar). Non-block items are an
+  `<img>` straight from `assets/items/<name>.png` (the real textures, never
+  generated); block items render their real atlas tiles once into a small
+  canvas as the classic isometric inventory cube (top/left/right faces,
+  vanilla shading), cached as a data URL. Visual routing shares
+  `itemVisualInfo` with dropped items, so slot icons always match the world
+  and hand visuals.
+- `src/ui/screens.js` — Phase 7 inventory screen: E opens (releases pointer
+  lock, suppresses the lock hint via a body class), showing the 27 main
+  slots over the 9 hotbar slots on a vanilla-grey panel. Left click picks
+  up / puts down / swaps / merges; press-drag-release moves a stack in one
+  gesture; right click picks up half / places one; shift-click moves
+  between hotbar and main. The cursor stack follows the mouse as a ghost
+  slot. E or Esc closes; a stack still on the cursor goes back into the
+  inventory, and anything that truly doesn't fit drops at the player's
+  feet. Closing re-requests pointer lock (the post-Esc cooldown rejection
+  is swallowed — the click-to-play hint covers it).
 - `src/world/blocks.js` — full block registry (50 blocks: all SPEC.md tables
   plus stronghold/decorative blocks the atlas supports). Per block: id, name,
   per-face tiles resolved to BoxGeometry order `[px,nx,py,ny,pz,nz]`,
@@ -143,7 +178,12 @@ Phase last completed: **Phase 6 — block interaction (raycast targeting, breaki
   chances), solid, transparent, light level, light `opacity` (Phase 4:
   levels absorbed during propagation — defaults opaque 15 / transparent 0,
   water and leaves override to 1), and behaviour flags (falls, fluid,
-  damagesOnContact, slows). Lookup helpers: `blockDef`, `isSolid`,
+  damagesOnContact, slows). Phase 7 rendering/shape fields: `selfCull`
+  (default true — transparent same-id runs merge; leaves and cactus
+  override false so interior planes render), `occludesAO` (default
+  solid && !transparent; leaves override true so canopies darken inside),
+  `inset` (horizontal shrink of side faces AND collision box — cactus
+  `SHAPES.CACTUS_INSET` 1/16). Lookup helpers: `blockDef`, `isSolid`,
   `isTransparent`, `lightLevel`, `lightOpacity`, `faceTiles`.
 - `src/world/terrain.js` — seeded, fully deterministic overworld generation:
   own 2D simplex (seeded permutation) + fBm; continent swell (oceans where it
@@ -186,7 +226,16 @@ Phase last completed: **Phase 6 — block interaction (raycast targeting, breaki
   materials are unlit MeshBasicMaterial + `patchChunkMaterial` (all shading
   is baked light — the vanilla look); scene lights/shadow maps no longer
   touch terrain, so the Phase 3 `MeshDepthMaterial` cutout-shadow path and
-  the unused normal attribute are gone.
+  the unused normal attribute are gone. Phase 7 mesher fixes: non-self-cull
+  transparent blocks (leaves, cactus — registry `selfCull: false`) render
+  their same-id interior planes as exactly ONE DoubleSide quad per shared
+  plane (emitted by the positive-direction face, so chunk borders stay
+  deterministic and no coplanar pair can z-fight) — canopies now read as a
+  dense mass with dark interiors instead of a hollow shell (leaves also
+  `occludesAO`); cactus side faces are always emitted, pulled `inset`
+  (1/16) into their own cell (full width/height, only the plane moves)
+  while top/bottom faces stay full-size — stacked cacti read continuous
+  like vanilla, the top-face quad visible edge-on through the gap.
 - `src/world/world.js` — `World` chunk manager: `getBlock`/`setBlock` by
   world coordinates generating chunks on demand (correct floor division for
   negatives), `setBlock` dirties the chunk plus every loaded neighbour the
@@ -241,11 +290,18 @@ Phase last completed: **Phase 6 — block interaction (raycast targeting, breaki
   was just broken; first-person hand (camera child, drawn depth-free over
   the world like vanilla so point-blank walls can't swallow it) — a
   generated pixel-skin arm, or a mini-cube of the block about to be placed —
-  swings on click, on place and continuously while mining. Until the
-  inventory phase a proto-inventory lives here: collected drops in a counts
-  map, the freshest block pickup becomes the placeable selection, placing
-  decrements it (`setHeldItem`/`setSelectedBlock`/`debugSetMouse` are dev
-  scaffolding, `window.__interaction` exposed).
+  swings on click, on place and continuously while mining. Phase 7: the
+  inventory drives everything the proto-inventory scaffolding used to — the
+  hotbar selection is what the hand shows (block mini-cube with the vanilla
+  ~45° corner placement, item sprite for tools/materials, bare arm when
+  empty — `HAND.BLOCK_*`/`SPRITE_*` offsets/tilts/scales in config), what
+  `miningPlan` checks, and what right-click places (consuming 1 from the
+  stack); breaking a hardness>0 block with a held tool wears 1 durability
+  (instant-break blocks don't, like vanilla), and a tool hitting 0 vanishes
+  mid-hold. Number keys 1-9 and the scroll wheel (down = next) change the
+  selection while pointer-locked; digits preventDefault so Ctrl-sprint
+  chords can't switch browser tabs. (`debugSetMouse` remains as test
+  scaffolding, `window.__interaction`/`__inventory`/`__screens` exposed).
 - `src/entities/items.js` — dropped item entities: point physics with the
   item's midpoint as the collision probe both ways (cell-sweep landing with
   no tunnelling; a rising item stops UNDER a ceiling — it can never poke
@@ -263,7 +319,25 @@ Phase last completed: **Phase 6 — block interaction (raycast targeting, breaki
   regenerate the chunk synchronously outside the streaming budget on every
   border crossing); broken-block drops pop up with random scatter.
   `createBlockMesh` is shared with the hand. `window.__items` exposed.
-- Phase 5 movement bug fixes (this session, overriding earlier notes):
+  Phase 7: `onPickup(name, count)` returns how many the inventory accepted
+  (undefined = all) — a refused item stays in the world with its physics,
+  waits `ITEMS.PICKUP_RETRY_SECONDS` before offering itself (or
+  magnetising) again, and partial acceptance shrinks the entity's count.
+  `itemVisualInfo`/`createSpriteMesh` are exported for the hand and the UI
+  icons so every surface shows the same visual for an item name.
+- Phase 7 physics/feel fixes in `controller.js`/config: `_sweep` understands
+  per-block horizontal `inset` boxes — the blocking plane moves into the
+  cell and the transverse overlap test shrinks, so the body clamps flush
+  against a cactus's 15/16 box, slides past (or falls off) the 1/16 rim
+  instead of snagging, and still lands on the full-size top; each layer now
+  scans for the NEAREST blocking plane so mixed cactus/full-cube layers
+  clamp correctly. Everything else about the sweep (flush wall clamps,
+  no-tunnelling cell scan, auto-step retry, embedded-body no-shove) is
+  unchanged and re-verified. `SPRINT_JUMP_BOOST` retuned 4 -> 1.8: repeated
+  sprint-jumping now averages the vanilla ~7.1 blocks/s (measured
+  7.0-7.2 across 30/60/144fps) versus 5.6 flat sprinting — it was 8.9-9.2,
+  far over vanilla.
+- Phase 5 movement bug fixes (older session, overriding earlier notes):
   step height is vanilla 0.6 (`STEP_HEIGHT`/`SNEAK_EDGE_DROP` 0.6) — full
   1-block ledges now require a jump, and sneaking refuses 1-block drops like
   vanilla; while ANY part of the body touches water, space swims up slowly
@@ -372,9 +446,9 @@ camera child). Screenshots confirm the look: black face outline, spreading
 cracks, pixel arm and held dirt mini-block, placed blocks, a cobblestone
 drop resting on grass.
 
-An adversarial multi-agent review (4 lenses — correctness, spec fidelity,
-regression, edge cases — each independently probing the real modules in
-node and the running browser game) then confirmed and led to fixes for:
+Phase 6's adversarial multi-agent review (4 lenses — correctness, spec
+fidelity, regression, edge cases — each independently probing the real
+modules in node and the running browser game) confirmed and led to fixes for:
 rising items tunnelling up through solid ceilings (midpoint collision both
 ways now; flooded-cavern and dry-bonk probes); items in unloaded chunks
 forcing synchronous chunk regeneration on every border crossing (frozen
@@ -390,21 +464,85 @@ fly toggle; plus config extraction of remaining tunables and comment
 fixes. 14 regression checks were added for these — 109 automated checks
 total (84 node + 25 browser), all passing, zero console errors.
 
+Phase 7 verification: 69 node checks against the real modules — 50 on the
+Inventory class (registry stack caps and durabilities incl. every armour
+piece; add existing-stack-first then first-empty ordering; 36x64+overflow;
+tools one-per-slot at full durability; consume/damage/break-at-zero;
+select/wheel wrap; the full clickSlot / rightClickSlot / shiftClick
+semantics incl. the vanilla inert-on-full-same-item click, right-click
+incompatible swap, durability preservation, no-room stays, addStack keeping
+wear, emit-on-change-only), 10 physics (cactus clamp at the 15/16 plane,
+grazing past the rim where a full cube would block, landing on the top,
+falling past the rim, sneak refusing the cactus rim while stone support
+reaches farther, stone wall flush clamp + jump height regressions), 9
+mesher (3x3x3 leaf cube = 54 exterior + 54 one-per-plane interior quads;
+leaf pair across a chunk border emits the shared plane exactly once, from
+the +x side; water still merges runs; single cactus = 5 quads with side
+planes at 1/16 and full-size top; stacked cacti = 10 incl. the interface
+plane; meshing-order byte determinism), plus sprint-jump speed measured
+7.0-7.2 blocks/s at 30/60/144fps vs 5.6 flat. In headless Chromium: 45
+checks, zero console errors — 26 gameplay (hand shows block/sprite/arm and
+switches with the selection; place consumes; mining wears exactly 1
+durability and instant-break doesn't; tool breaking mid-hold vanishes the
+tool and re-shows the arm; pickup merges into existing stacks; wrong-tier
+stone survives punching; non-block items don't place; full inventory
+refuses pickups which wait and re-enter when a slot frees; mid-break
+selection switch resets progress and charges nothing; a worn dropped tool
+returns at its worn durability) and 19 inventory-screen checks under REAL
+pointer lock (E opens/unlocks, click pickup/drop, press-drag-release,
+right-click half/place-one, shift-click across regions, close returns the
+cursor stack, Esc closes, holding E doesn't flap, trackpad micro-deltas
+accumulate to one hotbar step while a discrete notch steps exactly once).
+Screenshots verify the vanilla look: hotbar with real icons/counts/
+durability bars and highlight, the small angled corner-held block and
+mirrored held pickaxe, dense dark-interior canopies from above/below/
+inside, stacked cacti reading continuous, the grey inventory screen.
+
+A 20-agent adversarial review (5 lenses: inventory correctness, UI/DOM,
+render/physics regression, spec fidelity, integration edge cases; every
+finding independently re-reproduced by a dedicated verifier against the
+real modules) confirmed and led to fixes for: mid-break hotbar switches
+keeping the stale mining plan (tier/drop-gate bypass, durability charged to
+the wrong item — the held item is now part of the break key, so switching
+resets progress vanilla-style); left click with a matching cursor on a full
+stack swapping instead of the vanilla no-op; right click over a
+non-combinable stack doing nothing where vanilla swaps; worn tools dropped
+by the close-screen overflow path returning at full durability (item
+entities now carry durability through spawn -> pickup -> addStack); one
+hotbar step per wheel event regardless of delta (trackpads flew through
+slots — deltas now normalise and accumulate against
+INTERACTION.WHEEL_STEP_DELTA); the passive wheel listener letting
+Ctrl+scroll zoom the browser mid-game (non-passive + preventDefault);
+holding E flapping the screen open/closed (repeat guard); and the sneak
+edge guard treating a cactus cell as full-cube support (now inset-aware —
+sneaking refuses the rim instead of walking off the collision box). All
+re-verified: 114 automated checks (69 node + 45 browser), all passing,
+zero console errors.
+
 ---
 
 ## Partially built
 
 - The rest of `src/` exists as empty stub modules with responsibility headers
-  (world/caves.js, player/inventory.js, player/stats.js, entities/entity.js,
-  entities/mobs.js, entities/pathfinding.js, entities/dragon.js, systems/,
-  dimensions/, ui/screens.js).
-- `ui/hud.js` is the Phase 5 slice only (crosshair + breath bubbles);
-  hotbar, hearts and hunger come with inventory/stats.
+  (world/caves.js, player/stats.js, entities/entity.js, entities/mobs.js,
+  entities/pathfinding.js, entities/dragon.js, systems/, dimensions/).
+- `ui/hud.js` still lacks hearts and hunger (stats phase).
+- `ui/screens.js` is the inventory screen only; crafting/furnace/death/
+  victory screens are later phases (the panel/slot/cursor structure is
+  ready to extend).
+- Phase 7 deliberate slices:
+  - Armour items exist in the registry (stack 1, correct durabilities) and
+    can live in the inventory, but there are no equip slots and no damage
+    reduction yet — that's the stats/combat phase.
+  - The inventory screen has no crafting 2x2 grid yet (crafting phase) and
+    no off-hand. Cursor stacks can't be thrown into the world by clicking
+    outside the panel (vanilla drops them) — closing the screen returns or
+    drops them instead. No Q-to-drop either.
+  - Tools wear 1 durability per broken block for every tool class (vanilla
+    charges 2 for swords); swords have no attack use until combat.
+  - Number-key/wheel selection and the E screen are keyboard-only bindings
+    (no rebinding UI).
 - Phase 6 deliberate slices, replaced by later phases:
-  - The proto-inventory (counts map in interaction.js, freshest pickup =
-    selection) is scaffolding — inventory.js will own items/hotbar and take
-    over `notifyPickup`, the held-item and the place selection.
-    `setHeldItem('iron_pickaxe')` from the console is how to try tools now.
   - Dropped items and the hand are not lit by world light (unlit atlas
     material, correct per-face brightness only) — a `getLight` sample can
     tint them when the mob phase adds it.
@@ -413,12 +551,13 @@ total (84 node + 25 browser), all passing, zero console errors.
   - No break/place/footstep sounds yet (SPEC "feel" row; no audio system).
   - `oak_sapling` and `glowstone_dust` drops have no shipped item texture;
     items.js renders stand-ins (leaves mini-block / blaze powder sprite)
-    via its VISUAL_ALIAS map.
+    via its VISUAL_ALIAS map — hotbar/screen icons follow the same alias.
   - Breaking water/lava directly is impossible (not targetable) — bucket
     interactions are an item-phase concern.
-  - Dropped items never merge into stacks and have no count cap beyond the
-    300s despawn — sustained mining without pickup accumulates one draw
-    call per item. Stack merging belongs to the inventory phase.
+  - Dropped item ENTITIES still never merge with each other in the world
+    and have no count cap beyond the 300s despawn — sustained mining
+    without pickup accumulates one draw call per item. (Pickup into the
+    inventory does stack correctly as of Phase 7.)
   - Generated-art internals (crack random-walk shape, arm skin palette) are
     deliberately inline in interaction.js — they are the art itself, not
     gameplay tunables; everything gameplay-facing (offsets, timings, sizes,
@@ -426,7 +565,8 @@ total (84 node + 25 browser), all passing, zero console errors.
 - The controller exposes but does not consume damage inputs — stats.js later
   wires `body.lastLanding` (fall damage), `body.breath === 0` (drowning),
   and `damagesOnContact` blocks (cactus/lava contact does nothing yet;
-  cactus still collides as a full cube).
+  cactus now collides as its 15/16 box, so "touching a cactus" checks can
+  use the same inset).
 - Lava is fully wired into lighting (emits 15, blocks light) but nothing
   places it until the caves phase; a fullbright/emissive treatment for lava
   and glowstone faces themselves is later polish (they currently render lit
@@ -468,20 +608,37 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 7 is caves/ores (fill in `world/caves.js` — carved caves get
-  correct darkness and torch light for free from the Phase 4 flood fill, and
-  breaking ore already drops the right items) or inventory/stats + hotbar
-  HUD (interaction.js hands over its proto-inventory: replace `notifyPickup`
-  / `setHeldItem` / `setSelectedBlock` with the real inventory, keep the
-  `miningPlan` rules).
-- Phase 6 APIs for later phases: `interaction.notifyPickup(name, count)` is
-  the pickup sink main.js wires into `items.update`; `interaction.target`
-  is the live raycast result ({x,y,z,id,face,distance} or null);
-  `items.spawn(name, count, pos, vel?)` drops anything (mob drops later);
-  `createBlockMesh(blockId, size)` (entities/items.js) builds the mini-block
-  used by both dropped items and the held block — reuse it for item frames /
-  inventory icons rather than re-deriving atlas cubes. Tool durability is
-  deliberately not tracked yet (inventory owns item instances).
+- Likely Phase 8 is caves/ores (fill in `world/caves.js` — carved caves get
+  correct darkness and torch light for free from the Phase 4 flood fill,
+  breaking ore already drops the right items, and the inventory now stacks
+  them) or crafting (systems/crafting.js + a crafting grid added to the
+  ui/screens.js panel — the slot/cursor/click machinery is reusable as-is;
+  craft results just `inventory.add`).
+- Phase 7 APIs for later phases: `inventory` (main.js `window.__inventory`)
+  is the single item-ownership truth — `add(name, count)` returns leftover
+  (crafting/smelting outputs, mob drops), `addStack` preserves durability,
+  `canAccept`, `selectedName`/`selectedStack`, `consumeSelected`,
+  `damageSelected` ('broken' clears), `subscribe(fn)` for any new UI.
+  `itemMaxStack`/`itemMaxDurability` are the item registry — extend the
+  tables there for new items. `items.spawn(name, count, pos, vel?,
+  durability?)` drops anything and pickups route durability back through
+  `onPickup(name, count, durability)` in main.js. Slot UI: reuse
+  `renderSlotContent`/`createItemIcon` (ui/icons.js) for any new screen.
+  `interaction.target` is the live raycast result ({x,y,z,id,face,distance}
+  or null); `createBlockMesh(blockId, size)` (entities/items.js) builds the
+  mini-block used by drops and the held hand.
+- The break key includes the held item name — any selection change resets
+  break progress and recomputes the plan (that's what keeps the tier/drop
+  gate and durability charge honest); don't "optimise" it back out.
+- Headless-harness gotchas (cost this session real time): headless Chromium
+  FREEZES requestAnimationFrame permanently once pointer lock engages — do
+  event-driven tests (keys, screens, wheel) under real lock, but anything
+  frame-driven unlocked via `setView`/`debugSetMouse`/`debugForceInput`;
+  Playwright's injected mouse also emits huge fake movementX/Y around lock
+  engagement, so suppress mousemove (capture + stopImmediatePropagation) or
+  never use page.mouse while locked. SwiftShader frames are slow and uneven
+  — wait on frame counters (`renderer.info.render.frame`) or polled
+  conditions, never wall-clock.
 - Player API for later phases: `controller.body` is the physics truth —
   `position` (feet centre), `velocity`, `onGround`, `swimming`,
   `submersion`, `eyeInWater`, `breath`/`maxBreath`, `sneaking`,
@@ -562,3 +719,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 4 | Flood-filled sky+block light (15 levels, per-chunk 3x3 window, seam-free), per-block light opacity, smooth per-vertex light baked with AO into meshes, unlit vanilla-style chunk materials with day-factor/torch-tint uniforms, ~20-min day/night cycle (keyframed sky palette, fog always = horizon, sunrise/sunset glow, square sun+moon), light-radius remesh dirtying on edits, TIME in debug overlay | Caves/ores/rivers/lava (caves.js), player controller/interaction, non-cube special shapes, emissive lava/glowstone polish, mob-facing `getLight` helper |
 | 5 | The player (controller.js): AABB body with exact swept collision (no tunnelling), vanilla-feel accel/friction, walk/sprint(double-tap W or Ctrl, FOV kick)/sneak(edge guard, lowered eye)/jump(0.5s vanilla cooldown), 1-block auto-step with camera smoothing, swimming (buoyant float, breath meter) with framerate-independent bank climb-out, safe surface spawn, first-person pointer-lock camera with view bob, debug fly camera behind F4; hud.js crosshair + breath bubbles; PLAYER config block; adversarially reviewed + 125 automated checks | Break/place (interaction.js), stats.js consuming lastLanding/breath/contact damage, hotbar/hearts HUD, caves/ores (caves.js), non-cube special shapes |
 | 6 | Block interaction (interaction.js): voxel DDA raycast (5 reach), black targeted-face outline, hold-to-break timed by hardness × tool class/tier with wrong-tier very-slow-no-drops, 10-stage generated crack overlay (multiply-blended, night-correct), right-click place onto the targeted face (air/fluid cells only, never inside the player or outside the world, hold-repeat, no stale-face placement), registry-table drops; dropped item entities (items.js): mini-block/sprite visuals, bob + rotate, midpoint collision both ways (no ceiling tunnelling), water float, wall-blocked 1.5-block magnetise, pickup, despawn, unloaded-chunk freeze; first-person depth-free hand (pixel arm or held mini-block) swinging on click/place/mining; proto-inventory scaffolding; Phase 5 fixes: step height 0.6 (jump for full blocks), space-in-any-water swims up slowly (no pool-edge levitation), submerged sprint = vanilla swim mechanic (fast, pitch-driven, prone eye, standing-eye surface disengage); INTERACTION/ITEMS config blocks; adversarially reviewed (4 lenses, all confirmed findings fixed) + 109 automated checks | Inventory/hotbar replacing the proto-inventory, tool durability, item stack merging, falling sand/gravel entities, item/hand world-light tinting, sounds, caves/ores (caves.js), non-cube special shapes |
+| 7 | Inventory (inventory.js): 36 slots / 9 hotbar, stacking to 64 with per-item registry (tools + armour stack 1, carry durability; pearls/eggs 16), pickups existing-stack-first then first-empty, vanilla click/right-click/shift-click semantics; hotbar HUD (hud.js) with real item icons (icons.js — assets/items sprites verbatim, isometric atlas cubes for blocks), counts, durability bars, selection highlight; 1-9 keys + delta-accumulating scroll wheel; inventory screen on E (screens.js) with click and press-drag-release moves, cursor ghost, close-returns-cursor (overflow drops at the feet, durability preserved through the drop); held item switches visibly (block cube / item sprite / bare arm); mining wears tools, broken tools vanish; partial pickups with retry when full. Bug fixes: held item vanilla-sized in the corner, leaves render interior faces + occlude AO (dense dark canopies), cactus sides inset 1/16 with 15/16 collision (sweep + sneak guard inset-aware), sprint-jump retuned to ~7.1 b/s. Adversarially reviewed (20 agents, 5 lenses, 8 unique confirmed findings all fixed) + 114 automated checks | Armour equip slots + damage reduction (stats/combat), crafting grid in the screen, Q-drop / click-outside-drop, dropped-entity stack merging, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |

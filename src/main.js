@@ -90,7 +90,11 @@ async function init() {
 
   // Pickups go to the inventory (existing stacks first, then the first empty
   // slot); the return value tells the item manager how many were accepted.
-  const onPickup = (name, count) => count - inventory.add(name, count);
+  // A dropped worn tool carries its durability back in via addStack.
+  const onPickup = (name, count, durability) =>
+    durability != null
+      ? count - inventory.addStack({ name, count, durability })
+      : count - inventory.add(name, count);
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {

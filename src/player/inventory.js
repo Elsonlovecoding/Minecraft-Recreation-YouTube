@@ -199,23 +199,24 @@ export class Inventory {
       return null;
     }
     if (slot.name === cursor.name && slot.durability == null && cursor.durability == null) {
-      const cap = itemMaxStack(slot.name);
-      const moved = Math.min(cap - slot.count, cursor.count);
-      if (moved > 0) {
-        slot.count += moved;
-        cursor.count -= moved;
-        this._emit();
-        return cursor.count > 0 ? cursor : null;
-      }
+      // Combinable stacks merge up to the cap; when the slot is already
+      // full the click is inert (vanilla), never a swap.
+      const moved = Math.min(itemMaxStack(slot.name) - slot.count, cursor.count);
+      if (moved <= 0) return cursor;
+      slot.count += moved;
+      cursor.count -= moved;
+      this._emit();
+      return cursor.count > 0 ? cursor : null;
     }
-    this.slots[i] = cursor; // different items (or no room): swap
+    this.slots[i] = cursor; // non-combinable items: swap
     this._emit();
     return slot;
   }
 
   // Vanilla right click: empty cursor picks up half (rounded up); a held
-  // stack places exactly one into an empty or matching slot. Returns the
-  // new cursor.
+  // stack places exactly one into an empty or matching slot; over a
+  // non-combinable stack it swaps exactly like a left click (only a full
+  // matching stack is inert). Returns the new cursor.
   rightClickSlot(i, cursor) {
     const slot = this.slots[i];
     if (!cursor) {
@@ -237,16 +238,16 @@ export class Inventory {
       this._emit();
       return cursor;
     }
-    if (
-      slot.name === cursor.name && slot.durability == null &&
-      cursor.durability == null && slot.count < itemMaxStack(slot.name)
-    ) {
+    if (slot.name === cursor.name && slot.durability == null && cursor.durability == null) {
+      if (slot.count >= itemMaxStack(slot.name)) return cursor; // full: inert
       slot.count += 1;
       cursor.count -= 1;
       this._emit();
       return cursor.count > 0 ? cursor : null;
     }
-    return cursor; // incompatible: nothing happens (vanilla)
+    this.slots[i] = cursor; // non-combinable items: swap, like a left click
+    this._emit();
+    return slot;
   }
 
   // Shift-click: move the stack to the other region (hotbar <-> main),

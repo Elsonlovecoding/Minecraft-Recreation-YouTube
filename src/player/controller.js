@@ -374,13 +374,34 @@ export class PlayerBody {
     return [dx, dz];
   }
 
+  // Support for the sneak guard is inset-aware: the 1/16 rim of a cactus
+  // cell is NOT floor (the collision box isn't there), so sneaking refuses
+  // to shuffle onto it instead of walking off the box and falling.
   _hasSupport(dx, dz) {
     const p = this.position;
-    return this._anyInBox(
-      p.x - HALF_WIDTH + dx, p.y - PLAYER.SNEAK_EDGE_DROP, p.z - HALF_WIDTH + dz,
-      p.x + HALF_WIDTH + dx, p.y, p.z + HALF_WIDTH + dz,
-      isSolid,
-    );
+    const minX = p.x - HALF_WIDTH + dx;
+    const maxX = p.x + HALF_WIDTH + dx;
+    const minZ = p.z - HALF_WIDTH + dz;
+    const maxZ = p.z + HALF_WIDTH + dz;
+    const x0 = Math.floor(minX + EPS);
+    const x1 = Math.floor(maxX - EPS);
+    const y0 = Math.floor(p.y - PLAYER.SNEAK_EDGE_DROP + EPS);
+    const y1 = Math.floor(p.y - EPS);
+    const z0 = Math.floor(minZ + EPS);
+    const z1 = Math.floor(maxZ - EPS);
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const def = blockDef(this.world.getBlock(x, y, z));
+          if (!def.solid) continue;
+          if (def.inset > 0 && (
+            minX >= x + 1 - def.inset - EPS || maxX <= x + def.inset + EPS ||
+            minZ >= z + 1 - def.inset - EPS || maxZ <= z + def.inset + EPS)) continue;
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   // Water state: touchingWater from the whole box; the waterline (and with it

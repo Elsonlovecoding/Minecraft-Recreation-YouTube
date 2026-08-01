@@ -166,12 +166,16 @@ export function createScreens({ inventory, canvas, items, player }) {
     open = false;
     downSlot = null;
     // Return the cursor stack; anything that truly doesn't fit drops at the
-    // player's feet instead of vanishing.
+    // player's feet instead of vanishing — a worn tool keeps its durability
+    // through the drop and back.
     if (cursor) {
       const leftover = inventory.addStack(cursor);
       if (leftover > 0 && items) {
         const p = player.position;
-        items.spawn(cursor.name, leftover, { x: p.x, y: p.y + 1, z: p.z });
+        items.spawn(
+          cursor.name, leftover, { x: p.x, y: p.y + 1, z: p.z },
+          undefined, cursor.durability,
+        );
       }
       cursor = null;
     }
@@ -185,6 +189,7 @@ export function createScreens({ inventory, canvas, items, player }) {
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'KeyE') {
+      if (e.repeat) return; // holding E must not flap the screen open/closed
       if (open) {
         e.preventDefault();
         closeScreen();

@@ -165,7 +165,9 @@ export function createItemManager({ world, scene }) {
 
   // Spawns a dropped item entity. `pos` is the item's base point (bottom).
   // Velocity defaults to the broken-block pop: up plus random scatter.
-  function spawn(name, count, pos, vel) {
+  // `durability` (optional) rides along so a dropped worn tool comes back
+  // worn, not repaired.
+  function spawn(name, count, pos, vel, durability) {
     const { mesh, halfHeight } = createItemVisual(name);
     const group = new THREE.Group();
     group.add(mesh);
@@ -175,6 +177,7 @@ export function createItemManager({ world, scene }) {
     const entity = {
       name,
       count,
+      durability: durability ?? null,
       pos: { x: pos.x, y: pos.y, z: pos.z },
       vel: vel
         ? { x: vel.x, y: vel.y, z: vel.z }
@@ -300,10 +303,11 @@ export function createItemManager({ world, scene }) {
 
   // Per-frame update. `playerPos` is the player's FEET position (body
   // convention); magnet and pickup measure from the body centre.
-  // onPickup(name, count) returns how many the inventory accepted (undefined
-  // = all): a refused item stays in the world, keeps its physics, and waits
-  // ITEMS.PICKUP_RETRY_SECONDS before offering itself (or magnetising) again,
-  // so a full inventory doesn't vacuum drops around forever.
+  // onPickup(name, count, durability) returns how many the inventory
+  // accepted (undefined = all): a refused item stays in the world, keeps its
+  // physics, and waits ITEMS.PICKUP_RETRY_SECONDS before offering itself (or
+  // magnetising) again, so a full inventory doesn't vacuum drops around
+  // forever.
   function update(dt, playerPos, onPickup) {
     if (dt <= 0) return;
     const cx = playerPos.x;
@@ -337,7 +341,9 @@ export function createItemManager({ world, scene }) {
       const active = e.age >= ITEMS.PICKUP_DELAY_SECONDS && e.retry <= 0;
 
       if (active && dist <= ITEMS.PICKUP_RADIUS) {
-        const accepted = onPickup ? (onPickup(e.name, e.count) ?? e.count) : e.count;
+        const accepted = onPickup
+          ? (onPickup(e.name, e.count, e.durability) ?? e.count)
+          : e.count;
         if (accepted >= e.count) {
           remove(i);
           continue;

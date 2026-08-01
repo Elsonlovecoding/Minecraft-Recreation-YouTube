@@ -359,6 +359,10 @@ export const UI = {
 export const INTERACTION = {
   BREAK_COOLDOWN_SECONDS: 0.3,    // pause after a break before the next starts
   PLACE_REPEAT_SECONDS: 0.25,     // hold-to-place repeat interval
+  WHEEL_STEP_DELTA: 50,           // wheel delta (pixels) per hotbar step — a
+                                  // discrete notch (~100) steps once; trackpad
+                                  // micro-deltas accumulate to this
+  WHEEL_LINE_PIXELS: 33,          // deltaMode line -> pixel normalisation
   OUTLINE_COLOR: 0x000000,        // targeted face outline
   OUTLINE_OPACITY: 0.75,
   OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)

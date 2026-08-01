@@ -414,13 +414,32 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       inventory.select(Number(m[1]) - 1);
     }
   });
+  let wheelAccum = 0;
   document.addEventListener(
     'wheel',
     (e) => {
       if (!locked() || e.deltaY === 0) return;
-      inventory.selectNext(e.deltaY > 0 ? 1 : -1);
+      // Non-passive so pointer-locked scrolling can never zoom (Ctrl+wheel,
+      // with Ctrl doubling as the sprint key) or scroll the page.
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * INTERACTION.WHEEL_LINE_PIXELS
+        : e.deltaMode === 2 ? Math.sign(e.deltaY) * INTERACTION.WHEEL_STEP_DELTA
+        : e.deltaY;
+      if (Math.sign(dy) !== Math.sign(wheelAccum)) wheelAccum = 0;
+      // A discrete wheel notch steps exactly once per event; trackpad
+      // micro-deltas accumulate until they add up to one step.
+      if (Math.abs(dy) >= INTERACTION.WHEEL_STEP_DELTA) {
+        inventory.selectNext(dy > 0 ? 1 : -1);
+        wheelAccum = 0;
+      } else {
+        wheelAccum += dy;
+        if (Math.abs(wheelAccum) >= INTERACTION.WHEEL_STEP_DELTA) {
+          inventory.selectNext(wheelAccum > 0 ? 1 : -1);
+          wheelAccum = 0;
+        }
+      }
     },
-    { passive: true },
+    { passive: false },
   );
 
   // --- breaking
@@ -469,7 +488,11 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       resetBreak();
       return;
     }
-    const key = `${target.x},${target.y},${target.z},${target.id}`;
+    // The held item is part of the key: switching the hotbar selection
+    // mid-break resets progress and recomputes the plan (vanilla behaviour)
+    // — otherwise a stale plan could bypass the tier/drop gate and
+    // finishBreak would charge durability to an item that never mined.
+    const key = `${target.x},${target.y},${target.z},${target.id}:${inventory.selectedName ?? ''}`;
     if (key !== breakKey) {
       breakKey = key;
       breakProgress = 0;
