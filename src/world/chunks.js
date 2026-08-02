@@ -418,16 +418,20 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     // the neighbours — lower lava and open air pull the flow toward them.
     const above = iy + 1 < HEIGHT ? getId(lx, y + 1, lz) : BLOCK.AIR;
     if (!IS_LAVA_CELL[above]) {
+      // gx/gz accumulate the DOWNSTREAM direction: open air counts as fully
+      // downhill, lava neighbours pull toward the lower surface. (Phase 12
+      // review fix: the original sign pointed uphill, so flow tops animated
+      // back toward their source while sides scrolled down.)
       let gx = 0;
       let gz = 0;
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nid = getId(lx + dx, y, lz + dz);
         if (nid === BLOCK.AIR) {
-          gx -= dx * h;
-          gz -= dz * h;
+          gx += dx * h;
+          gz += dz * h;
         } else if (IS_LAVA_CELL[nid]) {
-          gx += dx * (LAVA_HEIGHT[nid] - h);
-          gz += dz * (LAVA_HEIGHT[nid] - h);
+          gx += dx * (h - LAVA_HEIGHT[nid]);
+          gz += dz * (h - LAVA_HEIGHT[nid]);
         }
       }
       // Downstream as a cardinal direction (flows spread cardinally); an
@@ -468,11 +472,13 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
       );
     }
 
-    // Bottom face, over transparent non-lava (a flow crossing a glass roof).
+    // Bottom face, over transparent non-lava (a flow crossing a glass roof
+    // or a canopy) — lifted by the same inset as the sides so it can never
+    // z-fight the support block's coplanar top face.
     const below = iy > 0 ? getId(lx, y - 1, lz) : BLOCK.AIR;
     if (iy > 0 && IS_TRANSPARENT[below] && !IS_LAVA_CELL[below]) {
       pushQuad(
-        FACES[3].corners.map((c) => [lx + c[0], y, lz + c[2]]),
+        FACES[3].corners.map((c) => [lx + c[0], y + LAVA_SIDE_INSET, lz + c[2]]),
         FACES[3].corners.map((c) => [c[3], c[4]]),
         FB.bottom,
       );
