@@ -24,7 +24,7 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  OVERWORLD, CHUNK, LIGHTING, STATS,
+  OVERWORLD, CHUNK, LIGHTING, STATS, MOBS,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
 import { foodValue } from './inventory.js';
@@ -207,8 +207,12 @@ function createArmTexture() {
 // against usable blocks, like vanilla.
 // Phase 11 right-click priority: usable block (unless sneaking) > bucket
 // fill/empty > hold-to-eat food > place the selected block.
+// Phase 12: `combat` (optional, wired by main.js) is { raycast(origin, dir,
+// maxDist) -> mob | null, attack(mob, dir) } — a mob under the crosshair
+// intercepts the left button: clicking attacks it and mining never starts
+// through it, like vanilla.
 export function createInteraction({
-  world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
+  world, camera, scene, canvas, player, items, inventory, stats, onUseBlock, combat,
 }) {
   const H = INTERACTION.HAND;
 
@@ -223,6 +227,8 @@ export function createInteraction({
   let mouseRight = false;
   let useCheckPending = false; // right-click pressed; use-vs-place resolves
                                // in update() against that frame's raycast
+  let attackPending = false;   // left-click pressed; mob-vs-block resolves
+                               // in update() the same way
   let breakKey = null;      // "x,y,z,id" of the block being broken
   let breakPlan = null;     // { time, drops } for that block
   let breakProgress = 0;    // 0..1
@@ -412,6 +418,7 @@ export function createInteraction({
     if (!locked()) return;
     if (e.button === 0) {
       mouseLeft = true;
+      attackPending = true;
       startSwing();
     } else if (e.button === 2) {
       // The use-vs-place decision resolves in update() against the SAME
@@ -434,6 +441,7 @@ export function createInteraction({
       mouseLeft = false;
       mouseRight = false;
       useCheckPending = false;
+      attackPending = false;
     }
   });
 
@@ -685,6 +693,21 @@ export function createInteraction({
       outline.visible = false;
     }
 
+    // Phase 12: a mob under the crosshair (nearer than the targeted block)
+    // intercepts the left button — the pending click attacks it, and
+    // holding never mines through it. Attack reach is shorter than block
+    // reach (vanilla), and a wall in front always wins.
+    const mobHit = combat
+      ? combat.raycast(
+        rayOrigin, rayDir,
+        Math.min(target ? target.distance : Infinity, MOBS.ATTACK_REACH),
+      )
+      : null;
+    if (attackPending) {
+      attackPending = false;
+      if (mobHit) combat.attack(mobHit, rayDir);
+    }
+
     // Right-click resolution, one action per press: with an empty bucket a
     // NEARER fluid on the ray wins first (vanilla — the scoop must not be
     // eaten by a crafting table behind the pool; tryScoopFluid's ray stops
@@ -735,8 +758,9 @@ export function createInteraction({
     }
 
     // Using an item blocks attacking (vanilla): while eating, mining stops
-    // and its progress resets; placing pauses too.
-    if (eating) resetBreak();
+    // and its progress resets; placing pauses too. A mob in the crosshair
+    // also holds mining (the swing is an attack, not a dig).
+    if (eating || mobHit) resetBreak();
     else updateBreaking(dt);
     if (!eating) updatePlacing(dt);
 

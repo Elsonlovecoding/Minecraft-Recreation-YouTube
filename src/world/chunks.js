@@ -37,6 +37,12 @@ export class Chunk {
     this.mesh = null;     // { group, geometries } once meshed (world.js owns it)
     this.modified = false; // touched by setBlock — data is never discarded
     this._lightMeta = null; // lighting cache (render/lighting.js), lazy
+    this.lightData = null; // packed sky<<4|block per cell, copied at mesh
+                           // time for world.getLight point queries (mob
+                           // spawning); refreshed on every remesh, so it can
+                           // lag an edit by the frame or two until the dirty
+                           // chunk remeshes — fine for spawn checks
+    this._fluidScanned = false; // world/fluids.js settled this chunk's lava
   }
 
   // lx/lz must be 0..SIZE-1 (world.js converts world coords); y is a world
@@ -304,6 +310,24 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   const wBlk = light.block;
   const wIds = light.blocks;
   const W = SIZE * 3;
+
+  // Phase 12: keep the centre chunk's computed light for cheap point
+  // queries (world.getLight — the mob spawner's light checks). Packed
+  // sky << 4 | block per cell, refreshed on every remesh.
+  let lightData = chunk.lightData;
+  if (!lightData) {
+    lightData = new Uint8Array(SIZE * SIZE * HEIGHT);
+    chunk.lightData = lightData;
+  }
+  for (let lz = 0; lz < SIZE; lz++) {
+    for (let lx = 0; lx < SIZE; lx++) {
+      const src = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT;
+      const dst = (lz * SIZE + lx) * HEIGHT;
+      for (let iy = 0; iy < HEIGHT; iy++) {
+        lightData[dst + iy] = (wSky[src + iy] << 4) | wBlk[src + iy];
+      }
+    }
+  }
 
   const buckets = [null, newBucket(), newBucket(), newBucket(), newBucket()];
   const aoStrength = LIGHTING.AO_STRENGTH;

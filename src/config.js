@@ -553,6 +553,69 @@ export const MOBS = {
   DESPAWN_DISTANCE: 128,
   HOSTILE_CAP: 32,                // total cap to protect framerate
   PASSIVE_CAP: 16,
+
+  // --- Phase 12: the spawning framework (per-mob stats live in the
+  // entities/mobs.js registry, per ARCHITECTURE.md)
+  SPAWN_INTERVAL_SECONDS: 1.0,    // one spawn cycle this often
+  SPAWN_ATTEMPTS_PER_CYCLE: 8,    // random positions tried per cycle
+  SPAWN_MAX_DISTANCE: 96,         // spawn ring outer edge (inside despawn range)
+  SPAWN_Y_RANGE: 40,              // vertical search span around the player
+  SPAWN_COLUMN_SCAN: 12,          // blocks walked down a column to find ground
+  PASSIVE_SPAWN_LIGHT_MIN: 9,     // passive mobs need at least this much light
+  VOID_DESPAWN_Y: -80,            // mobs below this are removed (16 under
+                                  // the world floor, like dropped items)
+
+  // --- entity physics (entities/entity.js)
+  GRAVITY: 32,                    // blocks/s² (same world physics as the player)
+  TERMINAL_VELOCITY: 78,
+  STEP_HEIGHT: 1.0,               // mobs walk up full blocks without jumping
+  GROUND_RESPONSE: 8,             // 1/s approach to the wished velocity
+  AIR_DRAG: 1.9,                  // 1/s airborne damping (knockback arcs carry)
+  WATER_GRAVITY: 8,
+  WATER_BUOYANCY: 1.2,            // mobs bob toward the water surface
+  WATER_DRAG: 4.5,
+  WATER_SPEED_FACTOR: 0.5,        // horizontal crawl factor while in water
+  LAVA_GRAVITY: 9,
+  LAVA_DRAG: 9,                   // dense — mobs sink slowly, never plunge
+  LAVA_SPEED_FACTOR: 0.25,
+  FLUID_EXIT_JUMP: 6,             // bank hop, so mobs climb out of ponds
+
+  // --- combat feel
+  KNOCKBACK_HORIZONTAL: 6.5,      // blocks/s away from a hit
+  KNOCKBACK_VERTICAL: 5.0,        // upward pop on a hit
+  HURT_FLASH_SECONDS: 0.4,        // red tint after taking damage
+  DEATH_SECONDS: 0.45,            // fall-over animation before removal
+  ATTACK_REACH: 3,                // player melee reach against mobs (vanilla)
+  ATTACK_COOLDOWN_SECONDS: 0.5,   // between player melee swings that can hit
+  MELEE_RANGE: 1.8,               // mob-to-player centre distance that can bite
+  MELEE_COOLDOWN_SECONDS: 1.0,    // between a mob's own attacks
+  BURN_DAMAGE_TICK_SECONDS: 0.5,  // lava contact damage cadence for mobs
+  LAVA_CONTACT_DAMAGE: 4,         // per tick while a mob touches lava
+
+  // --- AI (the pursue state; more states come with the real mobs)
+  AGGRO_RADIUS: 32,               // pursue when the player is within this
+  REPATH_SECONDS: 0.5,            // recompute the A* path this often
+  WAYPOINT_RADIUS: 0.35,          // a waypoint counts reached within this
+  CHASE_DIRECT_RANGE: 4,          // this close, skip the path and walk straight
+
+  // --- animation (entities/models.js rigs)
+  LIMB_SWING_CYCLES_PER_BLOCK: 0.55, // stride cycles per block walked
+  LIMB_SWING_MAX: 0.9,            // radians of limb swing at full stride
+  LIMB_SWING_FADE_RATE: 8,        // 1/s swing amplitude ease in/out
+  HEAD_TRACK_RANGE: 8,            // the head follows a player within this
+  HEAD_YAW_LIMIT: 1.1,            // radians the head turns from the body
+  HEAD_PITCH_LIMIT: 0.7,
+  HEAD_TURN_RATE: 10,             // 1/s head easing
+  BODY_TURN_RATE: 8,              // 1/s body yaw easing toward the move direction
+
+  // --- pathfinding (entities/pathfinding.js)
+  PATH: {
+    NODE_BUDGET: 500,             // max A* expansions per search — the search
+                                  // can never stall a frame; budget exhaustion
+                                  // returns the closest-approach path instead
+    MAX_DROP: 3,                  // never path over drops deeper than this (SPEC)
+    MAX_RANGE: 48,                // nodes beyond this from the start stop expanding
+  },
 };
 
 // ---------------------------------------------------------------------------

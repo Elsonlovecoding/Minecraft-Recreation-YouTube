@@ -115,6 +115,25 @@ export class World {
     this._blockListeners.push(fn);
   }
 
+  // Sky/block light at a cell as { sky, block } (0-15), read from the light
+  // computed when the containing chunk last meshed, or null when the chunk
+  // has never meshed (far away). Mob spawning reads this — never rebuild
+  // light windows per query (see docs/PROGRESS.md lighting invariants).
+  getLight(x, y, z) {
+    if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return null;
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
+    const cx = Math.floor(x / SIZE);
+    const cz = Math.floor(z / SIZE);
+    const chunk = this.getChunkIfLoaded(cx, cz);
+    if (!chunk || !chunk.lightData) return null;
+    const packed = chunk.lightData[
+      ((z - cz * SIZE) * SIZE + (x - cx * SIZE)) * CHUNK.HEIGHT + (y - OVERWORLD.MIN_Y)
+    ];
+    return { sky: packed >> 4, block: packed & 15 };
+  }
+
   // Terrain height (surface block y) from the generator — pre-decoration,
   // pre-edit. For the actual current surface use getHighestSolidY.
   getHeight(x, z) {
