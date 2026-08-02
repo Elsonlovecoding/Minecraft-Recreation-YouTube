@@ -16,13 +16,22 @@
 import { ATLAS, UI } from '../config.js';
 import { getAtlasTexture } from '../render/atlas.js';
 import { faceTiles } from '../world/blocks.js';
-import { itemVisualInfo } from '../entities/items.js';
+import { itemVisualInfo, atlasSpriteCanvas } from '../entities/items.js';
 import { itemMaxDurability } from '../player/inventory.js';
 import { CHEST_TEXTURE_PATH } from '../world/chests.js';
 
 // Face brightness for the isometric icon (vanilla-style: lit from the top
 // left). Art detail, deliberately inline like the other generated art.
 const ICON_SHADE = { top: 1.0, left: 0.8, right: 0.6 };
+
+// True dimetric cube proportions (vanilla GUI block render: 45° yaw, 30°
+// elevation, orthographic). For a cube icon of width W the top diamond is
+// W/2 tall and the vertical edges drop cos30°/√2 ≈ 0.612·W below it — the
+// icon is ~11% taller than wide. (Phase 11 fix: the old icons used a drop
+// of W/2, which squashed every block cube visibly flat.)
+const ICON_DROP = Math.sqrt(3) / 2 / Math.SQRT2;
+// Canvas/display height as a multiple of the width.
+export const BLOCK_ICON_ASPECT = 0.5 + ICON_DROP;
 
 let styleInjected = false;
 
@@ -79,9 +88,10 @@ function blockIconDataURL(blockId) {
   let url = blockIconCache.get(blockId);
   if (url) return url;
   const S = UI.BLOCK_ICON_PX;
+  const drop = Math.round(S * ICON_DROP); // vertical edge length
   const canvas = document.createElement('canvas');
   canvas.width = S;
-  canvas.height = S;
+  canvas.height = S / 2 + drop;
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   const img = getAtlasTexture().image;
@@ -91,8 +101,8 @@ function blockIconDataURL(blockId) {
   // Top diamond, then the two visible sides (pz face on the left, px on the
   // right — the same tiles the placed block shows).
   drawFace(ctx, img, tiles[2], 0, q, h, -q, h, q, ICON_SHADE.top);
-  drawFace(ctx, img, tiles[4], 0, q, h, q, 0, h, ICON_SHADE.left);
-  drawFace(ctx, img, tiles[0], h, h, h, -q, 0, h, ICON_SHADE.right);
+  drawFace(ctx, img, tiles[4], 0, q, h, q, 0, drop, ICON_SHADE.left);
+  drawFace(ctx, img, tiles[0], h, h, h, -q, 0, drop, ICON_SHADE.right);
   url = canvas.toDataURL();
   blockIconCache.set(blockId, url);
   return url;
@@ -141,9 +151,10 @@ function buildChestIcon(sheet) {
   drawRegion180(topCtx, sheet, 14, 0, 14, 14, 0, 0, 14, 14);
 
   const S = UI.BLOCK_ICON_PX;
+  const drop = Math.round(S * ICON_DROP);
   const canvas = document.createElement('canvas');
   canvas.width = S;
-  canvas.height = S;
+  canvas.height = S / 2 + drop;
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   const h = S / 2;
@@ -161,8 +172,8 @@ function buildChestIcon(sheet) {
   };
   // Same three-face layout as blockIconDataURL: top, front-left, side-right.
   face(top, 0, q, h, -q, h, q, ICON_SHADE.top);
-  face(makeFace(true), 0, q, h, q, 0, h, ICON_SHADE.left);
-  face(makeFace(false), h, h, h, -q, 0, h, ICON_SHADE.right);
+  face(makeFace(true), 0, q, h, q, 0, drop, ICON_SHADE.left);
+  face(makeFace(false), h, h, h, -q, 0, drop, ICON_SHADE.right);
   return canvas.toDataURL();
 }
 
@@ -191,8 +202,9 @@ function setChestIcon(imgEl) {
 // Public API
 // ---------------------------------------------------------------------------
 
-// Icon element for an item name: block items get the isometric cube, item
-// items their real sprite. Always an <img> so callers can size it freely.
+// Icon element for an item name: block items get the isometric cube (shown
+// slightly taller than wide — the true cube proportions), item items their
+// real square sprite. Always an <img> so callers can size it freely.
 export function createItemIcon(name, sizePx) {
   const img = document.createElement('img');
   img.className = 'mc-slot-icon';
@@ -200,10 +212,30 @@ export function createItemIcon(name, sizePx) {
   img.style.width = `${sizePx}px`;
   img.style.height = `${sizePx}px`;
   const info = itemVisualInfo(name);
-  if (info.model === 'chest') setChestIcon(img);
-  else if (info.blockId !== undefined) img.src = blockIconDataURL(info.blockId);
-  else img.src = `assets/items/${info.sprite}.png`;
+  if (info.model === 'chest') {
+    img.style.height = `${Math.round(sizePx * BLOCK_ICON_ASPECT)}px`;
+    setChestIcon(img);
+  } else if (info.blockId !== undefined) {
+    img.style.height = `${Math.round(sizePx * BLOCK_ICON_ASPECT)}px`;
+    img.src = blockIconDataURL(info.blockId);
+  } else if (info.atlas) {
+    img.src = atlasSpriteDataUrl(info.sprite);
+  } else {
+    img.src = `assets/items/${info.sprite}.png`;
+  }
   return img;
+}
+
+const atlasSpriteUrlCache = new Map(); // item name -> data URL
+
+// Sprite icon for an item whose art lives in the block atlas (torch).
+function atlasSpriteDataUrl(name) {
+  let url = atlasSpriteUrlCache.get(name);
+  if (!url) {
+    url = atlasSpriteCanvas(name).toDataURL();
+    atlasSpriteUrlCache.set(name, url);
+  }
+  return url;
 }
 
 // Fills a slot element with a stack's icon, count (when > 1) and durability

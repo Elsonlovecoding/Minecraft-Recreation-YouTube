@@ -9,9 +9,9 @@
 // the first-person hand — this module owns "what an item looks like".
 
 import * as THREE from 'three';
-import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK } from '../config.js';
+import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK, ATLAS } from '../config.js';
 import { BLOCK, blockIdByName, faceTiles, isSolid } from '../world/blocks.js';
-import { getUV, getAtlasTexture } from '../render/atlas.js';
+import { getUV, getAtlasTexture, TILE } from '../render/atlas.js';
 import { createChestMesh } from '../world/chests.js';
 
 const EPS = 1e-5;
@@ -27,6 +27,32 @@ const VISUAL_ALIAS = {
 // Items rendered as an entity-textured model rather than an atlas cube or a
 // flat sprite (Phase 10: the chest box model, everywhere a chest item shows).
 const MODEL_ITEMS = { chest: 'chest' };
+
+// Items whose sprite art lives in the block atlas rather than assets/items/
+// (Phase 11: the torch is a box model in the world and a flat sprite as an
+// item, like vanilla — there is no assets/items/torch.png).
+export const ATLAS_SPRITE_ITEMS = { torch: TILE.TORCH };
+
+const atlasSpriteCanvases = new Map(); // item name -> 16x16 canvas
+
+// The atlas tile of an ATLAS_SPRITE_ITEMS entry copied onto its own canvas,
+// usable anywhere an image is (textures, extrusion, icon data URLs).
+export function atlasSpriteCanvas(name) {
+  let canvas = atlasSpriteCanvases.get(name);
+  if (canvas) return canvas;
+  const P = ATLAS.TILE_PIXELS;
+  const tile = ATLAS_SPRITE_ITEMS[name];
+  const sx = (tile % ATLAS.TILES_PER_ROW) * P;
+  const sy = Math.floor(tile / ATLAS.TILES_PER_ROW) * P;
+  canvas = document.createElement('canvas');
+  canvas.width = P;
+  canvas.height = P;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(getAtlasTexture().image, sx, sy, P, P, 0, 0, P, P);
+  atlasSpriteCanvases.set(name, canvas);
+  return canvas;
+}
 
 // Mesh for a { model } visual — dropped items, the held hand and any future
 // model item route through here. The result is centred on its origin like
@@ -120,12 +146,17 @@ export function createBlockMesh(blockId, size) {
 function getSpriteMaterial(name) {
   let material = spriteMaterialCache.get(name);
   if (material) return material;
-  const texture = new THREE.TextureLoader().load(
-    `assets/items/${name}.png`,
-    undefined,
-    undefined,
-    () => console.warn(`[items] missing texture assets/items/${name}.png`),
-  );
+  let texture;
+  if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
+    texture = new THREE.CanvasTexture(atlasSpriteCanvas(name));
+  } else {
+    texture = new THREE.TextureLoader().load(
+      `assets/items/${name}.png`,
+      undefined,
+      undefined,
+      () => console.warn(`[items] missing texture assets/items/${name}.png`),
+    );
+  }
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
@@ -146,6 +177,9 @@ function getSpriteMaterial(name) {
 // a flat texture from assets/items/ ({ sprite }).
 export function itemVisualInfo(name) {
   if (MODEL_ITEMS[name]) return { model: MODEL_ITEMS[name] };
+  if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
+    return { sprite: name, atlas: true };
+  }
   const alias = VISUAL_ALIAS[name];
   const blockId = alias?.block ?? (alias?.sprite ? null : blockIdByName(name));
   if (blockId !== null && blockId !== undefined && faceTiles(blockId)) {
@@ -279,6 +313,15 @@ export function createExtrudedItemMesh(name, size, onReady) {
     onReady?.();
     return group;
   }
+  // Atlas-backed sprites (torch) build synchronously — the atlas is loaded
+  // before anything can spawn or hold an item.
+  if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
+    const built = buildExtrudedGeometry(atlasSpriteCanvas(name));
+    extrudedCache.set(name, built);
+    group.add(new THREE.Mesh(built.geometry, built.material));
+    onReady?.();
+    return group;
+  }
   const img = new Image();
   img.onload = () => {
     let built = extrudedCache.get(name);
@@ -299,6 +342,9 @@ export function createExtrudedItemMesh(name, size, onReady) {
 }
 
 // Visual for an item name. Returns { mesh, halfHeight }.
+// Phase 11: dropped sprite items use the extruded one-pixel-thick slab model
+// (the same one the hand holds) instead of a flat plane — a dropped item has
+// visible depth from the side, like vanilla.
 function createItemVisual(name) {
   const info = itemVisualInfo(name);
   if (info.model) {
@@ -310,7 +356,7 @@ function createItemVisual(name) {
     return { mesh: createBlockMesh(info.blockId, size), halfHeight: size / 2 };
   }
   const size = ITEMS.SPRITE_SCALE;
-  return { mesh: createSpriteMesh(info.sprite, size), halfHeight: size / 2 };
+  return { mesh: createExtrudedItemMesh(info.sprite, size), halfHeight: size / 2 };
 }
 
 // ---------------------------------------------------------------------------

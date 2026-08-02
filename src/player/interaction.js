@@ -24,9 +24,10 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  OVERWORLD, CHUNK, LIGHTING,
+  OVERWORLD, CHUNK, LIGHTING, STATS,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
+import { foodValue } from './inventory.js';
 import {
   createBlockMesh, createExtrudedItemMesh, createModelMesh, itemVisualInfo,
 } from '../entities/items.js';
@@ -198,13 +199,16 @@ function createArmTexture() {
 
 // Wires targeting, breaking, placing and the first-person hand into the game.
 // `player` is the Phase 5 controller (body + mode), `items` the item manager,
-// `inventory` the Phase 7 inventory (selection, stacks, durability).
+// `inventory` the Phase 7 inventory (selection, stacks, durability), `stats`
+// the Phase 11 stats (eating: hunger gate + eat()).
 // `onUseBlock(target)` (optional, wired by main.js) handles right-clicking a
 // usable block — a crafting table opening its screen — returning true when it
 // consumed the click; sneaking bypasses it so blocks can still be placed
 // against usable blocks, like vanilla.
+// Phase 11 right-click priority: usable block (unless sneaking) > bucket
+// fill/empty > hold-to-eat food > place the selected block.
 export function createInteraction({
-  world, camera, scene, canvas, player, items, inventory, onUseBlock,
+  world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
 }) {
   const H = INTERACTION.HAND;
 
@@ -224,6 +228,8 @@ export function createInteraction({
   let breakProgress = 0;    // 0..1
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
+  let eating = null;        // { name, t } while holding right click with food
+  let eatBlend = 0;         // eased 0..1 into the eating hand pose
 
   // --- targeted face outline
   const outline = new THREE.LineLoop(
@@ -549,6 +555,8 @@ export function createInteraction({
     if (!name) return;
     const id = blockIdByName(name);
     if (id === null) return; // the selection isn't a placeable block
+    // Torches need solid support (the clicked block IS the support).
+    if (id === BLOCK.TORCH && !blockDef(target.id).solid) return;
     const x = target.x + fx;
     const y = target.y + fy;
     const z = target.z + fz;
@@ -557,10 +565,56 @@ export function createInteraction({
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
     if (!isReplaceable(world.getBlock(x, y, z))) return;
     if (placementBlockedByPlayer(x, y, z, player.body.position)) return;
-    // Oriented blocks (furnace) place the variant facing the player.
-    world.setBlock(x, y, z, placementVariant(id, { x, y, z }, player.body.position));
+    // Oriented blocks place their variant: furnaces face the player, torches
+    // become the wall variant leaning out of the clicked face; null = the
+    // clicked face can't hold this block (torch on a ceiling).
+    const placed = placementVariant(id, { x, y, z }, player.body.position, target.face);
+    if (placed === null) return;
+    world.setBlock(x, y, z, placed);
     inventory.consumeSelected(1); // the hand refreshes via the subscription
     startSwing();
+  }
+
+  // --- buckets (Phase 11): an empty bucket scoops the first fluid cell on
+  // the crosshair ray (fluids are looked through by the normal targeting, so
+  // this raycast targets them too — a solid block in front still wins); a
+  // full bucket places its fluid against the targeted face. One action per
+  // press: the held item changes underneath, so hold-repeat must not run.
+
+  const fluidOrTargetable = (id) => isTargetable(id) || blockDef(id).fluid;
+
+  function tryScoopFluid() {
+    const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
+    if (!hit || !blockDef(hit.id).fluid) return false;
+    world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+    inventory.replaceSelected(hit.id === BLOCK.LAVA ? 'lava_bucket' : 'water_bucket');
+    return true;
+  }
+
+  function tryPlaceFluid(fluidId) {
+    if (!target) return false;
+    const [fx, fy, fz] = target.face;
+    if (fx === 0 && fy === 0 && fz === 0) return false;
+    const x = target.x + fx;
+    const y = target.y + fy;
+    const z = target.z + fz;
+    if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return false;
+    if (!isReplaceable(world.getBlock(x, y, z))) return false;
+    // Fluids may be placed into the player's own cell (vanilla) — they have
+    // no collision box, so no overlap check.
+    world.setBlock(x, y, z, fluidId);
+    inventory.replaceSelected('bucket');
+    return true;
+  }
+
+  // The bucket action for the currently held item, or false when the held
+  // item isn't a bucket at all (the press falls through to eating/placing).
+  function tryBucketAction() {
+    const name = inventory.selectedName;
+    if (name === 'bucket') return tryScoopFluid();
+    if (name === 'water_bucket') return tryPlaceFluid(BLOCK.WATER);
+    if (name === 'lava_bucket') return tryPlaceFluid(BLOCK.LAVA);
+    return false;
   }
 
   function updatePlacing(dt) {
@@ -576,13 +630,20 @@ export function createInteraction({
   function updateHand(dt) {
     if (swingT < 1) swingT = Math.min(1, swingT + dt / H.SWING_SECONDS);
     const s = Math.sin(Math.PI * Math.min(swingT, 1));
+    // Eating pose: the hand eases toward the mouth and nibbles (a quick
+    // up-down bob) until the food is finished.
+    const blendTarget = eating ? 1 : 0;
+    eatBlend += (blendTarget - eatBlend) * (1 - Math.exp(-H.EAT_ENGAGE_RATE * dt));
+    const nibble = eating
+      ? Math.abs(Math.sin(eating.t * Math.PI * 2 * H.EAT_NIBBLE_HZ)) * H.EAT_NIBBLE_AMP
+      : 0;
     hand.position.set(
-      handBase.x - H.SWING_SIDE * H.SWING_DIP * s,
-      handBase.y - H.SWING_DIP * s,
-      handBase.z - H.SWING_FORWARD * H.SWING_DIP * s,
+      handBase.x - H.SWING_SIDE * H.SWING_DIP * s + H.EAT_OFFSET[0] * eatBlend,
+      handBase.y - H.SWING_DIP * s + (H.EAT_OFFSET[1] + nibble) * eatBlend,
+      handBase.z - H.SWING_FORWARD * H.SWING_DIP * s + H.EAT_OFFSET[2] * eatBlend,
     );
     hand.rotation.set(
-      handTilt.x - H.SWING_ROTATION * s,
+      handTilt.x - H.SWING_ROTATION * s + H.EAT_TIP * eatBlend,
       handTilt.y + H.SWING_YAW * H.SWING_ROTATION * s,
       handTilt.z,
     );
@@ -615,16 +676,45 @@ export function createInteraction({
     // Right-click use: the targeted block (crafting table...) takes
     // precedence over placing, unless sneaking (vanilla). A handled use
     // consumes the press entirely — no place, no hold-to-place repeat.
+    // Buckets resolve next, also one action per press — the held item
+    // changes underneath (bucket <-> filled bucket), so a hold-repeat would
+    // immediately undo itself.
     if (useCheckPending) {
       useCheckPending = false;
       if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
         mouseRight = false;
         startSwing();
+      } else if (tryBucketAction()) {
+        mouseRight = false;
+        startSwing();
       }
     }
 
+    // Eating: hold right click with food selected while hunger is missing.
+    // Switching the selection or releasing the button restarts from zero.
+    const heldFood = stats ? foodValue(inventory.selectedName) : null;
+    if (mouseRight && heldFood && stats.canEat) {
+      if (!eating || eating.name !== inventory.selectedName) {
+        eating = { name: inventory.selectedName, t: 0 };
+      }
+      eating.t += dt;
+      if (eating.t >= STATS.EAT_SECONDS) {
+        stats.eat(heldFood);
+        inventory.consumeSelected(1);
+        // Stew leaves its bowl behind (drops at the feet if nothing fits).
+        if (heldFood.container && inventory.add(heldFood.container, 1) > 0) {
+          const p = player.body.position;
+          items.spawn(heldFood.container, 1, { x: p.x, y: p.y + 1, z: p.z });
+        }
+        eating = null;
+        startSwing();
+      }
+    } else {
+      eating = null;
+    }
+
     updateBreaking(dt);
-    updatePlacing(dt);
+    if (!eating) updatePlacing(dt);
 
     // Crack overlay over the block being broken. A destroy-stage texture
     // that hasn't finished loading yet would bind as an empty texture and
@@ -652,6 +742,10 @@ export function createInteraction({
     },
     get breakProgress() {
       return breakProgress;
+    },
+    // { name, t } while a hold-to-eat is in progress, else null
+    get eating() {
+      return eating;
     },
     debugState() {
       return { mouseLeft, mouseRight, shownItem, swingT, hand, arm, outline, crackMesh };

@@ -1,8 +1,10 @@
 // ui/hud.js — HUD: crosshair, breath meter, (Phase 7) the hotbar — the
 // inventory's first 9 slots with real item icons, stack counts, durability
 // bars and the selected-slot highlight — (Phase 9) the hearts row above the
-// hotbar's left half plus the red damage flash, and (Phase 10) the
-// submerged-in-lava overlay. Hunger arrives with the full stats phase.
+// hotbar's left half plus the red damage flash, (Phase 10) the
+// submerged-in-lava overlay, and (Phase 11) the hunger row: 10 drumsticks
+// above the hotbar's right half, filling right-to-left like vanilla, with
+// the breath bubbles moved up a row to sit above them.
 //
 // Phase 10 highlight fix: the selection highlight is a dedicated element
 // moved by transform (repositioned both on inventory emits and per frame),
@@ -18,6 +20,9 @@ let bubbles = [];
 let slotEls = [];
 let heartEls = [];
 let heartUrls = null; // { full, half, empty } data URLs
+let hungerEls = [];   // left-to-right; hunger fills right-to-left
+let hungerUrls = null;
+let lastHunger = -1;
 let flashEl = null;
 let lastHealth = -1;
 let selectEl = null;     // the hotbar selection highlight box
@@ -85,9 +90,56 @@ function heartDataUrl(variant) {
   return canvas.toDataURL();
 }
 
+// Pixel-art drumstick in the vanilla hunger-bar style: browned meat blob to
+// the top-left, pale bone poking out toward the bottom-right. 'o' outline,
+// 'm' meat, 'M' meat highlight, 'b' bone; the empty variant greys the fill,
+// the half variant keeps colour on the left half only.
+const FOOD_SHAPE = [
+  '..oooo..',
+  '.oMMmmo.',
+  'oMmmmmmo',
+  'ommmmmo.',
+  '.ommmo..',
+  '..oobbo.',
+  '...obbo.',
+  '....oo..',
+];
+
+function hungerDataUrl(variant) {
+  const rows = FOOD_SHAPE.length;
+  const cols = FOOD_SHAPE[0].length;
+  const scale = 3;
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * scale;
+  canvas.height = rows * scale;
+  const ctx = canvas.getContext('2d');
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const c = FOOD_SHAPE[y][x];
+      if (c === '.') continue;
+      let color;
+      if (c === 'o') color = '#2b1508';
+      else {
+        const lit = variant === 'full' || (variant === 'half' && x < cols / 2);
+        if (lit) {
+          color = c === 'M' ? '#d8904a' : c === 'b' ? '#e8ddc8' : '#b06a28';
+        } else {
+          color = c === 'M' ? '#4d4d4d' : c === 'b' ? '#565656' : '#3a3a3a';
+        }
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+  return canvas.toDataURL();
+}
+
 export function initHud(inventory) {
   const iconPx = Math.round(UI.HOTBAR_SLOT_PX * UI.ICON_SCALE);
-  const breathBottom = UI.HOTBAR_BOTTOM_PX + UI.HOTBAR_SLOT_PX + 16;
+  const statsBottom = UI.HOTBAR_BOTTOM_PX + UI.HOTBAR_SLOT_PX + 10;
+  // Bubbles sit above the hunger row (vanilla), which mirrors the hearts on
+  // the right half of the hotbar.
+  const breathBottom = statsBottom + STATS.HUNGER_PX + 4;
   const style = document.createElement('style');
   style.textContent = `
     #hud-crosshair {
@@ -101,11 +153,22 @@ export function initHud(inventory) {
     #hud-crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
     #hud-crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
     #hud-breath {
-      /* right-aligned over the hotbar's right half, mirroring the hearts on
-         the left (vanilla layout) — the two rows can never overlap */
+      /* right-aligned above the hunger row (vanilla layout) */
       position: fixed; left: 50%; bottom: ${breathBottom}px;
       transform: translateX(calc(${Math.round((UI.HOTBAR_SLOT_PX * INVENTORY.HOTBAR_SIZE + 8) / 2)}px - 100%));
       display: none; pointer-events: none; z-index: 5;
+    }
+    #hud-hunger {
+      /* right-aligned over the hotbar's right half, mirroring the hearts */
+      position: fixed; left: 50%; bottom: ${statsBottom}px;
+      transform: translateX(calc(${Math.round((UI.HOTBAR_SLOT_PX * INVENTORY.HOTBAR_SIZE + 8) / 2)}px - 100%));
+      display: flex; z-index: 5; pointer-events: none;
+      filter: drop-shadow(1px 1px 0 rgba(0,0,0,0.5));
+    }
+    #hud-hunger .drumstick {
+      width: ${STATS.HUNGER_PX}px; height: ${STATS.HUNGER_PX}px; margin-left: 1px;
+      background-size: contain; background-repeat: no-repeat;
+      image-rendering: pixelated;
     }
     #hud-breath .bubble {
       display: inline-block; width: 12px; height: 12px; margin: 0 1px;
@@ -230,6 +293,24 @@ export function initHud(inventory) {
   document.body.appendChild(hearts);
   lastHealth = -1;
 
+  // --- hunger row (Phase 11)
+  hungerUrls = {
+    full: hungerDataUrl('full'),
+    half: hungerDataUrl('half'),
+    empty: hungerDataUrl('empty'),
+  };
+  const hungerRow = document.createElement('div');
+  hungerRow.id = 'hud-hunger';
+  hungerEls = [];
+  for (let i = 0; i < PLAYER.MAX_HUNGER / 2; i++) {
+    const d = document.createElement('div');
+    d.className = 'drumstick';
+    hungerRow.appendChild(d);
+    hungerEls.push(d);
+  }
+  document.body.appendChild(hungerRow);
+  lastHunger = -1;
+
   flashEl = document.createElement('div');
   flashEl.id = 'hud-damage-flash';
   document.body.appendChild(flashEl);
@@ -269,6 +350,16 @@ export function updateHud(player, stats) {
       const points = stats.health - i * 2; // 2 health per heart
       const url = points >= 2 ? heartUrls.full : points === 1 ? heartUrls.half : heartUrls.empty;
       heartEls[i].style.backgroundImage = `url(${url})`;
+    }
+  }
+  if (stats.hunger !== lastHunger) {
+    lastHunger = stats.hunger;
+    for (let i = 0; i < hungerEls.length; i++) {
+      // The hunger bar fills right-to-left (vanilla): the rightmost
+      // drumstick holds points 1-2.
+      const points = stats.hunger - (hungerEls.length - 1 - i) * 2;
+      const url = points >= 2 ? hungerUrls.full : points === 1 ? hungerUrls.half : hungerUrls.empty;
+      hungerEls[i].style.backgroundImage = `url(${url})`;
     }
   }
   flashEl.style.opacity = stats.flashFraction > 0

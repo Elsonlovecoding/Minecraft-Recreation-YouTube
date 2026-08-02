@@ -10,9 +10,9 @@
 // materials combine with the time-of-day uniforms.
 
 import * as THREE from 'three';
-import { CHUNK, OVERWORLD, LIGHTING, RENDER } from '../config.js';
-import { BLOCK, BLOCKS } from './blocks.js';
-import { getUV } from '../render/atlas.js';
+import { CHUNK, OVERWORLD, LIGHTING, RENDER, SHAPES } from '../config.js';
+import { BLOCK, BLOCKS, TORCH_LEAN } from './blocks.js';
+import { getUV, TILE } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
 
 const SIZE = CHUNK.SIZE;
@@ -89,6 +89,39 @@ for (let id = 0; id < NUM_IDS; id++) {
     : def.transparent ? PASS_CUTOUT
     : PASS_OPAQUE;
 }
+
+// Torch lean directions as a flat per-id array for the hot loop (Phase 11:
+// torches mesh as a small box model, not cube faces). null = not a torch.
+const TORCH_LEAN_OF = new Array(NUM_IDS).fill(null);
+for (const [id, lean] of Object.entries(TORCH_LEAN)) TORCH_LEAN_OF[id] = lean;
+
+// ---------------------------------------------------------------------------
+// Torch box model (Phase 11) — a WIDTH x HEIGHT x WIDTH post: floor torches
+// stand centred on the cell floor; wall torches pivot at the wall, raised
+// WALL_BASE_Y and tilted WALL_ANGLE out of it (vanilla template_torch_wall).
+// Sides sample the 2px art column of the TORCH tile, the top the flame
+// pixels, the bottom the stick base — the vanilla model UVs.
+// ---------------------------------------------------------------------------
+
+// Face corners in torch-local (a, h, b) space: a along the lean direction,
+// h up the post, b across it. Corner order matches FACES: (0,0) (1,0) (0,1)
+// (1,1) in each face's UV frame.
+const TORCH_FACES = (() => {
+  const w2 = SHAPES.TORCH.WIDTH / 2;
+  const H = SHAPES.TORCH.HEIGHT;
+  // uv: [u0..u1, v0..v1] as fractions of the torch tile
+  const SIDE_UV = [7 / 16, 9 / 16, 0, 10 / 16];
+  const TOP_UV = [7 / 16, 9 / 16, 8 / 16, 10 / 16];
+  const BOTTOM_UV = [7 / 16, 9 / 16, 0, 2 / 16];
+  return [
+    { corners: [[w2, 0, -w2], [w2, 0, w2], [w2, H, -w2], [w2, H, w2]], uv: SIDE_UV, brightness: 'side' },
+    { corners: [[-w2, 0, w2], [-w2, 0, -w2], [-w2, H, w2], [-w2, H, -w2]], uv: SIDE_UV, brightness: 'side' },
+    { corners: [[-w2, 0, w2], [w2, 0, w2], [-w2, H, w2], [w2, H, w2]], uv: SIDE_UV, brightness: 'side' },
+    { corners: [[w2, 0, -w2], [-w2, 0, -w2], [w2, H, -w2], [-w2, H, -w2]], uv: SIDE_UV, brightness: 'side' },
+    { corners: [[-w2, H, -w2], [w2, H, -w2], [-w2, H, w2], [w2, H, w2]], uv: TOP_UV, brightness: 'top' },
+    { corners: [[-w2, 0, w2], [w2, 0, w2], [-w2, 0, -w2], [w2, 0, -w2]], uv: BOTTOM_UV, brightness: 'bottom' },
+  ];
+})();
 
 // ---------------------------------------------------------------------------
 // Face geometry table
@@ -215,6 +248,55 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   const vSky = [0, 0, 0, 0];
   const vBlk = [0, 0, 0, 0];
 
+  // Torch box model: 6 quads built from TORCH_FACES, tilted for wall
+  // variants, lit flat by the torch's own cell (it is the emitter — no AO,
+  // no per-corner smoothing on a 2px post).
+  const torchUV = tileUV(TILE.TORCH);
+  const emitTorch = (lx, iy, lz, lean) => {
+    const bucket = buckets[PASS_CUTOUT];
+    const y = iy + MIN_Y;
+    const own = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + iy;
+    const sky = wSky[own] * (1 / 15);
+    const blk = wBlk[own] * (1 / 15);
+    const [dx, dz] = lean;
+    const wall = dx !== 0 || dz !== 0;
+    const A = wall ? SHAPES.TORCH.WALL_ANGLE : 0;
+    const sinA = Math.sin(A);
+    const cosA = Math.cos(A);
+    const px = wall ? 0.5 - dx * 0.5 : 0.5;
+    const py = wall ? SHAPES.TORCH.WALL_BASE_Y : 0;
+    const pz = wall ? 0.5 - dz * 0.5 : 0.5;
+    // Floor torches lean nowhere; reuse the +x frame with angle 0.
+    const ax = wall ? dx : 1;
+    const az = wall ? dz : 0;
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    const du = torchUV.u1 - torchUV.u0;
+    const dv = torchUV.v1 - torchUV.v0;
+    for (const face of TORCH_FACES) {
+      const base = bucket.count;
+      const b = FB[face.brightness];
+      const [fu0, fu1, fv0, fv1] = face.uv;
+      for (let k = 0; k < 4; k++) {
+        const [la, lh, lb] = face.corners[k];
+        const along = la * cosA + lh * sinA;
+        const up = -la * sinA + lh * cosA;
+        bucket.pos.push(
+          lx + px + ax * along - az * lb,
+          y + py + up,
+          lz + pz + az * along + ax * lb,
+        );
+        bucket.uv.push(
+          torchUV.u0 + du * (k & 1 ? fu1 : fu0),
+          torchUV.v0 + dv * (k & 2 ? fv1 : fv0),
+        );
+        bucket.col.push(b, b, b);
+        bucket.lig.push(sky, blk);
+      }
+      bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      bucket.count += 4;
+    }
+  };
+
   // One window cell sampled for AO + vertex light, written to the s* outs.
   // Outside the world vertically: air, full sky above, darkness below.
   let sOcc = 0;
@@ -239,6 +321,11 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
       for (let iy = 0; iy < HEIGHT; iy++) {
         const id = blocks[colBase + iy];
         if (id === 0) continue;
+        const lean = TORCH_LEAN_OF[id];
+        if (lean !== null) {
+          emitTorch(lx, iy, lz, lean);
+          continue;
+        }
         const pass = PASS[id];
         if (pass === PASS_NONE) continue;
 

@@ -21,9 +21,16 @@
 //   - shift click: between hotbar and main — or, with a container open,
 //     between the inventory and the container (furnace routes smeltables
 //     to input and fuel to the fuel slot; its output slot never accepts)
-// E or Esc closes. Death and victory screens arrive later.
+// E or Esc closes. Phase 11 additions:
+//   - clicking the dark backdrop OUTSIDE the panel with a stack on the
+//     cursor throws it into the world along the camera direction (left
+//     click the whole stack, right click a single item — vanilla)
+//   - the death screen (stats.js drives it through main.js): "You died!"
+//     over a red-tinted overlay, a Respawn button, input held until respawn
+// Victory screen arrives with the dragon phase.
 
-import { INVENTORY, UI, CRAFTING } from '../config.js';
+import * as THREE from 'three';
+import { INVENTORY, UI, CRAFTING, ITEMS } from '../config.js';
 import { renderSlotContent } from './icons.js';
 import { CraftingGrid } from '../systems/crafting.js';
 import {
@@ -97,7 +104,7 @@ function arrowDataUrl(color) {
   return canvas.toDataURL();
 }
 
-export function createScreens({ inventory, canvas, items, player }) {
+export function createScreens({ inventory, canvas, items, player, camera, onRespawn }) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
   let mode = 'inventory'; // 'inventory' | 'table' | 'chest' | 'furnace'
@@ -198,6 +205,23 @@ export function createScreens({ inventory, canvas, items, player }) {
       transform: translate(-50%, -50%);
       align-items: center; justify-content: center;
     }
+    #death-root {
+      position: fixed; inset: 0; z-index: 30; display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(110, 0, 0, 0.55);
+      user-select: none;
+    }
+    #death-root h1 {
+      color: #fff; font: bold 44px/1 monospace; margin: 0 0 28px;
+      text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+    }
+    #death-respawn {
+      font: bold 17px/1 monospace; color: #e8e8e8;
+      background: #6f6f6f; padding: 12px 60px; cursor: pointer;
+      border: 2px solid; border-color: #a8a8a8 #2f2f2f #2f2f2f #a8a8a8;
+      box-shadow: 0 0 0 2px #000;
+    }
+    #death-respawn:hover { background: #7f8caf; color: #ffffa0; }
   `;
   document.head.appendChild(style);
 
@@ -420,6 +444,40 @@ export function createScreens({ inventory, canvas, items, player }) {
   cursorEl.id = 'screen-cursor';
   document.body.appendChild(cursorEl);
 
+  // --- death screen (Phase 11)
+  const deathRoot = document.createElement('div');
+  deathRoot.id = 'death-root';
+  const deathTitle = document.createElement('h1');
+  deathTitle.textContent = 'You died!';
+  const respawnBtn = document.createElement('button');
+  respawnBtn.id = 'death-respawn';
+  respawnBtn.textContent = 'Respawn';
+  deathRoot.appendChild(deathTitle);
+  deathRoot.appendChild(respawnBtn);
+  document.body.appendChild(deathRoot);
+  let deathShown = false;
+  respawnBtn.addEventListener('click', () => {
+    if (!deathShown) return;
+    deathShown = false;
+    deathRoot.style.display = 'none';
+    document.body.classList.remove('mc-screen-open');
+    onRespawn?.();
+    // Back to the game (the post-Esc cooldown rejection is swallowed — the
+    // click-to-play hint covers it, same as closing a normal screen).
+    const req = canvas.requestPointerLock();
+    if (req && typeof req.catch === 'function') req.catch(() => {});
+  });
+
+  // Shown by main.js when the player dies (any open container screen is
+  // closed first, so its stacks drop at the death site with the inventory).
+  function showDeath() {
+    if (deathShown) return;
+    deathShown = true;
+    document.body.classList.add('mc-screen-open'); // suppresses the lock hint
+    deathRoot.style.display = 'flex';
+    document.exitPointerLock();
+  }
+
   // --- rendering
 
   function updateIndicators() {
@@ -483,6 +541,42 @@ export function createScreens({ inventory, canvas, items, player }) {
     downRef = null;
   });
 
+  // Clicking the backdrop OUTSIDE the panel with a stack on the cursor
+  // throws it into the world along the camera direction (vanilla): left
+  // click the whole stack, right click one item.
+  const throwDir = new THREE.Vector3();
+  const throwFrom = new THREE.Vector3();
+  function throwItem(name, count, durability) {
+    camera.getWorldPosition(throwFrom); // the camera sits at the eye
+    camera.getWorldDirection(throwDir);
+    items.spawn(
+      name, count,
+      { x: throwFrom.x, y: throwFrom.y - 0.3, z: throwFrom.z },
+      {
+        x: throwDir.x * ITEMS.THROW_SPEED,
+        y: throwDir.y * ITEMS.THROW_SPEED + ITEMS.THROW_UP,
+        z: throwDir.z * ITEMS.THROW_SPEED,
+      },
+      durability ?? undefined,
+    );
+  }
+  root.addEventListener('mousedown', (e) => {
+    if (e.target !== root || !cursor || !items) return;
+    e.preventDefault();
+    if (e.button === 0) {
+      throwItem(cursor.name, cursor.count, cursor.durability);
+      cursor = null;
+    } else if (e.button === 2) {
+      throwItem(cursor.name, 1, cursor.durability);
+      cursor.count -= 1;
+      if (cursor.count <= 0) cursor = null;
+    } else {
+      return;
+    }
+    downRef = null;
+    refresh();
+  });
+
   // --- open / close
 
   function openScreen(newMode = 'inventory') {
@@ -536,7 +630,9 @@ export function createScreens({ inventory, canvas, items, player }) {
     items.spawn(name, count, { x: p.x, y: p.y + 1, z: p.z }, undefined, durability);
   }
 
-  function closeScreen() {
+  // `relock` false skips re-requesting pointer lock — the death path closes
+  // screens while the death overlay takes over the input.
+  function closeScreen(relock = true) {
     if (!open) return;
     open = false;
     downRef = null;
@@ -567,6 +663,7 @@ export function createScreens({ inventory, canvas, items, player }) {
     cursorEl.style.display = 'none'; // never leave the ghost over gameplay
     document.body.classList.remove('mc-screen-open');
     root.style.display = 'none';
+    if (!relock) return;
     // Re-lock the pointer to resume play. The request can reject during the
     // browser's post-Esc cooldown — the "Click to play" hint covers that.
     const req = canvas.requestPointerLock();
@@ -601,12 +698,16 @@ export function createScreens({ inventory, canvas, items, player }) {
     openChest,
     openFurnace,
     closeScreen,
+    showDeath,
     refresh,
     update,
     invGrid,   // exposed for tests/debugging
     tableGrid,
     get isOpen() {
       return open;
+    },
+    get isDeathShown() {
+      return deathShown;
     },
     get mode() {
       return mode;

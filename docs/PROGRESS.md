@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 10 — smelting (furnace UI + per-position furnaces with lit block variants), chests (entity-textured box model + persistent 27-slot containers), generic container screens + Phase 9 bug fixes (lava volume/placement rework, cave size variety, dense-lava physics + submerged overlay, hotbar highlight repaint, held item/arm framing)**
+Phase last completed: **Phase 11 — full survival stats (hunger + saturation + exhaustion, regeneration, starvation, fall/drown/cactus/fire damage, knockback, death screen + respawn, hold-right-click eating, food registry) + Phase 10 bug fixes (torch box model + wall torches, working buckets, extruded dropped items, true-proportion block icons, click-outside item throw, more cave entrances, denser canopies)**
 
 ---
 
@@ -466,19 +466,48 @@ Phase last completed: **Phase 10 — smelting (furnace UI + per-position furnace
   lava lakes can be filled with gravel like vanilla (matters at diamond
   depth). Cascades chain naturally (each vacated cell re-queues the cell
   above), entities freeze in unloaded chunks like dropped items.
-- `src/player/stats.js` — the Phase 9 slice of stats: health
-  (`PLAYER.MAX_HEALTH` 20), lava contact damage (body-AABB corner sampling,
-  `STATS.LAVA_DAMAGE` 4 per `DAMAGE_TICK_SECONDS` 0.5 — fly mode exempt),
-  death per SPEC (drop the whole inventory as item entities via the new
-  `Inventory.drainAll()`, durability preserved) and immediate respawn at
-  the spawn point with restored health/breath. `damage(amount)` is the
-  entry point later phases (falls, drowning, mobs, cactus) will call.
-  Dropped items now also burn in lava (items.js midpoint check) — dying in
+- `src/player/stats.js` — Phase 11: the full survival loop (fly mode exempt
+  from all of it; every tunable in config `STATS`):
+  - **Health/damage**: `damage(amount)` is the single entry point (mobs will
+    call it too); every hit drives the HUD red flash and adds a little
+    exhaustion. `applyKnockback(dirX, dirZ)` shoves the body horizontally
+    and pops it up (never cancelling upward velocity) — cactus uses it now,
+    combat later.
+  - **Hunger 20** with a hidden vanilla-style saturation buffer: activity
+    accrues exhaustion (sprint 0.1/block, swim 0.01/block, jump 0.05 or 0.2
+    sprinting, damage 0.1, regen 6.0 per heal); every 4.0 exhaustion drains
+    1 saturation, then 1 hunger once the buffer is dry. Eating restores
+    both (`eat(food)`, driven by interaction.js).
+  - **Regeneration** at hunger >= 18: +1 health per 4s, costing 6
+    exhaustion — healing makes you hungry, the vanilla eat-to-heal loop.
+  - **Starvation** at 0 hunger: 1 damage per 4s down to
+    `PLAYER.STARVE_FLOOR_HEALTH` (1 heart) — hunger alone never kills (SPEC).
+  - **Fall damage**: consumes the controller's one-frame `body.lastLanding`
+    signal — 1 heart per block beyond 3 (SPEC); fluids already suppress the
+    landing report in the controller, fly and respawn teleports exempt.
+  - **Drowning**: 2 damage per second while `body.breath` is 0 underwater.
+  - **Lava + fire**: lava contact 4 per 0.5s tick (inset AABB corner
+    sampling as before) and (re)sets 15s of burning; burning ticks 1/s and
+    persists after climbing out; any water contact extinguishes it.
+  - **Cactus contact**: 1 damage per 0.5s tick via an AABB inflated 0.1
+    (reaches past the 1/16 inset box; standing on top counts), with
+    knockback away from the block.
+  - **Death**: main.js's onDeath closes any open screen WITHOUT relocking
+    (grid + cursor stacks return to the inventory first), the whole
+    inventory drops as item entities where you died (durability preserved,
+    scatter + pop), the death screen (ui/screens.js) holds until the
+    Respawn button, and a dead player collects nothing (main.js pickup
+    gate — the corpse can't vacuum its own drops back up). `respawn()`
+    teleports to the world spawn with health/hunger/saturation/breath
+    restored.
+  Dropped items still burn in lava (items.js midpoint check) — dying in
   lava burns what you dropped, like vanilla.
-- `src/ui/hud.js` Phase 9: hearts row (10 pixel-art hearts, full/half/empty
-  generated once as data URLs) above the hotbar's left half, red damage
-  screen flash driven by `stats.flashFraction`. Hunger bar remains for the
-  full stats phase.
+- `src/ui/hud.js` Phase 9/11: hearts row (10 pixel-art hearts, full/half/
+  empty generated once as data URLs) above the hotbar's left half, red
+  damage screen flash driven by `stats.flashFraction`; Phase 11 adds the
+  hunger row — 10 pixel-art drumsticks above the hotbar's right half,
+  filling right-to-left like vanilla (full/half/empty variants) — and moves
+  the breath bubbles up a row to sit above it.
 - `src/entities/items.js` — `createExtrudedItemMesh(name, size)`: the
   vanilla held-item model — the sprite as a one-pixel-thick slab (full
   front/back quads plus one edge quad per opaque/transparent pixel
@@ -696,6 +725,79 @@ rejection, breath frozen in fly mode, and crosshair-over-hint stacking.
 (Phase 5 note: the auto-step checks above were written against the old
 1-block step height; Phase 6 corrected it to vanilla 0.6 — full blocks now
 require a jump, re-verified below.)
+
+Phase 11 (this session) additions, one entry per file:
+- `src/player/interaction.js` Phase 11 — the right-click priority chain is
+  now: usable block (unless sneaking) > bucket action > hold-to-eat > place.
+  **Eating**: holding right click with food selected while hunger is missing
+  runs a `STATS.EAT_SECONDS` (1.6s) hold — the hand eases toward the mouth
+  and nibbles (`HAND.EAT_*` config) — then consumes 1, applies the food's
+  hunger/saturation, spawns the container item (stew -> bowl) and swings;
+  releasing or switching the selection restarts from zero; eating never
+  places. **Buckets**: an empty bucket scoops the first fluid cell on the
+  crosshair ray (a fluid-aware raycast — a nearer solid still wins) into a
+  water/lava bucket; a full bucket places its fluid against the targeted
+  face (into air/fluid cells only; fluids may be placed into the player's
+  own cell, vanilla) and reverts to the empty bucket; exactly one bucket
+  action per press — the held item changes underneath, so hold-repeat would
+  immediately undo itself. **Torch placement**: `placementVariant` now takes
+  the clicked face — top faces place the floor torch, wall faces the wall
+  variant leaning out of that wall, ceilings refuse (nothing consumed), and
+  torches require the clicked support block to be solid.
+- `src/world/blocks.js` Phase 11 — wall torch block ids 57-60
+  (`TORCH_WALL_S/N/E/W`, all dropping 'torch', light 14); the whole torch
+  family is `faces: null` (the mesher's generic cube emitter skips it) with
+  `special: 'torch'`; `TORCH_LEAN` maps each id to its lean direction,
+  `isTorch`/`torchSupportCell` are the support helpers (floor: below; wall:
+  the block behind), and `placementVariant(id, cell, pos, face)` picks the
+  variant from the clicked face (null = face can't hold it).
+- `src/world/chunks.js` Phase 11 — torches mesh as the vanilla box model,
+  not cubes: a `SHAPES.TORCH` 2px-wide, 10px-tall post centred on the cell
+  floor; wall variants pivot at their wall, raised 3.5px and tilted 22.5°
+  out of it (vanilla template_torch_wall geometry). Sides sample the torch
+  tile's 2px art column, the top the flame pixels, the bottom the stick
+  base. Torch quads are lit flat by the torch's own cell (it is the
+  emitter — no AO on a 2px post) in the cutout pass.
+- `src/entities/items.js` Phase 11 — dropped sprite items use the extruded
+  one-pixel-thick slab model (`createExtrudedItemMesh`, the same model the
+  hand holds) instead of a flat plane, so a dropped item has visible depth
+  from the side. `ATLAS_SPRITE_ITEMS`/`atlasSpriteCanvas` route items whose
+  art lives in the block atlas (the torch — there is no
+  assets/items/torch.png) into every sprite path: dropped slab, held hand
+  slab (built synchronously from the atlas canvas), and UI icon.
+- `src/ui/icons.js` Phase 11 — block-cube icons redrawn with true dimetric
+  proportions (45° yaw / 30° elevation orthographic: vertical edges drop
+  ~0.612·W, the icon ~11% taller than wide — `BLOCK_ICON_ASPECT`); the old
+  square construction visibly squashed every block icon flat. Chest icon
+  follows; block/chest icon img heights scale by the same aspect; atlas
+  sprite items (torch) get a data-URL icon.
+- `src/ui/screens.js` Phase 11 — clicking the backdrop outside the panel
+  with a stack on the cursor throws it into the world along the camera
+  direction (`ITEMS.THROW_SPEED`/`THROW_UP`): left click the whole stack,
+  right click a single item, durability preserved. The death screen ("You
+  died!" over a red overlay, Respawn button) holds input until respawn —
+  `showDeath()`/`closeScreen(relock=false)` are the stats-phase hooks; the
+  Respawn click runs `onRespawn` (main.js -> stats.respawn()) and relocks
+  the pointer.
+- `src/player/inventory.js` Phase 11 — the `FOODS` registry (vanilla hunger
+  + saturation per item, cooked meat far above raw; stew carries
+  `container: 'bowl'`) with `foodValue(name)`; `replaceSelected(name)` for
+  the bucket fill/empty swaps (stack-1 items).
+- `src/world/terrain.js` Phase 11 — canopies are a layer deeper
+  (`TREES.WIDE_LAYERS` 3 5x5 layers under the 3x3 + plus cap) and the 5x5
+  corners are kept with a 50% per-corner hash (`CORNER_CHANCE`) instead of
+  always clipped — the middle of a tree now reads as a dense mass (leaf
+  census ~13 leaves per trunk log, was ~9), still byte-deterministic across
+  generation order.
+- `src/main.js` Phase 11 — torch-support block listener (floor torches pop
+  off as items when the block below goes, wall torches when their wall
+  goes; cascades ride the listener chain), the death flow wiring
+  (onDeath/onRespawn above), `stats` passed to interaction, and the
+  dead-pickup gate.
+- config `CAVES.ENTRANCE` retune — walkable surface cave mouths (>= 3
+  connected open columns, ravines excluded) measured over six 192x192
+  regions: 0.32 -> ~1.0 per 100x100 columns; mouths stay clustered in
+  regions rather than pockmarking, still only on dry grass/stone columns.
 
 Phase 6 verification: 70 node checks against the real modules — raycast
 geometry (axis-aligned/diagonal/negative directions, boundary origins,
@@ -984,6 +1086,39 @@ clearing on exit. Screenshots verify the chest model art (rim/planks/latch,
 correct facing), the chest hotbar icon, held block/tool tucked into the
 lower-right corner, the shortened arm, and the lava overlay.
 
+Phase 11 verification: 44 node checks driving the real stats module with a
+synthetic body/world (fall damage exactly at/over the SPEC threshold and the
+20-damage kill; fly exemption; cactus contact + knockback direction/pop +
+tick spacing + standing-on-top; lava contact igniting 15s burning, fire
+ticking ~1/s after leaving lava, water extinguishing; drowning 2/s at
+breath 0 and stopping on surfacing; sprint exhaustion draining saturation
+before hunger; regen at full hunger costing exhaustion; starvation stopping
+exactly at 1 heart and never killing; eating clamps; cooked > raw registry
+values; death dropping every stack with the death screen holding position
+until respawn; no damage or pickups while dead; knockback API). 22 browser
+checks against the running game (zero console errors at boot and
+throughout; eating refused at full hunger, started when hungry, consuming 1
+and restoring hunger through the real held-button path; the regen
+eat-to-heal loop stalling below hunger 18; bucket scooping a staged water
+source into water_bucket leaving air, and placing it back emptying to
+bucket; wall torch placed via a real right press on a wall face becoming
+the leaning variant, floor torch on a top face, ceiling refusing without
+consuming, and the wall torch popping off as an item when its wall broke;
+click-outside-the-panel throwing one item on right click and the rest on
+left; an 8-block fall through the real physics costing the SPEC hearts).
+Chunk determinism re-verified byte-identical across generation orders with
+the denser canopies (leaf census ~13 leaves/trunk-log, was ~9). Cave-mouth
+census: 0.32 -> ~1.0 walkable mouths per 100x100 columns over six 192x192
+regions. Screenshot suite verifies the look: thin floor-torch post with
+flame, tilted wall torch, night torch glow, extruded dropped bread/torch/
+pickaxe with visible thickness, true-proportion block icons in hotbar +
+inventory, dense dark-interior canopies from below and a hole-free canopy
+from above, hunger drumsticks right-aligned with hearts, the death screen.
+An adversarial multi-agent review (5 lenses — stats logic, interaction
+flow, UI/DOM, meshing/world-gen, SPEC/integration — every finding
+independently re-verified by a dedicated skeptic) ran over the full diff;
+confirmed findings were fixed and re-verified (see the session log).
+
 ---
 
 ## Partially built
@@ -991,12 +1126,13 @@ lower-right corner, the shortened arm, and the lava overlay.
 - The rest of `src/` exists as empty stub modules with responsibility headers
   (entities/entity.js, entities/mobs.js, entities/pathfinding.js,
   entities/dragon.js, systems/brewing.js, systems/combat.js, dimensions/).
-- `ui/hud.js` has hearts (Phase 9) but still lacks hunger (stats phase).
-- `player/stats.js` is the Phase 9 slice only: health + lava damage + death/
-  respawn. Still missing: hunger, regeneration, fall damage (consume
-  `body.lastLanding`), drowning (`body.breath === 0`), cactus contact
-  (inset-aware), armour reduction, starvation, death screen (respawn is
-  currently immediate).
+- `player/stats.js` is complete for solo survival (Phase 11). Still
+  missing: armour equip slots + damage reduction (combat phase — armour
+  items exist in the registry), and block-break/attack exhaustion costs
+  (negligible vanilla values, add with combat).
+- Burning has no screen-edge fire overlay or sound — damage flash only.
+  Fire exists only as a state (lava sets it); there is no fire BLOCK yet
+  (flint-and-steel lighting things is the portal phase).
 - Phase 9 deliberate slices:
   - ~~Lava is not swimmable~~ — Phase 10 made lava a dense fluid (slow
     partial sinking, crawl movement, slow rise on jump). Still no
@@ -1011,14 +1147,12 @@ lower-right corner, the shortened arm, and the lava overlay.
     only player-triggered block changes queue support checks.
   - Falling blocks don't push/suffocate entities standing in the landing
     cell; the block simply places (the player can walk/dig out).
-  - Dying with an inventory/crafting screen open preserves the cursor
-    stack and crafting-grid contents (they re-insert into the emptied
-    inventory when the screen closes) instead of dropping them at the
-    death site like vanilla — nothing is lost or duplicated; closing
-    screens on death belongs to the death-screen phase.
-- `ui/screens.js` has the inventory, crafting, chest and furnace screens;
-  death/victory screens are later phases. The brewing stand should reuse
-  the Phase 10 container machinery (SlotContainer with slot gates +
+  - ~~Dying with an inventory/crafting screen open preserves the cursor
+    stack...~~ — Phase 11: death closes any open screen first (grids and
+    cursor return to the inventory) and everything drops at the death site.
+- `ui/screens.js` has the inventory, crafting, chest, furnace and death
+  screens; the victory screen is the dragon phase. The brewing stand should
+  reuse the Phase 10 container machinery (SlotContainer with slot gates +
   a screen mode with indicator art — the furnace is the template).
 - Phase 8 deliberate slices:
   - Crafting recipes only cover what the item set supports — no golden
@@ -1033,10 +1167,10 @@ lower-right corner, the shortened arm, and the lava overlay.
 - Phase 7 deliberate slices:
   - Armour items exist in the registry (stack 1, correct durabilities) and
     can live in the inventory, but there are no equip slots and no damage
-    reduction yet — that's the stats/combat phase.
-  - No off-hand. Cursor stacks can't be thrown into the world by clicking
-    outside the panel (vanilla drops them) — closing the screen returns or
-    drops them instead. No Q-to-drop either.
+    reduction yet — that's the combat phase.
+  - No off-hand. ~~Cursor stacks can't be thrown into the world by clicking
+    outside the panel~~ — Phase 11: they can (left = stack, right = one).
+    No Q-to-drop while playing yet.
   - Tools wear 1 durability per broken block for every tool class (vanilla
     charges 2 for swords); swords have no attack use until combat.
   - Number-key/wheel selection and the E screen are keyboard-only bindings
@@ -1050,8 +1184,10 @@ lower-right corner, the shortened arm, and the lava overlay.
   - `oak_sapling` and `glowstone_dust` drops have no shipped item texture;
     items.js renders stand-ins (leaves mini-block / blaze powder sprite)
     via its VISUAL_ALIAS map — hotbar/screen icons follow the same alias.
-  - Breaking water/lava directly is impossible (not targetable) — bucket
-    interactions are an item-phase concern.
+  - Breaking water/lava directly is impossible (not targetable) — ~~bucket
+    interactions are an item-phase concern~~ Phase 11: buckets scoop and
+    place both fluids (interaction.js runs a fluid-aware raycast for the
+    scoop).
   - Dropped item ENTITIES still never merge with each other in the world
     and have no count cap beyond the 300s despawn — sustained mining
     without pickup accumulates one draw call per item. (Pickup into the
@@ -1060,11 +1196,10 @@ lower-right corner, the shortened arm, and the lava overlay.
     deliberately inline in interaction.js — they are the art itself, not
     gameplay tunables; everything gameplay-facing (offsets, timings, sizes,
     swing shape fractions) lives in config.js.
-- The controller exposes but does not consume damage inputs — stats.js
-  (Phase 9) consumes lava contact; still to wire: `body.lastLanding` (fall
-  damage), `body.breath === 0` (drowning), and cactus contact (cactus
-  collides as its 15/16 box, so "touching a cactus" checks can use the
-  same inset).
+- ~~The controller exposes but does not consume damage inputs~~ — Phase 11
+  wired all of them: `body.lastLanding` (fall damage), `body.breath === 0`
+  (drowning), cactus contact (inflated-AABB sampling reaches past the 1/16
+  inset), lava contact + burning.
 - Lava is placed by the caves phase and lights its surroundings (emits 15);
   a fullbright/emissive treatment for lava and glowstone faces themselves is
   later polish (they currently render lit by their own neighbouring light,
@@ -1079,9 +1214,11 @@ lower-right corner, the shortened arm, and the lava overlay.
 - `blocks.js`: nether/end portal blocks have `faces: null` plus a `special`
   tag — the mesher skips `tiles === null` (their custom rendering comes with
   the portal phase; the chest got its real model in Phase 10 the same way).
-- `special` blocks (torch, cactus, brewing stand, iron bars) currently mesh
-  as full textured cubes in the cutout pass; their real non-cube shapes are
-  a later polish. Terrain only ever places cactus, which reads fine.
+- `special` blocks: the torch got its real box model in Phase 11 and the
+  cactus its inset shape in Phase 7; brewing stand and iron bars still mesh
+  as full textured cubes in the cutout pass — their non-cube shapes are
+  later polish (the torch's `emitTorch` in chunks.js is the pattern for
+  small box models).
 - Meshing runs on the main thread inside a per-frame budget. If a later
   phase needs more headroom (bigger view distance, cave-heavy remeshing), a
   Web Worker mesher is the escape hatch — the mesher is already a pure
@@ -1105,13 +1242,24 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 11 is the full stats phase (hunger + regen + fall damage/
-  drowning/cactus — stats.js `damage()` is the entry point, hud.js hearts
-  extend with hunger; cooked food now exists to eat) or mobs (hostile
-  spawning wants a `getLight(x,y,z)` helper on World; passive mobs should
-  drop the meat item ids the smelting recipes expect: beef, porkchop,
-  chicken, mutton — texture names, NOT SPEC's raw_beef spelling, which has
-  no texture in assets/items).
+- Likely Phase 12 is mobs (hostile spawning wants a `getLight(x,y,z)`
+  helper on World; passive mobs should drop the meat item ids the smelting
+  recipes AND the Phase 11 food registry expect: beef, porkchop, chicken,
+  mutton — texture names, NOT SPEC's raw_beef spelling, which has no
+  texture in assets/items). Combat should call `stats.damage(amount)` +
+  `stats.applyKnockback(dx, dz)` for mob hits, apply `ARMOR_REDUCTION`
+  (armour equip slots still unbuilt), read `WEAPON_DAMAGE[selectedName]`
+  for player attacks, and add the vanilla attack/break exhaustion costs.
+- Phase 11 APIs for later phases: `foodValue(name)` (player/inventory.js)
+  is the edibility registry — new foods just add an entry (and a texture).
+  `stats.eat/canEat/hunger/saturation/burning/dead/respawn`,
+  `screens.showDeath()`/`closeScreen(relock)`, `inventory.replaceSelected`
+  (bucket-style item swaps). The torch mesher (`emitTorch` in
+  world/chunks.js + `TORCH_LEAN` in blocks.js) is the template for other
+  small box models (brewing stand). `ATLAS_SPRITE_ITEMS` (entities/items.js)
+  routes any item whose art is an atlas tile into all sprite paths.
+  Eating currently pauses hold-to-place but not mining; vanilla also slows
+  the eater — not modelled (nothing depends on it yet).
 - Phase 10 APIs for later phases: `world.addBlockListener(fn)` — the
   block-change hook is a list now (falling, smelting, chests subscribe);
   listeners must not throw. `SlotContainer` (player/inventory.js) is the
@@ -1123,8 +1271,8 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   lookups (lazy-create). `createChestMesh(size)` for anything chest-shaped;
   `createModelMesh(model, size)` (entities/items.js) is the centred item
   variant. Oriented placement: extend `placementVariant` in blocks.js.
-  The bucket item exists as fuel residue; actual lava/water scooping is
-  still an item-phase concern.
+  Buckets scoop and place both fluids as of Phase 11 (a scooped lava
+  bucket is also the premium furnace fuel, closing that loop).
 - Mining note (Phase 10 update): lava lakes flood all carved space at
   y<=-54, so "the right depth" to tell players is now y≈-52 (diamond
   density there is within ~12% of the old -54 guidance; the 39/40
@@ -1255,9 +1403,9 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 - Atlas textures are pre-tinted (grass top and leaves are already green).
   Lava exists in the registry as an opaque-pass fluid; it gets placed (and
   can get an emissive/animated treatment) with the caves/lava-pools phase.
-- Torch/cactus/brewing-stand still mesh as full cubes (`special` shapes are
-  later polish) — a placed torch is a glowing textured cube for now; its
-  light is correct.
+- Brewing-stand and iron bars still mesh as full cubes (`special` shapes
+  are later polish); torches render their real box model as of Phase 11
+  (floor post + tilted wall variants) and cactus its inset shape.
 - Headless testing note: the sandbox blocks unpkg.com, so the Playwright
   harness intercepts the three.js CDN URL and serves the identical build
   from npm (`three@0.160.0`). index.html is unchanged for production.
@@ -1278,3 +1426,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 8 | Crafting (systems/crafting.js): every SPEC critical-path recipe (shaped with bounding-box position independence + vanilla horizontal mirroring, shapeless as multisets), 2x2 craft area on the inventory screen + 3x3 crafting-table screen (screens.js) sharing the Phase 7 slot/cursor machinery, live result preview, click-crafts-one / shift-crafts-max (capacity-guarded, stops if the matched recipe changes), grids drain back on close; right-click on a placed crafting table opens the 3x3 via main.js `onUseBlock` (resolved in update() against the fresh raycast; sneak bypasses to place, vanilla-style); tools craft at full durability, tier gates verified live end to end (punch wood -> planks -> table -> sticks -> wooden pickaxe -> stone -> stone pickaxe; wooden pickaxe can't harvest iron ore, stone can); gravel drops flint 10% (new fallback drop semantic) so flint_and_steel/arrows are reachable. Bug fixes: held item renders in a dedicated fixed-FOV hand pass (undistorted self-occluding cube; arm re-tuned with per-face shading), cracks are the real assets/destroy/destroy_stage_0..9.png advancing with progress (alphaTested — their background is white at alpha 1/255, not transparent-black). Adversarially reviewed (5 lenses, 7 confirmed findings all fixed) + 180 automated checks (127 node + 53 browser incl. real-pointer-lock use-path tests) | Furnace/smelting (furnace right-click routes like the table), chest UI, drag-to-distribute crafting gesture, Q-drop, armour equip, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
 | 9 | Underground (world/caves.js): two-layer cave carving (winding tunnel pair-intersection + deep caverns, world-aligned interpolation lattice, y -50..60), rare long/deep/narrow V-profile ravines, walkable surface entrances gated to sparse entrance regions (plus rare 1-block rabbit holes), ocean-sealed floors, lava filling all carved space below y=10, granite/diorite/andesite blobs, gravel pockets, ore veins per SPEC ranges (coal/iron 4-12, gold/redstone 4-8, diamond 1-4 bottom-biased — 39/40 simulated 10-min branch-mining trials find diamond, avg 4.9 ore); trees/cacti refuse carved surfaces; falling sand/gravel entities (entities/falling.js + world.onBlockChanged) with torch-break/fluid-sink (fills lava lakes like vanilla)/cascade rules; stats.js slice — health, lava contact damage, death drops inventory + respawn — with hearts HUD + damage flash; dropped items burn in lava; held-tool fix (extruded 1px-slab item models, vanilla lower-right diagonal) and held-block scale-up. 21 node + 10 browser gameplay checks + screenshot suite, zero console errors | Rivers; hunger/fall/drowning/cactus damage + death screen (stats.js continues); swimmable lava; gen-time floating sand settles only on disturbance; smelting; mobs |
 | 10 | Smelting (systems/smelting.js): every SPEC recipe + fuel value, per-position furnaces ticking with the UI closed and independently, vanilla fuel/progress rules (ignite only when a smelt can run, rewind when blocked, lava-bucket residue), furnace block family (4 facings x unlit/lit, oriented placement toward the player, lit front tile + light 13), furnace screen (input/fuel/output, pixel-art progress arrow + flame indicator), break drops contents. Chests (world/chests.js): entity-textured box model from chest_normal.png (base/lid/latch, modern 180-degree-flipped unwrap decoded, back-hinge lid animation while open), placement facing the player, persistent 27-slot containers, break drops contents, chest recipe, model-routed item visuals (dropped/held/hotbar icon). Generic container UI (ui/screens.js): SlotContainer (player/inventory.js) + event-time container resolution + cross-container shift routing; world.addBlockListener list. Phase 9 bug fixes: lava rework (lakes only y<=-54, sparse 1-deep pools + rare wall leaks in -54..10, caves deepened to -60), cave size variety (girth-modulated tunnels ~2-4 wide, caverns bigger and rarer), dense-lava player physics + near-opaque lava-tile overlay + collapsed fog, hotbar highlight as a transform-moved element (repaint bug), held item moved into the corner, arm shortened, held-tool re-select TDZ crash fixed, PASS_NONE culling fix (torch-on-chest). 115 node + 38 browser checks, zero console errors | Brewing stand (reuses SlotContainer + furnace screen pattern); stats phase (hunger/fall/drowning/cactus, eating the new cooked food); mobs (drop ids beef/porkchop/chicken/mutton); buckets scooping lava/water; chest icon uses static sheet (no animated open state in the icon) |
+| 11 | Full survival stats (player/stats.js): hunger 20 + hidden saturation + exhaustion from activity (sprint/swim/jump/damage/regen), natural regen at hunger>=18 costing exhaustion (the eat-to-heal loop), starvation to the SPEC 1-heart floor, fall damage 1 heart/block beyond 3 via body.lastLanding, drowning 2/s at breath 0, lava contact + 15s burning DoT that water extinguishes, cactus contact with knockback (applyKnockback API for combat), death screen with Respawn button + inventory dropped at the death site (open screens close first, dead players collect nothing) + respawn at world spawn; hunger drumstick HUD row (right-to-left) with breath bubbles moved above; eating: hold right click ~1.6s with nibble hand animation, FOODS registry (vanilla hunger/saturation, cooked > raw, stew leaves a bowl). Bug fixes: torch box model (2x10px floor post + 22.5-degree wall variants, ids 57-60, face-aware placement, solid-support requirement, support-break pop, atlas-sprite item visuals), buckets scoop/place water and lava (fluid-aware raycast, one action per press), dropped sprite items extruded 1px thick, block icons redrawn in true dimetric proportions (~11% taller), click-outside-panel throws the cursor stack (left all / right one), cave entrances ~3x more common (census-tuned), canopies a layer deeper with hash-kept corners. 44 node + 22 browser checks + screenshot suite, zero console errors; adversarial 5-lens review with per-finding verification | Brewing stand; mobs + combat (armour equip/reduction, attack/break exhaustion, WEAPON_DAMAGE consumer); rivers; Q-drop; fire overlay visual; eating doesn't slow movement |

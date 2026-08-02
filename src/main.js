@@ -12,7 +12,7 @@ import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } 
 import { initHud, updateHud } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
-import { BLOCK, isFurnace } from './world/blocks.js';
+import { BLOCK, isFurnace, isTorch, torchSupportCell, isSolid } from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createChests } from './world/chests.js';
 import { createPlayerController } from './player/controller.js';
@@ -74,10 +74,36 @@ async function init() {
   world.addBlockListener(smelting.onBlockChanged);
   const chests = createChests({ world, scene, items, player });
   world.addBlockListener(chests.onBlockChanged);
-  const stats = createStats({ world, player, inventory, items });
+  // Phase 11: torches pop off as items when their support goes — the block
+  // below a floor torch, the wall behind a wall torch. Cascades (a pillar of
+  // sand under a torch collapsing) ride the listener chain naturally.
+  world.addBlockListener((x, y, z) => {
+    for (const [dx, dy, dz] of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const tx = x + dx;
+      const ty = y + dy;
+      const tz = z + dz;
+      const id = world.getBlock(tx, ty, tz);
+      if (!isTorch(id)) continue;
+      const s = torchSupportCell(id, tx, ty, tz);
+      if (s && !isSolid(world.getBlock(s.x, s.y, s.z))) {
+        world.setBlock(tx, ty, tz, BLOCK.AIR);
+        items.spawn('torch', 1, { x: tx + 0.5, y: ty + 0.25, z: tz + 0.5 });
+      }
+    }
+  });
   let screens;
+  // Phase 11 death flow: any open screen closes first (grid and cursor
+  // stacks return to the inventory, so they drop at the death site with
+  // everything else), then the death screen holds until Respawn.
+  const stats = createStats({
+    world, player, inventory, items,
+    onDeath: () => {
+      screens.closeScreen(false);
+      screens.showDeath();
+    },
+  });
   const interaction = createInteraction({
-    world, camera, scene, canvas, player, items, inventory,
+    world, camera, scene, canvas, player, items, inventory, stats,
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -126,16 +152,23 @@ async function init() {
 
   initDebug();
   initHud(inventory);
-  screens = createScreens({ inventory, canvas, items, player });
+  screens = createScreens({
+    inventory, canvas, items, player, camera,
+    onRespawn: () => stats.respawn(),
+  });
   window.__screens = screens;
 
   // Pickups go to the inventory (existing stacks first, then the first empty
   // slot); the return value tells the item manager how many were accepted.
   // A dropped worn tool carries its durability back in via addStack.
-  const onPickup = (name, count, durability) =>
-    durability != null
+  // A dead player collects nothing (Phase 11) — otherwise the corpse would
+  // vacuum its own death drops back up before the respawn teleport.
+  const onPickup = (name, count, durability) => {
+    if (stats.dead) return 0;
+    return durability != null
       ? count - inventory.addStack({ name, count, durability })
       : count - inventory.add(name, count);
+  };
 
   // Defensive: if the block backing an open container screen stops being
   // that container (unreachable by hand today — breaking needs pointer

@@ -132,12 +132,17 @@ export const CAVES = {
   // surface. Only dry grass/stone columns qualify (no holes in beaches,
   // deserts or under oceans; sand would float).
   ENTRANCE: {
-    MASK_SCALE: 1 / 140,     // 2D mask field frequency (region size)
-    MASK_START: 0.38,        // mask noise where entrance regions begin
-    MASK_FULL: 0.60,         // mask noise where the gate saturates
-    MAX_FACTOR: 0.85,        // tunnel radius fraction inside a full-gate region
-    DECAY: 0.04,             // additional gentle taper with height above MAX_Y
+    MASK_SCALE: 1 / 100,     // 2D mask field frequency (region size)
+    MASK_START: 0.18,        // mask noise where entrance regions begin
+    MASK_FULL: 0.42,         // mask noise where the gate saturates
+    MAX_FACTOR: 1.0,         // tunnel radius fraction inside a full-gate region
+    DECAY: 0.025,            // additional gentle taper with height above MAX_Y
     MAX_SURFACE_Y: 96,       // columns higher than this never get mouths
+    // Phase 11 retune (was 1/140 / 0.38 / 0.60 / 0.85 / 0.04): caves were
+    // too hard to find on foot. Census over six 192x192 regions: walkable
+    // mouths (>= 3 connected open columns, ravines excluded) went 0.32 ->
+    // ~1.0 per 100x100 columns — a player crossing plains or forest now
+    // comes across a cave entrance reasonably often.
   },
 
   // Never carve within DEPTH blocks below the surface when any column in a
@@ -252,6 +257,11 @@ export const TERRAIN = {
   TREES: {
     TRUNK_MIN: 4,              // trunk height range (inclusive)
     TRUNK_MAX: 6,
+    WIDE_LAYERS: 3,            // 5x5 canopy layers below the 3x3 cap (Phase 11
+                               // raised 2 -> 3: canopies read as a dense mass,
+                               // sky rarely visible through the middle)
+    CORNER_CHANCE: 0.5,        // chance each 5x5 layer corner keeps its leaf
+                               // block (vanilla clips corners randomly)
   },
 
   CACTUS: {
@@ -377,8 +387,10 @@ export const PLAYER = {
 };
 
 // ---------------------------------------------------------------------------
-// Stats (player/stats.js) — Phase 9 slice: health and lava contact damage.
-// Hunger, fall damage, drowning and the rest arrive with the full stats phase.
+// Stats (player/stats.js) — Phase 11: the full survival loop. Health, hunger
+// (with a hidden vanilla-style saturation buffer drained by exhaustion from
+// activity), regeneration, starvation, fall/drown/cactus/fire damage,
+// knockback, eating, the death screen and respawn.
 // ---------------------------------------------------------------------------
 
 export const STATS = {
@@ -390,6 +402,46 @@ export const STATS = {
   DEATH_DROP_POP: 2.5,          // upward pop speed of dropped inventory
   DEATH_DROP_Y_OFFSET: 1,       // drops spawn this far above the feet
   HEART_PX: 18,                 // HUD heart icon size
+  HUNGER_PX: 18,                // HUD drumstick icon size
+
+  // Contact damage (cactus registers damagesOnContact; lava handled above)
+  CACTUS_DAMAGE: 1,             // per contact tick (half a heart, vanilla)
+  CACTUS_CONTACT_EXPAND: 0.1,   // body AABB inflation for cactus contact —
+                                // generous enough to reach past the 1/16 inset
+
+  // Drowning: once the breath meter is empty (vanilla 2 damage per second)
+  DROWN_DAMAGE: 2,
+  DROWN_TICK_SECONDS: 1.0,
+
+  // Burning: lava sets the body on fire; water puts it out (vanilla numbers)
+  FIRE_DAMAGE: 1,               // per burn tick while on fire
+  FIRE_TICK_SECONDS: 1.0,
+  LAVA_BURN_SECONDS: 15,        // fire time (re)set while touching lava
+
+  // Starvation at 0 hunger: SPEC — damage down to 1 heart, never death
+  STARVE_DAMAGE: 1,
+  STARVE_TICK_SECONDS: 4.0,
+
+  // Natural regeneration at hunger >= PLAYER.REGEN_HUNGER_THRESHOLD
+  REGEN_INTERVAL_SECONDS: 4.0,  // +1 health this often (vanilla)
+  REGEN_EXHAUSTION: 6.0,        // exhaustion each natural heal costs (vanilla)
+
+  // Exhaustion: activity accumulates it; every EXHAUSTION_PER_HUNGER spent
+  // drains 1 saturation (the hidden buffer food also fills), then 1 hunger.
+  EXHAUSTION_PER_HUNGER: 4.0,
+  EXHAUST_SPRINT_PER_BLOCK: 0.1,
+  EXHAUST_SWIM_PER_BLOCK: 0.01,
+  EXHAUST_JUMP: 0.05,
+  EXHAUST_SPRINT_JUMP: 0.2,
+  EXHAUST_DAMAGE: 0.1,          // taking any damage costs a little food
+  RESPAWN_SATURATION: 5,        // saturation after (re)spawn (vanilla)
+
+  // Knockback (cactus contact now; the combat phase reuses applyKnockback)
+  KNOCKBACK_HORIZONTAL: 6.5,    // blocks/s away from the damage source
+  KNOCKBACK_VERTICAL: 5.0,      // upward pop (never reduces upward velocity)
+
+  // Eating: hold right click with food selected
+  EAT_SECONDS: 1.6,
 };
 
 // ---------------------------------------------------------------------------
@@ -439,6 +491,16 @@ export const SHAPES = {
   CACTUS_INSET: 1 / 16,           // cactus side faces AND collision box sit this
                                   // far inside the cell on x/z (vanilla: sides
                                   // render 1/16..15/16, top/bottom full size)
+  // Torch box model (Phase 11 — replaces the wrong full-cube rendering): a
+  // 2px-wide, 10px-tall post centred in the cell, sitting on the floor, the
+  // flame at the top. Wall torches tilt out of the wall they attach to,
+  // their base raised and half-embedded (vanilla template_torch_wall).
+  TORCH: {
+    WIDTH: 2 / 16,                // post cross-section (both horizontal axes)
+    HEIGHT: 10 / 16,              // post height
+    WALL_ANGLE: Math.PI / 8,      // wall torch lean out of the wall (22.5°)
+    WALL_BASE_Y: 3.5 / 16,        // wall torch pivot height above the cell floor
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -488,6 +550,10 @@ export const ITEMS = {
   WATER_HORIZONTAL_DRAG: 2,       // 1/s horizontal damping while floating
   POP_SPEED_UP: 3.2,              // upward pop when a broken block drops
   POP_SPEED_SIDE: 1.6,            // random horizontal scatter on drop
+  THROW_SPEED: 6,                 // forward speed of a thrown stack (clicking
+                                  // outside the inventory panel with a cursor
+                                  // stack throws it into the world)
+  THROW_UP: 1.5,                  // small upward lift added to a throw
   BLOCK_SCALE: 0.25,              // edge length of a dropped mini-block
   SPRITE_SCALE: 0.35,             // edge length of a dropped flat item sprite
   REST_CLEARANCE: 0.02,           // items rest this far above the ground plane
@@ -586,6 +652,13 @@ export const INTERACTION = {
     SWING_SIDE: 0.35,                // sideways dip, fraction of SWING_DIP
     SWING_FORWARD: 0.25,             // forward dip, fraction of SWING_DIP
     SWING_YAW: 0.25,                 // yaw twist, fraction of SWING_ROTATION
+    // Eating (Phase 11): while holding right click with food, the hand lifts
+    // toward the mouth and nibbles until STATS.EAT_SECONDS completes.
+    EAT_OFFSET: [-0.16, 0.05, -0.06], // hand offset toward the mouth while eating
+    EAT_TIP: 0.5,                    // extra x-rotation tipping the food up
+    EAT_NIBBLE_HZ: 4.5,              // nibble bobs per second
+    EAT_NIBBLE_AMP: 0.03,            // nibble bob amplitude
+    EAT_ENGAGE_RATE: 10,             // 1/s ease into/out of the eating pose
   },
 };
 
