@@ -45,6 +45,9 @@ export class PlayerBody {
     this.swimSprinting = false;   // vanilla swim mechanic: sprinting submerged
     this.submersion = 0;          // fraction of body height under the waterline
     this.eyeInWater = false;
+    this.touchingLava = false;    // any part of the box overlaps lava
+    this.lavaSubmersion = 0;      // fraction of body height under the lava line
+    this.eyeInLava = false;       // drives the submerged-lava overlay/fog
     this._standingEyeInWater = false; // water at full standing eye height
     this.maxBreath = PLAYER.BREATH_SECONDS;
     this.breath = this.maxBreath;
@@ -73,7 +76,10 @@ export class PlayerBody {
     this.sneaking = !!input.sneak;
     const moving = input.forward !== 0 || input.strafe !== 0;
     this.sprinting =
-      !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming;
+      !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming &&
+      !(this.touchingLava && this.lavaSubmersion > 0); // no sprint (or FOV
+                                                       // kick) while crawling
+                                                       // through lava
     // Vanilla swim mechanic: sprinting while fully submerged tips the body
     // prone and swims fast toward the look direction. Entry AND persistence
     // key off the STANDING eye height (previous step's sense) — if a
@@ -95,8 +101,13 @@ export class PlayerBody {
       wz /= wishLen;
     }
 
+    // Lava is a dense fluid (Phase 10): whenever any of the body is below
+    // the lava line, movement drops to a crawl, whatever else is going on.
+    const inLava = this.touchingLava && this.lavaSubmersion > 0;
     let targetSpeed = c.WALK_SPEED;
-    if (this.swimming) {
+    if (inLava) {
+      targetSpeed = c.LAVA_SPEED;
+    } else if (this.swimming) {
       targetSpeed = this.swimSprinting ? c.SWIM_SPRINT_SPEED : c.SWIM_SPEED;
     } else if (this.sneaking) targetSpeed = c.SNEAK_SPEED;
     else if (this.sprinting) targetSpeed = c.SPRINT_SPEED;
@@ -112,11 +123,13 @@ export class PlayerBody {
     );
     if (under.slows) targetSpeed *= c.SLOW_BLOCK_FACTOR;
 
-    // Horizontal velocity. On the ground (and in water) an exponential
+    // Horizontal velocity. On the ground (and in a fluid) an exponential
     // approach to the wanted velocity plays both acceleration and friction,
     // framerate-independently; airborne there is only weak steering and drag.
-    if (this.swimming || this.onGround) {
-      const rate = this.swimming ? c.WATER_RESPONSE : c.GROUND_RESPONSE;
+    if (inLava || this.swimming || this.onGround) {
+      const rate = inLava && !this.onGround ? c.LAVA_RESPONSE
+        : this.swimming ? c.WATER_RESPONSE
+        : c.GROUND_RESPONSE;
       const k = 1 - Math.exp(-rate * dt);
       v.x += (wx * targetSpeed - v.x) * k;
       v.z += (wz * targetSpeed - v.z) * k;
@@ -135,7 +148,21 @@ export class PlayerBody {
     let dy;
     const canJump =
       input.jump && this.onGround && this._jumpTimer >= c.JUMP_COOLDOWN_SECONDS;
-    if (this.touchingWater) {
+    if (inLava && (this.lavaSubmersion >= c.SWIM_MIN_SUBMERSION || !this.onGround)) {
+      // Dense lava: strong drag kills any entry plunge within a fraction of
+      // a second, buoyancy is neutral at full submersion, so the body sinks
+      // slowly and only partially — it drifts just under the surface rather
+      // than dropping to the floor. Jump/sneak rise and dive slowly (rising
+      // out of a waist-deep puddle takes about a second, plus the bank exit
+      // hop). Only a grounded edge-graze — the centre column dry, lava just
+      // clipping a corner — falls through to the normal-jump branch below.
+      let a = -c.LAVA_GRAVITY * (1 - c.LAVA_BUOYANCY * this.lavaSubmersion);
+      if (input.jump) a += c.LAVA_UP_ACCEL;
+      if (input.sneak) a -= c.LAVA_DOWN_ACCEL;
+      v.y += a * dt;
+      v.y *= Math.exp(-c.LAVA_DRAG * dt);
+      dy = v.y * dt;
+    } else if (this.touchingWater) {
       // While ANY part of the body is in water, space swims upward slowly —
       // never a normal jump (even grounded in a shallow pool). Climbing out
       // onto a bank rides the water exit hop below instead.
@@ -199,23 +226,29 @@ export class PlayerBody {
     if (hit.x) v.x = 0;
     if (hit.z) v.z = 0;
 
-    // Climbing out of water: hop upward when pressing into a bank (vanilla
-    // re-applies this every tick). The hop keeps working while any part of
-    // the body still clips water — not just while fully swimming — so the
-    // exit arc can't stall short of the bank lip at high framerates.
-    // Grounded wading is excluded (no bouncing off cliffs in knee-deep
-    // water), as is a fast plunge straight after a dive.
-    const canWaterHop = this.swimming || (this.touchingWater && !this.onGround);
+    // Climbing out of a fluid: hop upward when pressing into a bank
+    // (vanilla re-applies this every tick; lava climbs out the same way).
+    // The hop keeps working while any part of the body still clips the
+    // fluid — not just while fully swimming — so the exit arc can't stall
+    // short of the bank lip at high framerates. Grounded wading is excluded
+    // (no bouncing off cliffs in knee-deep water), as is a fast plunge
+    // straight after a dive.
+    const canFluidHop =
+      this.swimming || ((this.touchingWater || inLava) && !this.onGround);
     if (
-      canWaterHop && (hit.x || hit.z) && moving &&
+      canFluidHop && (hit.x || hit.z) && moving &&
       v.y < c.WATER_EXIT_JUMP && v.y > -c.WATER_EXIT_JUMP
     ) {
       v.y = c.WATER_EXIT_JUMP;
     }
 
-    // Fall tracking (fall damage itself is applied by the stats phase)
-    if (this.touchingWater || this.onGround) {
-      if (this.onGround && !this.touchingWater && this.fallDistance > 0) {
+    // Fall tracking (fall damage itself is applied by the stats phase);
+    // both fluids break a fall — landing INTO either reports no drop
+    // (otherwise a 1-deep lava puddle would add full fall damage on top of
+    // contact damage at some framerates and not others).
+    if (this.touchingWater || this.touchingLava || this.onGround) {
+      if (this.onGround && !this.touchingWater && !this.touchingLava &&
+          this.fallDistance > 0) {
         // Measure from the fall's start height so the landing step's final
         // partial move is included.
         this.lastLanding = Math.max(0, this._fallStartY - p.y);
@@ -230,9 +263,10 @@ export class PlayerBody {
     // Breath (the prone swim-sprint body carries its eye much lower)
     const eyeY = p.y + (this.swimSprinting ? c.SWIM_EYE_HEIGHT
       : this.sneaking ? c.SNEAK_EYE_HEIGHT : c.EYE_HEIGHT);
-    this.eyeInWater =
-      this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z)) ===
-      BLOCK.WATER;
+    const eyeBlock =
+      this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z));
+    this.eyeInWater = eyeBlock === BLOCK.WATER;
+    this.eyeInLava = eyeBlock === BLOCK.LAVA;
     // Sensed at the full standing eye regardless of pose — the swim-sprint
     // gate above reads this next step.
     this._standingEyeInWater =
@@ -404,29 +438,49 @@ export class PlayerBody {
     return false;
   }
 
-  // Water state: touchingWater from the whole box; the waterline (and with it
-  // submersion, which drives buoyancy) from the body's centre column.
+  // Fluid state: touchingWater/touchingLava from the whole box; each
+  // fluid's line (and with it submersion, which drives buoyancy) from the
+  // body's centre column. `swimming` (and the swim-sprint mechanic behind
+  // it) stays water-only — lava is handled as a dense fluid in step().
   _senseWater() {
     const p = this.position;
-    this.touchingWater = this._anyInBox(
+    let water = false;
+    let lava = false;
+    this._anyInBox(
       p.x - HALF_WIDTH, p.y, p.z - HALF_WIDTH,
       p.x + HALF_WIDTH, p.y + PLAYER.HEIGHT, p.z + HALF_WIDTH,
-      (id) => id === BLOCK.WATER,
+      (id) => {
+        if (id === BLOCK.WATER) water = true;
+        else if (id === BLOCK.LAVA) lava = true;
+        return water && lava; // early-out only when both are known
+      },
     );
-    let sub = 0;
-    if (this.touchingWater) {
+    this.touchingWater = water;
+    this.touchingLava = lava;
+    // Submersion from the topmost fluid cell in the centre column. A run
+    // reaching the feet uses the classic waterline (identical to Phase 5
+    // for every natural, contiguous pool); a FLOATING pocket (a Phase 10
+    // lava wall leak with air beneath) only counts its overlapped band —
+    // otherwise a single leak block at head height read as submersion ~1,
+    // zeroing gravity and hanging the player mid-air under it.
+    const lineOf = (blockId) => {
       const cx = Math.floor(p.x);
       const cz = Math.floor(p.z);
       const top = Math.floor(p.y + PLAYER.HEIGHT - EPS);
-      for (let y = top; y >= Math.floor(p.y + EPS); y--) {
-        if (this.world.getBlock(cx, y, cz) === BLOCK.WATER) {
-          sub = Math.min(1, (y + 1 - p.y) / PLAYER.HEIGHT);
-          break;
+      const bottom = Math.floor(p.y + EPS);
+      for (let y = top; y >= bottom; y--) {
+        if (this.world.getBlock(cx, y, cz) === blockId) {
+          let lo = y;
+          while (lo - 1 >= bottom && this.world.getBlock(cx, lo - 1, cz) === blockId) lo--;
+          if (lo <= bottom) return Math.min(1, (y + 1 - p.y) / PLAYER.HEIGHT);
+          return Math.min(1, (y + 1 - Math.max(p.y, lo)) / PLAYER.HEIGHT);
         }
       }
-    }
-    this.submersion = sub;
-    this.swimming = sub >= PLAYER.SWIM_MIN_SUBMERSION;
+      return 0;
+    };
+    this.submersion = water ? lineOf(BLOCK.WATER) : 0;
+    this.lavaSubmersion = lava ? lineOf(BLOCK.LAVA) : 0;
+    this.swimming = this.submersion >= PLAYER.SWIM_MIN_SUBMERSION;
   }
 
   _anyInBox(minX, minY, minZ, maxX, maxY, maxZ, pred) {
@@ -602,8 +656,10 @@ export function createPlayerController({ world, camera, canvas }) {
       if (mode === 'fly') {
         flyMove(delta);
         // Breath is meaningless while flying; recover it so the HUD meter
-        // doesn't freeze mid-drained (body.step is not running).
+        // doesn't freeze mid-drained (body.step is not running). The lava
+        // overlay flag clears too — the fly camera is a debug view.
         body.eyeInWater = false;
+        body.eyeInLava = false;
         body.breath = Math.min(
           body.maxBreath,
           body.breath + delta * PLAYER.BREATH_REFILL_RATE,

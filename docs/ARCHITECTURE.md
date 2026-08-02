@@ -16,9 +16,12 @@ src/
   world/
     blocks.js            block registry: ids, textures, hardness, drops
     terrain.js           noise, heightmap, biomes, trees
-    caves.js             cave carving, ore placement
+    caves.js             cave carving, ore placement, lava placement
     chunks.js            chunk data, meshing, face culling
-    world.js             chunk manager, get/set block, loading
+    chests.js            chest block entities: contents + entity-textured
+                         box model + lid animation (Phase 10 addition)
+    world.js             chunk manager, get/set block, loading, block-change
+                         listeners
 
   render/
     renderer.js          Three.js setup, tone mapping, shadows, post

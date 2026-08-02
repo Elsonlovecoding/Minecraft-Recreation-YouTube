@@ -18,6 +18,7 @@ import { getAtlasTexture } from '../render/atlas.js';
 import { faceTiles } from '../world/blocks.js';
 import { itemVisualInfo } from '../entities/items.js';
 import { itemMaxDurability } from '../player/inventory.js';
+import { CHEST_TEXTURE_PATH } from '../world/chests.js';
 
 // Face brightness for the isometric icon (vanilla-style: lit from the top
 // left). Art detail, deliberately inline like the other generated art.
@@ -98,6 +99,95 @@ function blockIconDataURL(blockId) {
 }
 
 // ---------------------------------------------------------------------------
+// Chest icon (Phase 10) — the same isometric cube, drawn from the chest
+// entity sheet instead of atlas tiles. The sheet stores faces rotated 180°
+// (see world/chests.js), and the visible front is a composite of the lid
+// and base strips plus the latch. Built once, async (the sheet is already
+// loading for the world model, so this is a cache hit).
+// ---------------------------------------------------------------------------
+
+let chestIconUrl = null;
+let chestIconLoading = null;
+
+// Draws sheet region (sx, sy, sw, sh) rotated 180° into (dx, dy, dw, dh).
+function drawRegion180(ctx, sheet, sx, sy, sw, sh, dx, dy, dw, dh) {
+  ctx.save();
+  ctx.translate(dx + dw, dy + dh);
+  ctx.scale(-1, -1);
+  ctx.drawImage(sheet, sx, sy, sw, sh, 0, 0, dw, dh);
+  ctx.restore();
+}
+
+function buildChestIcon(sheet) {
+  // Face canvases in 14px chest space: top, front (lid strip over base
+  // strip, latch overlaid), and a plain side.
+  const makeFace = (front) => {
+    const c = document.createElement('canvas');
+    c.width = 14;
+    c.height = 14;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const slotX = front ? 42 : 28; // 4th slot = front (latch recess), 3rd = side
+    drawRegion180(ctx, sheet, slotX, 33, 14, 10, 0, 4, 14, 10); // base strip
+    drawRegion180(ctx, sheet, slotX, 14, 14, 5, 0, 0, 14, 5);   // lid strip
+    if (front) drawRegion180(ctx, sheet, 4, 1, 2, 4, 6, 3, 2, 4); // latch
+    return c;
+  };
+  const top = document.createElement('canvas');
+  top.width = 14;
+  top.height = 14;
+  const topCtx = top.getContext('2d');
+  topCtx.imageSmoothingEnabled = false;
+  drawRegion180(topCtx, sheet, 14, 0, 14, 14, 0, 0, 14, 14);
+
+  const S = UI.BLOCK_ICON_PX;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const h = S / 2;
+  const q = S / 4;
+  const face = (img, x0, y0, ux, uy, vx, vy, shade) => {
+    ctx.save();
+    ctx.setTransform(ux / 14, uy / 14, vx / 14, vy / 14, x0, y0);
+    ctx.drawImage(img, 0, 0);
+    if (shade < 1) {
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = `rgba(0, 0, 0, ${1 - shade})`;
+      ctx.fillRect(0, 0, 14, 14);
+    }
+    ctx.restore();
+  };
+  // Same three-face layout as blockIconDataURL: top, front-left, side-right.
+  face(top, 0, q, h, -q, h, q, ICON_SHADE.top);
+  face(makeFace(true), 0, q, h, q, 0, h, ICON_SHADE.left);
+  face(makeFace(false), h, h, h, -q, 0, h, ICON_SHADE.right);
+  return canvas.toDataURL();
+}
+
+function setChestIcon(imgEl) {
+  if (chestIconUrl) {
+    imgEl.src = chestIconUrl;
+    return;
+  }
+  if (!chestIconLoading) {
+    chestIconLoading = new Promise((resolve) => {
+      const sheet = new Image();
+      sheet.onload = () => {
+        chestIconUrl = buildChestIcon(sheet);
+        resolve();
+      };
+      sheet.onerror = () => resolve(); // icon stays blank; world model warns
+      sheet.src = CHEST_TEXTURE_PATH;
+    });
+  }
+  chestIconLoading.then(() => {
+    if (chestIconUrl) imgEl.src = chestIconUrl;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -110,9 +200,9 @@ export function createItemIcon(name, sizePx) {
   img.style.width = `${sizePx}px`;
   img.style.height = `${sizePx}px`;
   const info = itemVisualInfo(name);
-  img.src = info.blockId !== undefined
-    ? blockIconDataURL(info.blockId)
-    : `assets/items/${info.sprite}.png`;
+  if (info.model === 'chest') setChestIcon(img);
+  else if (info.blockId !== undefined) img.src = blockIconDataURL(info.blockId);
+  else img.src = `assets/items/${info.sprite}.png`;
   return img;
 }
 

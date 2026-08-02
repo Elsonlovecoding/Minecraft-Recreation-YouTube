@@ -1,11 +1,17 @@
 // ui/hud.js — HUD: crosshair, breath meter, (Phase 7) the hotbar — the
 // inventory's first 9 slots with real item icons, stack counts, durability
-// bars and the selected-slot highlight — and (Phase 9) the hearts row above
-// the hotbar's left half plus the red damage flash. Hunger arrives with the
-// full stats phase.
+// bars and the selected-slot highlight — (Phase 9) the hearts row above the
+// hotbar's left half plus the red damage flash, and (Phase 10) the
+// submerged-in-lava overlay. Hunger arrives with the full stats phase.
+//
+// Phase 10 highlight fix: the selection highlight is a dedicated element
+// moved by transform (repositioned both on inventory emits and per frame),
+// not a per-slot ::after class — the class toggle sometimes didn't repaint
+// under pointer lock, leaving the box on the old slot.
 
-import { PLAYER, INVENTORY, UI, STATS } from '../config.js';
+import { PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS } from '../config.js';
 import { renderSlotContent } from './icons.js';
+import { getAtlasTexture, TILE } from '../render/atlas.js';
 
 let breathRow = null;
 let bubbles = [];
@@ -14,6 +20,29 @@ let heartEls = [];
 let heartUrls = null; // { full, half, empty } data URLs
 let flashEl = null;
 let lastHealth = -1;
+let selectEl = null;     // the hotbar selection highlight box
+let lastSelected = -1;
+let syncSelection = null; // repositions selectEl; also guarded per frame
+let lavaEl = null;       // fullscreen overlay while the eye is in lava
+
+// The lava overlay art: the real still-lava atlas tile, darkened, tiled
+// across the screen (vanilla draws the block texture over the whole view).
+function lavaOverlayDataUrl() {
+  const P = ATLAS.TILE_PIXELS;
+  const tile = TILE.LAVA_STILL;
+  const sx = (tile % ATLAS.TILES_PER_ROW) * P;
+  const sy = Math.floor(tile / ATLAS.TILES_PER_ROW) * P;
+  const canvas = document.createElement('canvas');
+  canvas.width = P;
+  canvas.height = P;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(getAtlasTexture().image, sx, sy, P, P, 0, 0, P, P);
+  ctx.globalCompositeOperation = 'source-atop';
+  ctx.fillStyle = `rgba(0, 0, 0, ${1 - LAVA_VIEW.OVERLAY_BRIGHTNESS})`;
+  ctx.fillRect(0, 0, P, P);
+  return canvas.toDataURL();
+}
 
 // Pixel-art heart in the vanilla style, drawn once per variant onto a
 // canvas and reused as a background image. 'o' outline, 'r' red fill,
@@ -99,10 +128,19 @@ export function initHud(inventory) {
       border: 2px solid;
       border-color: #2b2b2b rgba(255,255,255,0.28) rgba(255,255,255,0.28) #2b2b2b;
     }
-    .hud-slot.selected::after {
-      content: ''; position: absolute; inset: -5px;
+    #hud-hotbar-sel {
+      position: absolute; left: -5px; top: -5px;
+      width: ${UI.HOTBAR_SLOT_PX + 10}px; height: ${UI.HOTBAR_SLOT_PX + 10}px;
+      box-sizing: border-box; pointer-events: none;
       border: 3px solid #e8e8e8; border-radius: 2px;
       box-shadow: 0 0 0 1px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(0,0,0,0.7);
+    }
+    #hud-lava-overlay {
+      position: fixed; inset: 0; pointer-events: none; z-index: 3;
+      display: none;
+      opacity: ${LAVA_VIEW.OVERLAY_OPACITY};
+      background-size: ${LAVA_VIEW.OVERLAY_TILE_PX}px ${LAVA_VIEW.OVERLAY_TILE_PX}px;
+      image-rendering: pixelated;
     }
     #hud-hearts {
       position: fixed; left: 50%; bottom: ${UI.HOTBAR_BOTTOM_PX + UI.HOTBAR_SLOT_PX + 10}px;
@@ -153,13 +191,23 @@ export function initHud(inventory) {
     hotbar.appendChild(slot);
     slotEls.push(slot);
   }
+  // Selection highlight: one element moved along the bar (see header note).
+  selectEl = document.createElement('div');
+  selectEl.id = 'hud-hotbar-sel';
+  hotbar.appendChild(selectEl);
   document.body.appendChild(hotbar);
+  lastSelected = -1;
 
+  syncSelection = () => {
+    if (inventory.selected === lastSelected) return;
+    lastSelected = inventory.selected;
+    selectEl.style.transform = `translateX(${lastSelected * UI.HOTBAR_SLOT_PX}px)`;
+  };
   const refresh = () => {
     for (let i = 0; i < slotEls.length; i++) {
       renderSlotContent(slotEls[i], inventory.get(i), iconPx);
-      slotEls[i].classList.toggle('selected', i === inventory.selected);
     }
+    syncSelection();
   };
   inventory.subscribe(refresh);
   refresh();
@@ -185,6 +233,12 @@ export function initHud(inventory) {
   flashEl = document.createElement('div');
   flashEl.id = 'hud-damage-flash';
   document.body.appendChild(flashEl);
+
+  // --- submerged-in-lava overlay (Phase 10)
+  lavaEl = document.createElement('div');
+  lavaEl.id = 'hud-lava-overlay';
+  lavaEl.style.backgroundImage = `url(${lavaOverlayDataUrl()})`;
+  document.body.appendChild(lavaEl);
 }
 
 // Call once per frame with the player controller and (Phase 9) the stats.
@@ -192,6 +246,13 @@ export function initHud(inventory) {
 // surfaced), like vanilla.
 export function updateHud(player, stats) {
   if (!breathRow) return;
+  // Per-frame guard on the selection highlight (belt and braces with the
+  // subscription — see the header note on the repaint bug).
+  syncSelection?.();
+  if (lavaEl) {
+    const inLava = !!player.body?.eyeInLava;
+    lavaEl.style.display = inLava ? 'block' : 'none';
+  }
   const frac = player.breath / player.maxBreath;
   breathRow.style.display = frac < 1 ? 'block' : 'none';
   if (frac < 1) {

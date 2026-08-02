@@ -104,12 +104,15 @@ export class Inventory {
   // Core insertion: merge into existing stacks first (slot order, so hotbar
   // fills before main), then the first empty slots. Durability items occupy
   // one slot per unit and never merge. Returns the count that didn't fit.
+  // (Loops run over this.slots.length so SlotContainer — any size — can
+  // share the implementation; for the inventory that is INVENTORY.SIZE.)
   _insert(name, count, durability) {
     let left = count;
+    const n = this.slots.length;
     if (durability == null) {
       const cap = itemMaxStack(name);
       if (cap > 1) {
-        for (let i = 0; i < INVENTORY.SIZE && left > 0; i++) {
+        for (let i = 0; i < n && left > 0; i++) {
           const s = this.slots[i];
           if (s && s.name === name && s.durability == null && s.count < cap) {
             const moved = Math.min(cap - s.count, left);
@@ -118,7 +121,7 @@ export class Inventory {
           }
         }
       }
-      for (let i = 0; i < INVENTORY.SIZE && left > 0; i++) {
+      for (let i = 0; i < n && left > 0; i++) {
         if (!this.slots[i]) {
           const put = Math.min(cap, left);
           this.slots[i] = { name, count: put };
@@ -126,7 +129,7 @@ export class Inventory {
         }
       }
     } else {
-      for (let i = 0; i < INVENTORY.SIZE && left > 0; i++) {
+      for (let i = 0; i < n && left > 0; i++) {
         if (!this.slots[i]) {
           this.slots[i] = { name, count: 1, durability };
           left -= 1;
@@ -302,3 +305,74 @@ export class Inventory {
 export function createInventory() {
   return new Inventory();
 }
+
+// ---------------------------------------------------------------------------
+// SlotContainer — a generic block-container slot array (Phase 10): chests,
+// the furnace, later the brewing stand. Shares the hardened Inventory click
+// semantics the same way CraftingGrid does (systems/crafting.js), plus
+// insertion and cross-container moves. Pure logic, node-testable.
+// ---------------------------------------------------------------------------
+
+export class SlotContainer {
+  constructor(size) {
+    this.slots = new Array(size).fill(null);
+    this._listeners = [];
+  }
+
+  // Unlike Inventory.subscribe, returns an unsubscriber — container screens
+  // bind to whichever chest/furnace is open and must unbind on close.
+  subscribe(fn) {
+    this._listeners.push(fn);
+    return () => {
+      const i = this._listeners.indexOf(fn);
+      if (i >= 0) this._listeners.splice(i, 1);
+    };
+  }
+
+  _emit() {
+    for (const fn of this._listeners) fn(this);
+  }
+
+  get(i) {
+    return this.slots[i] ?? null;
+  }
+
+  // Move the stack in slot i into `target` (anything with addStack —
+  // the inventory or another container), merging first. Returns true if
+  // anything moved. This is the shift-click between containers.
+  moveSlotTo(i, target) {
+    const s = this.slots[i];
+    if (!s) return false;
+    const left = target.addStack(s);
+    if (left === s.count) return false;
+    this.slots[i] = left > 0 ? { ...s, count: left } : null;
+    this._emit();
+    return true;
+  }
+
+  // Empties every slot and returns the removed stacks (durability intact) —
+  // dropped when the container's block is broken.
+  drainAll() {
+    const stacks = [];
+    for (let i = 0; i < this.slots.length; i++) {
+      if (this.slots[i]) {
+        stacks.push(this.slots[i]);
+        this.slots[i] = null;
+      }
+    }
+    if (stacks.length) this._emit();
+    return stacks;
+  }
+}
+
+// The exact click/insert semantics the inventory screen already uses —
+// shared, not re-implemented (the Phase 7/8-hardened versions).
+SlotContainer.prototype.clickSlot = Inventory.prototype.clickSlot;
+SlotContainer.prototype.rightClickSlot = Inventory.prototype.rightClickSlot;
+SlotContainer.prototype._insert = Inventory.prototype._insert;
+SlotContainer.prototype.add = Inventory.prototype.add;
+SlotContainer.prototype.addStack = Inventory.prototype.addStack;
+
+// Inventory slots gain the same cross-container move (shift-click from the
+// inventory into an open chest/furnace).
+Inventory.prototype.moveSlotTo = SlotContainer.prototype.moveSlotTo;

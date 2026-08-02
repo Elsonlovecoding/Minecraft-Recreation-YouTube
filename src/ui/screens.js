@@ -1,37 +1,125 @@
 // ui/screens.js — Screens over the running game. Phase 7 shipped the
-// inventory screen; Phase 8 adds crafting to it and the crafting-table
-// screen:
+// inventory screen, Phase 8 added crafting, Phase 10 adds generic container
+// screens (a container = any SlotContainer bound to a block):
 //   - the inventory screen (E) carries a 2x2 craft grid with a result slot
 //   - right-clicking a crafting table opens the same panel with a 3x3 grid
+//   - right-clicking a chest opens its persistent 27-slot grid
+//   - right-clicking a furnace opens input/fuel/output with a progress
+//     arrow (smelt fraction) and flame indicator (fuel unit remaining),
+//     polled per frame via update(dt)
 //   - the result slot previews the recipe match live; clicking it crafts
 //     once onto the cursor, shift-clicking crafts as many as possible
 //     straight into the inventory
 //   - closing a screen returns craft-grid contents to the inventory (drops
-//     what doesn't fit), then the cursor stack the same way
-// Slot interactions are the vanilla ones from player/inventory.js and
-// systems/crafting.js:
+//     what doesn't fit), then the cursor stack the same way; chest and
+//     furnace contents STAY in their container — that's the point of them
+// Slot interactions are the vanilla ones from player/inventory.js,
+// systems/crafting.js and systems/smelting.js:
 //   - left click: pick up / put down / swap / merge (and press-drag-release
 //     moves a stack in one gesture)
 //   - right click: pick up half / place one
-//   - shift click: move between hotbar and main, or out of the craft grid
-// E or Esc closes. Furnace, death and victory screens arrive later.
+//   - shift click: between hotbar and main — or, with a container open,
+//     between the inventory and the container (furnace routes smeltables
+//     to input and fuel to the fuel slot; its output slot never accepts)
+// E or Esc closes. Death and victory screens arrive later.
 
 import { INVENTORY, UI, CRAFTING } from '../config.js';
 import { renderSlotContent } from './icons.js';
 import { CraftingGrid } from '../systems/crafting.js';
+import {
+  SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT, isFuel, smeltResult,
+} from '../systems/smelting.js';
+import { CHEST_SLOTS } from '../world/chests.js';
+
+// Furnace indicator pixel art (inline like the other generated art):
+// a 14x14 flame and a 22x15 progress arrow, each drawn dim as background
+// with a bright fill revealed by fuel/progress fraction.
+const FLAME_ART = [
+  '......oo......',
+  '.....oooo.....',
+  '.....oooo.....',
+  '....oooooo....',
+  '....oooooo....',
+  '...oooyyooo...',
+  '...ooyyyyoo...',
+  '..ooyyyyyyoo..',
+  '..ooyyyyyyoo..',
+  '.ooyyyyyyyyoo.',
+  '.oyyyyyyyyyyo.',
+  '.oyyyyyyyyyyo.',
+  '..oyyyyyyyyo..',
+  '...oyyyyyyo...',
+];
+const FLAME_COLORS = {
+  lit: { o: '#d96415', y: '#ffc12b' },
+  dim: { o: '#3b3b3b', y: '#4a4a4a' },
+};
+const ARROW_W = 22;
+const ARROW_H = 15;
+const ARROW_SHAFT = { X1: 14, Y0: 5, Y1: 9 };
+
+function flameDataUrl(variant) {
+  const scale = 3;
+  const canvas = document.createElement('canvas');
+  canvas.width = FLAME_ART[0].length * scale;
+  canvas.height = FLAME_ART.length * scale;
+  const ctx = canvas.getContext('2d');
+  const colors = FLAME_COLORS[variant];
+  for (let y = 0; y < FLAME_ART.length; y++) {
+    for (let x = 0; x < FLAME_ART[y].length; x++) {
+      const c = FLAME_ART[y][x];
+      if (c === '.') continue;
+      ctx.fillStyle = colors[c];
+      ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+  return canvas.toDataURL();
+}
+
+function arrowInShape(x, y) {
+  if (x < ARROW_SHAFT.X1) return y >= ARROW_SHAFT.Y0 && y <= ARROW_SHAFT.Y1;
+  const half = Math.floor((ARROW_H - 1) / 2);
+  return x - ARROW_SHAFT.X1 <= half - Math.abs(y - half);
+}
+
+function arrowDataUrl(color) {
+  const scale = 3;
+  const canvas = document.createElement('canvas');
+  canvas.width = ARROW_W * scale;
+  canvas.height = ARROW_H * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = color;
+  for (let y = 0; y < ARROW_H; y++) {
+    for (let x = 0; x < ARROW_W; x++) {
+      if (arrowInShape(x, y)) ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+  return canvas.toDataURL();
+}
 
 export function createScreens({ inventory, canvas, items, player }) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
-  let mode = 'inventory'; // 'inventory' (2x2 grid) | 'table' (3x3 grid)
+  let mode = 'inventory'; // 'inventory' | 'table' | 'chest' | 'furnace'
   let cursor = null;      // stack picked up onto the mouse cursor
   let downRef = null;     // { container, index } the current left press started on
+  let activeChest = null;   // chest state (world/chests.js) while mode==='chest'
+  let activeFurnace = null; // Furnace (systems/smelting.js) while mode==='furnace'
+  let containerUnsub = null; // active container subscription teardown
+  let activeBlockPos = null; // { x, y, z, kind } of the open container's block —
+                             // main.js closes the screen if that block goes away
 
   // The craft grids persist across opens (they are drained on every close,
   // so nothing can hide in a closed screen's grid).
   const invGrid = new CraftingGrid(CRAFTING.INVENTORY_GRID);
   const tableGrid = new CraftingGrid(CRAFTING.TABLE_GRID);
   const activeGrid = () => (mode === 'table' ? tableGrid : invGrid);
+  const showsCraft = () => mode === 'inventory' || mode === 'table';
+  // The open block container, if any — shift-clicks route into/out of it.
+  const activeExternal = () =>
+    mode === 'chest' ? activeChest?.container
+      : mode === 'furnace' ? activeFurnace
+      : null;
 
   // --- DOM
   const style = document.createElement('style');
@@ -55,6 +143,7 @@ export function createScreens({ inventory, canvas, items, player }) {
     }
     .screen-grid { display: grid; grid-template-columns: repeat(${INVENTORY.HOTBAR_SIZE}, ${UI.SCREEN_SLOT_PX}px); }
     .screen-hotbar { margin-top: 10px; }
+    .screen-chest { margin-bottom: 14px; }
     .screen-slot {
       position: relative; box-sizing: border-box;
       width: ${UI.SCREEN_SLOT_PX}px; height: ${UI.SCREEN_SLOT_PX}px;
@@ -72,6 +161,37 @@ export function createScreens({ inventory, canvas, items, player }) {
       color: #6f6f6f; font: bold 30px/1 monospace;
       text-shadow: 1px 1px 0 #ffffff;
     }
+    .screen-furnace {
+      display: flex; align-items: center; justify-content: center;
+      gap: 16px; margin-bottom: 14px;
+    }
+    .screen-furnace-col {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+    }
+    .screen-flame {
+      position: relative; width: 42px; height: 42px;
+      image-rendering: pixelated;
+    }
+    .screen-flame img {
+      position: absolute; left: 0; bottom: 0; width: 42px; height: 42px;
+      image-rendering: pixelated;
+    }
+    .screen-flame-fill {
+      position: absolute; left: 0; bottom: 0; width: 42px; height: 0;
+      overflow: hidden;
+    }
+    .screen-progress {
+      position: relative; width: 66px; height: 45px;
+      image-rendering: pixelated;
+    }
+    .screen-progress img {
+      position: absolute; left: 0; top: 0; width: 66px; height: 45px;
+      image-rendering: pixelated;
+    }
+    .screen-progress-fill {
+      position: absolute; left: 0; top: 0; width: 0; height: 45px;
+      overflow: hidden;
+    }
     #screen-cursor {
       position: fixed; z-index: 11; pointer-events: none; display: none;
       width: ${UI.SCREEN_SLOT_PX}px; height: ${UI.SCREEN_SLOT_PX}px;
@@ -88,47 +208,20 @@ export function createScreens({ inventory, canvas, items, player }) {
   const title = document.createElement('h2');
   panel.appendChild(title);
 
-  // Craft area: one section per grid, the active mode's shown. Grid cells,
-  // an arrow, then the result slot.
-  function makeCraftSection(grid) {
-    const section = document.createElement('div');
-    section.className = 'screen-craft';
-    const cells = document.createElement('div');
-    cells.className = 'screen-craft-cells';
-    cells.style.gridTemplateColumns = `repeat(${grid.width}, ${UI.SCREEN_SLOT_PX}px)`;
-    const cellEls = [];
-    for (let i = 0; i < grid.width * grid.width; i++) {
-      const el = document.createElement('div');
-      el.className = 'screen-slot';
-      attachSlotEvents(el, grid, i);
-      cells.appendChild(el);
-      cellEls.push(el);
-    }
-    const arrow = document.createElement('div');
-    arrow.className = 'screen-craft-arrow';
-    arrow.textContent = '→';
-    const resultEl = document.createElement('div');
-    resultEl.className = 'screen-slot';
-    attachResultEvents(resultEl, grid);
-    section.appendChild(cells);
-    section.appendChild(arrow);
-    section.appendChild(resultEl);
-    panel.appendChild(section);
-    return { grid, section, cellEls, resultEl };
-  }
-
   // --- slot interactions
 
-  // A container is the inventory or a CraftingGrid — both share the same
-  // click/right-click semantics. Shift-click routes per container: between
-  // hotbar and main inside the inventory, out of the grid otherwise.
-  function attachSlotEvents(el, container, i) {
+  // A container is the inventory, a CraftingGrid or a block container
+  // (chest SlotContainer, Furnace) — all share the same click semantics.
+  // `getContainer` resolves at event time so one set of chest/furnace slot
+  // elements can serve whichever chest/furnace is currently open.
+  function attachSlotEvents(el, getContainer, i) {
     el.addEventListener('mousedown', (e) => {
+      const container = getContainer();
+      if (!container) return;
       e.preventDefault();
       if (e.button === 0) {
         if (e.shiftKey) {
-          if (container === inventory) inventory.shiftClick(i);
-          else container.shiftOut(i, inventory);
+          shiftMove(container, i);
           downRef = null;
         } else {
           cursor = container.clickSlot(i, cursor);
@@ -144,6 +237,8 @@ export function createScreens({ inventory, canvas, items, player }) {
     el.addEventListener('mouseup', (e) => {
       // Press-drag-release: releasing over a different slot drops the stack
       // there, so both click-click and drag-drop gestures work.
+      const container = getContainer();
+      if (!container) return;
       if (
         e.button === 0 && cursor && downRef &&
         (downRef.container !== container || downRef.index !== i)
@@ -153,6 +248,32 @@ export function createScreens({ inventory, canvas, items, player }) {
       }
       downRef = null;
     });
+  }
+
+  // Shift-click routing. With a block container open, stacks move between
+  // it and the inventory (the furnace's addStack routes smeltables to the
+  // input and fuel to the fuel slot). Vanilla details: an item the furnace
+  // takes no interest in at all falls back to the hotbar <-> main move; a
+  // chest accepts anything, and a FULL chest leaves the stack where it is.
+  // Otherwise the Phase 7/8 semantics: hotbar <-> main, craft grid -> out.
+  function shiftMove(container, i) {
+    const external = activeExternal();
+    if (container === inventory) {
+      const s = inventory.get(i);
+      if (!external || !s) {
+        if (s) inventory.shiftClick(i);
+        return;
+      }
+      if (mode === 'furnace' && !smeltResult(s.name) && !isFuel(s.name)) {
+        inventory.shiftClick(i);
+      } else {
+        inventory.moveSlotTo(i, external);
+      }
+    } else if (container === invGrid || container === tableGrid) {
+      container.shiftOut(i, inventory);
+    } else {
+      container.moveSlotTo(i, inventory);
+    }
   }
 
   // The result slot: click (either button) crafts once onto the cursor;
@@ -172,10 +293,104 @@ export function createScreens({ inventory, canvas, items, player }) {
     });
   }
 
+  // Craft area: one section per grid, the active mode's shown. Grid cells,
+  // an arrow, then the result slot.
+  function makeCraftSection(grid) {
+    const section = document.createElement('div');
+    section.className = 'screen-craft';
+    const cells = document.createElement('div');
+    cells.className = 'screen-craft-cells';
+    cells.style.gridTemplateColumns = `repeat(${grid.width}, ${UI.SCREEN_SLOT_PX}px)`;
+    const cellEls = [];
+    for (let i = 0; i < grid.width * grid.width; i++) {
+      const el = document.createElement('div');
+      el.className = 'screen-slot';
+      attachSlotEvents(el, () => grid, i);
+      cells.appendChild(el);
+      cellEls.push(el);
+    }
+    const arrow = document.createElement('div');
+    arrow.className = 'screen-craft-arrow';
+    arrow.textContent = '→';
+    const resultEl = document.createElement('div');
+    resultEl.className = 'screen-slot';
+    attachResultEvents(resultEl, grid);
+    section.appendChild(cells);
+    section.appendChild(arrow);
+    section.appendChild(resultEl);
+    panel.appendChild(section);
+    return { grid, section, cellEls, resultEl };
+  }
+
   const craftSections = [
     makeCraftSection(invGrid),
     makeCraftSection(tableGrid),
   ];
+
+  // Chest section: a 9-wide grid of CHEST rows, rebound to whichever chest
+  // is open.
+  const chestSection = document.createElement('div');
+  chestSection.className = 'screen-grid screen-chest';
+  const chestCellEls = [];
+  {
+    for (let i = 0; i < CHEST_SLOTS; i++) {
+      const el = document.createElement('div');
+      el.className = 'screen-slot';
+      attachSlotEvents(el, () => activeChest?.container, i);
+      chestSection.appendChild(el);
+      chestCellEls.push(el);
+    }
+  }
+  panel.appendChild(chestSection);
+
+  // Furnace section: input over flame over fuel, progress arrow, output.
+  const furnaceSection = document.createElement('div');
+  furnaceSection.className = 'screen-furnace';
+  const furnaceSlotEls = [];
+  let flameFillEl = null;
+  let arrowFillEl = null;
+  {
+    const col = document.createElement('div');
+    col.className = 'screen-furnace-col';
+    const makeSlot = (slotIndex) => {
+      const el = document.createElement('div');
+      el.className = 'screen-slot';
+      attachSlotEvents(el, () => activeFurnace, slotIndex);
+      furnaceSlotEls[slotIndex] = el;
+      return el;
+    };
+    col.appendChild(makeSlot(SLOT_INPUT));
+    const flame = document.createElement('div');
+    flame.className = 'screen-flame';
+    const flameBg = document.createElement('img');
+    flameBg.src = flameDataUrl('dim');
+    flame.appendChild(flameBg);
+    flameFillEl = document.createElement('div');
+    flameFillEl.className = 'screen-flame-fill';
+    const flameLit = document.createElement('img');
+    flameLit.src = flameDataUrl('lit');
+    flameFillEl.appendChild(flameLit);
+    flame.appendChild(flameFillEl);
+    col.appendChild(flame);
+    col.appendChild(makeSlot(SLOT_FUEL));
+    furnaceSection.appendChild(col);
+
+    const progress = document.createElement('div');
+    progress.className = 'screen-progress';
+    const arrowBg = document.createElement('img');
+    arrowBg.src = arrowDataUrl('#5a5a5a');
+    progress.appendChild(arrowBg);
+    arrowFillEl = document.createElement('div');
+    arrowFillEl.className = 'screen-progress-fill';
+    const arrowLit = document.createElement('img');
+    arrowLit.src = arrowDataUrl('#ffffff');
+    arrowFillEl.appendChild(arrowLit);
+    progress.appendChild(arrowFillEl);
+    furnaceSection.appendChild(progress);
+
+    furnaceSection.appendChild(makeSlot(SLOT_OUTPUT));
+  }
+  panel.appendChild(furnaceSection);
 
   // Main slots (9..35) above, hotbar slots (0..8) below, like vanilla.
   const slotEls = new Array(INVENTORY.SIZE).fill(null);
@@ -186,7 +401,7 @@ export function createScreens({ inventory, canvas, items, player }) {
       const el = document.createElement('div');
       el.className = 'screen-slot';
       el.dataset.slot = String(i);
-      attachSlotEvents(el, inventory, i);
+      attachSlotEvents(el, () => inventory, i);
       grid.appendChild(el);
       slotEls[i] = el;
     }
@@ -207,12 +422,18 @@ export function createScreens({ inventory, canvas, items, player }) {
 
   // --- rendering
 
+  function updateIndicators() {
+    if (!activeFurnace) return;
+    flameFillEl.style.height = `${(activeFurnace.fuelFraction * 100).toFixed(1)}%`;
+    arrowFillEl.style.width = `${(activeFurnace.progressFraction * 100).toFixed(1)}%`;
+  }
+
   function refresh() {
     for (let i = 0; i < INVENTORY.SIZE; i++) {
       renderSlotContent(slotEls[i], inventory.get(i), iconPx);
     }
     for (const s of craftSections) {
-      const active = s.grid === activeGrid();
+      const active = showsCraft() && s.grid === activeGrid();
       s.section.style.display = active ? 'flex' : 'none';
       if (!active) continue;
       for (let i = 0; i < s.cellEls.length; i++) {
@@ -222,6 +443,19 @@ export function createScreens({ inventory, canvas, items, player }) {
       // until it's actually taken.
       const result = s.grid.result;
       renderSlotContent(s.resultEl, result, iconPx);
+    }
+    chestSection.style.display = mode === 'chest' ? 'grid' : 'none';
+    if (mode === 'chest' && activeChest) {
+      for (let i = 0; i < chestCellEls.length; i++) {
+        renderSlotContent(chestCellEls[i], activeChest.container.get(i), iconPx);
+      }
+    }
+    furnaceSection.style.display = mode === 'furnace' ? 'flex' : 'none';
+    if (mode === 'furnace' && activeFurnace) {
+      for (const idx of [SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT]) {
+        renderSlotContent(furnaceSlotEls[idx], activeFurnace.get(idx), iconPx);
+      }
+      updateIndicators();
     }
     renderSlotContent(cursorEl, cursor, iconPx);
     cursorEl.style.display = cursor ? 'flex' : 'none';
@@ -255,7 +489,11 @@ export function createScreens({ inventory, canvas, items, player }) {
     if (open) return;
     open = true;
     mode = newMode;
-    title.textContent = mode === 'table' ? 'Crafting' : 'Inventory';
+    title.textContent =
+      mode === 'table' ? 'Crafting'
+        : mode === 'chest' ? 'Chest'
+        : mode === 'furnace' ? 'Furnace'
+        : 'Inventory';
     document.body.classList.add('mc-screen-open');
     root.style.display = 'flex';
     document.exitPointerLock();
@@ -265,6 +503,31 @@ export function createScreens({ inventory, canvas, items, player }) {
   // Right-clicking a crafting table (wired through main.js) lands here.
   function openCrafting() {
     openScreen('table');
+  }
+
+  // Right-clicking a chest: `chest` is the world/chests.js state — its
+  // container renders in the panel and its lid opens while we're here.
+  function openChest(chest) {
+    if (open || !chest) return;
+    activeChest = chest;
+    activeBlockPos = { x: chest.x, y: chest.y, z: chest.z, kind: 'chest' };
+    chest.open = true;
+    containerUnsub = chest.container.subscribe(() => {
+      if (open) refresh();
+    });
+    openScreen('chest');
+  }
+
+  // Right-clicking a furnace: `furnace` is the systems/smelting.js Furnace,
+  // `pos` its block position (for the disappeared-block guard).
+  function openFurnace(furnace, pos) {
+    if (open || !furnace) return;
+    activeFurnace = furnace;
+    activeBlockPos = pos ? { x: pos.x, y: pos.y, z: pos.z, kind: 'furnace' } : null;
+    containerUnsub = furnace.subscribe(() => {
+      if (open) refresh();
+    });
+    openScreen('furnace');
   }
 
   function dropAtFeet(name, count, durability) {
@@ -280,7 +543,7 @@ export function createScreens({ inventory, canvas, items, player }) {
     // Craft-grid contents go back into the inventory (vanilla), then the
     // cursor stack; anything that truly doesn't fit drops at the player's
     // feet instead of vanishing — worn tools keep their durability through
-    // the drop and back.
+    // the drop and back. Chest and furnace contents stay where they are.
     for (const grid of [invGrid, tableGrid]) {
       for (const o of grid.drainInto(inventory)) {
         dropAtFeet(o.name, o.count, o.durability ?? undefined);
@@ -291,6 +554,16 @@ export function createScreens({ inventory, canvas, items, player }) {
       if (leftover > 0) dropAtFeet(cursor.name, leftover, cursor.durability);
       cursor = null;
     }
+    if (containerUnsub) {
+      containerUnsub();
+      containerUnsub = null;
+    }
+    if (activeChest) {
+      activeChest.open = false; // the lid eases shut
+      activeChest = null;
+    }
+    activeFurnace = null;
+    activeBlockPos = null;
     cursorEl.style.display = 'none'; // never leave the ghost over gameplay
     document.body.classList.remove('mc-screen-open');
     root.style.display = 'none';
@@ -298,6 +571,12 @@ export function createScreens({ inventory, canvas, items, player }) {
     // browser's post-Esc cooldown — the "Click to play" hint covers that.
     const req = canvas.requestPointerLock();
     if (req && typeof req.catch === 'function') req.catch(() => {});
+  }
+
+  // Per frame from main.js: the furnace indicators move continuously (slot
+  // changes emit and re-render, but burn/progress only tick).
+  function update() {
+    if (open && mode === 'furnace') updateIndicators();
   }
 
   document.addEventListener('keydown', (e) => {
@@ -319,8 +598,11 @@ export function createScreens({ inventory, canvas, items, player }) {
   return {
     openScreen,
     openCrafting,
+    openChest,
+    openFurnace,
     closeScreen,
     refresh,
+    update,
     invGrid,   // exposed for tests/debugging
     tableGrid,
     get isOpen() {
@@ -331,6 +613,9 @@ export function createScreens({ inventory, canvas, items, player }) {
     },
     get cursor() {
       return cursor;
+    },
+    get activeBlockPos() {
+      return activeBlockPos;
     },
   };
 }

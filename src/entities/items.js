@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK } from '../config.js';
 import { BLOCK, blockIdByName, faceTiles, isSolid } from '../world/blocks.js';
 import { getUV, getAtlasTexture } from '../render/atlas.js';
+import { createChestMesh } from '../world/chests.js';
 
 const EPS = 1e-5;
 const TAU = Math.PI * 2;
@@ -22,6 +23,24 @@ const VISUAL_ALIAS = {
   oak_sapling: { block: BLOCK.OAK_LEAVES },
   glowstone_dust: { sprite: 'blaze_powder' },
 };
+
+// Items rendered as an entity-textured model rather than an atlas cube or a
+// flat sprite (Phase 10: the chest box model, everywhere a chest item shows).
+const MODEL_ITEMS = { chest: 'chest' };
+
+// Mesh for a { model } visual — dropped items, the held hand and any future
+// model item route through here. The result is centred on its origin like
+// createBlockMesh (the chest model itself is bottom-origined for placement).
+export function createModelMesh(model, size) {
+  if (model === 'chest') {
+    const wrapper = new THREE.Group();
+    const chest = createChestMesh(size);
+    chest.position.y = -size / 2;
+    wrapper.add(chest);
+    return wrapper;
+  }
+  throw new Error(`unknown item model '${model}'`);
+}
 
 // ---------------------------------------------------------------------------
 // Visuals — mini-block and sprite meshes (geometry/material caches shared)
@@ -122,9 +141,11 @@ function getSpriteMaterial(name) {
 }
 
 // How an item name renders, shared by dropped items, the first-person hand
-// and the UI icons (ui/icons.js): block items as their block ({ blockId }),
-// everything else as a flat texture from assets/items/ ({ sprite }).
+// and the UI icons (ui/icons.js): entity-model items as their model
+// ({ model }), block items as their block ({ blockId }), everything else as
+// a flat texture from assets/items/ ({ sprite }).
 export function itemVisualInfo(name) {
+  if (MODEL_ITEMS[name]) return { model: MODEL_ITEMS[name] };
   const alias = VISUAL_ALIAS[name];
   const blockId = alias?.block ?? (alias?.sprite ? null : blockIdByName(name));
   if (blockId !== null && blockId !== undefined && faceTiles(blockId)) {
@@ -280,6 +301,10 @@ export function createExtrudedItemMesh(name, size, onReady) {
 // Visual for an item name. Returns { mesh, halfHeight }.
 function createItemVisual(name) {
   const info = itemVisualInfo(name);
+  if (info.model) {
+    const size = ITEMS.BLOCK_SCALE;
+    return { mesh: createModelMesh(info.model, size), halfHeight: size / 2 };
+  }
   if (info.blockId !== undefined) {
     const size = ITEMS.BLOCK_SCALE;
     return { mesh: createBlockMesh(info.blockId, size), halfHeight: size / 2 };

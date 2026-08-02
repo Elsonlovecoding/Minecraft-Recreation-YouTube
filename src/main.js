@@ -2,7 +2,7 @@
 // the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
-import { DEBUG } from './config.js';
+import { DEBUG, SKY, LAVA_VIEW } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
@@ -12,14 +12,16 @@ import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } 
 import { initHud, updateHud } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
-import { BLOCK } from './world/blocks.js';
+import { BLOCK, isFurnace } from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
+import { createChests } from './world/chests.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
 import { createInventory } from './player/inventory.js';
 import { createStats } from './player/stats.js';
 import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
+import { createSmeltingSystem } from './systems/smelting.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -62,8 +64,16 @@ async function init() {
   const inventory = createInventory();
   const items = createItemManager({ world, scene });
   // Phase 9: sand/gravel fall when their support goes; lava damages (stats).
+  // Phase 10: block-change listeners are a list — falling-block support
+  // checks, furnace teardown and chest lifecycle all subscribe.
   const falling = createFallingBlocks({ world, scene, items });
-  world.onBlockChanged = falling.onBlockChanged;
+  world.addBlockListener(falling.onBlockChanged);
+  // Phase 10: furnaces tick whether or not a screen is open; chests are
+  // entity-textured box models with persistent contents.
+  const smelting = createSmeltingSystem({ world, items });
+  world.addBlockListener(smelting.onBlockChanged);
+  const chests = createChests({ world, scene, items, player });
+  world.addBlockListener(chests.onBlockChanged);
   const stats = createStats({ world, player, inventory, items });
   let screens;
   const interaction = createInteraction({
@@ -71,6 +81,17 @@ async function init() {
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
+        return true;
+      }
+      if (isFurnace(target.id)) {
+        screens.openFurnace(
+          smelting.furnaceAt(target.x, target.y, target.z),
+          { x: target.x, y: target.y, z: target.z },
+        );
+        return true;
+      }
+      if (target.id === BLOCK.CHEST) {
+        screens.openChest(chests.chestAt(target.x, target.y, target.z));
         return true;
       }
       return false;
@@ -100,6 +121,8 @@ async function init() {
   window.__inventory = inventory;
   window.__falling = falling;
   window.__stats = stats;
+  window.__smelting = smelting;
+  window.__chests = chests;
 
   initDebug();
   initHud(inventory);
@@ -114,16 +137,47 @@ async function init() {
       ? count - inventory.addStack({ name, count, durability })
       : count - inventory.add(name, count);
 
+  // Defensive: if the block backing an open container screen stops being
+  // that container (unreachable by hand today — breaking needs pointer
+  // lock — but explosions arrive with mobs), close the screen so stacks
+  // can't be deposited into an orphaned container. The chest/furnace
+  // listeners above already dropped its contents.
+  world.addBlockListener((x, y, z, id) => {
+    const pos = screens.activeBlockPos;
+    if (!pos || pos.x !== x || pos.y !== y || pos.z !== z) return;
+    const stillThere = pos.kind === 'furnace' ? isFurnace(id) : id === BLOCK.CHEST;
+    if (!stillThere) screens.closeScreen();
+  });
+
   const clock = new THREE.Clock();
+  let wasEyeInLava = false;
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     player.update(delta);
     interaction.update(delta);
     items.update(delta, player.position, onPickup);
     falling.update(delta);
+    smelting.update(delta); // furnaces run with the UI closed, independently
+    chests.update(delta);   // lid animation + chunk-visibility follow
     stats.update(delta);
+    screens.update(delta);  // furnace flame/arrow indicators
     world.updateStreaming(camera.position);
     dayNight.update(delta, camera.position); // also recentres the sky dome
+    // Submerged in lava: near-blind orange view — the fog collapses to
+    // arm's reach (the HUD overlay in ui/hud.js does the rest). dayNight
+    // rewrites the fog colour every frame, so leaving lava restores itself;
+    // near/far are put back once on the exit transition (edge-triggered, so
+    // this never fights a future dimension's own fog settings per frame).
+    if (player.body.eyeInLava) {
+      scene.fog.color.setHex(LAVA_VIEW.FOG_COLOR);
+      scene.fog.near = LAVA_VIEW.FOG_NEAR;
+      scene.fog.far = LAVA_VIEW.FOG_FAR;
+      wasEyeInLava = true;
+    } else if (wasEyeInLava) {
+      scene.fog.near = SKY.FOG_NEAR;
+      scene.fog.far = SKY.FOG_FAR;
+      wasEyeInLava = false;
+    }
     updateHud(player, stats);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);

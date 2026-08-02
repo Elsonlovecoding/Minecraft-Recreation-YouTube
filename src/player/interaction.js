@@ -26,8 +26,10 @@ import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
   OVERWORLD, CHUNK, LIGHTING,
 } from '../config.js';
-import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
-import { createBlockMesh, createExtrudedItemMesh, itemVisualInfo } from '../entities/items.js';
+import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
+import {
+  createBlockMesh, createExtrudedItemMesh, createModelMesh, itemVisualInfo,
+} from '../entities/items.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 
@@ -353,7 +355,14 @@ export function createInteraction({
       // pass clears depth itself, so no depth-free clones are needed and
       // the mini-cube self-occludes like a real block.
       const info = itemVisualInfo(name);
-      if (info.blockId !== undefined) {
+      if (info.model) {
+        // Entity-model items (chest): the same centred model the drops use,
+        // held like a block.
+        heldMesh = createModelMesh(info.model, H.BLOCK_SCALE);
+        heldMesh.position.set(...H.BLOCK_OFFSET);
+        heldMesh.rotation.set(...H.BLOCK_TILT);
+        arm.visible = false;
+      } else if (info.blockId !== undefined) {
         heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
         heldMesh.position.set(...H.BLOCK_OFFSET);
         heldMesh.rotation.set(...H.BLOCK_TILT);
@@ -364,7 +373,13 @@ export function createInteraction({
         // vanilla held tool — never a cube. The slab may arrive async (the
         // first selection of each item builds it from its texture) — keep
         // the arm until it does, so the hand is never empty.
-        const mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
+        // `mesh` is declared before the call: on a CACHE HIT the factory
+        // fires onReady synchronously, and a `const` here would still be in
+        // its temporal dead zone — re-selecting a previously held tool
+        // crashed. The sync call safely no-ops (heldMesh can't equal
+        // undefined) and the visibility line below covers that case.
+        let mesh;
+        mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
           if (heldMesh === mesh) arm.visible = false;
         });
         mesh.position.set(...H.SPRITE_OFFSET);
@@ -542,7 +557,8 @@ export function createInteraction({
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
     if (!isReplaceable(world.getBlock(x, y, z))) return;
     if (placementBlockedByPlayer(x, y, z, player.body.position)) return;
-    world.setBlock(x, y, z, id);
+    // Oriented blocks (furnace) place the variant facing the player.
+    world.setBlock(x, y, z, placementVariant(id, { x, y, z }, player.body.position));
     inventory.consumeSelected(1); // the hand refreshes via the subscription
     startSwing();
   }
