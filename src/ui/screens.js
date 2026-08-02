@@ -291,6 +291,7 @@ export function createScreens({ inventory, canvas, items, player }) {
       if (leftover > 0) dropAtFeet(cursor.name, leftover, cursor.durability);
       cursor = null;
     }
+    cursorEl.style.display = 'none'; // never leave the ghost over gameplay
     document.body.classList.remove('mc-screen-open');
     root.style.display = 'none';
     // Re-lock the pointer to resume play. The request can reject during the

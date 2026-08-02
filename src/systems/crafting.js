@@ -246,13 +246,20 @@ export class CraftingGrid {
   }
 
   // Shift-click on the result slot: craft as many as the ingredients allow
-  // and the inventory can hold, straight into the inventory. Returns the
-  // number of items crafted.
+  // and the inventory can hold, straight into the inventory. Stops when the
+  // grid stops matching THE RECIPE THE PLAYER CLICKED — uneven cell counts
+  // can leave a remainder that matches a different recipe (4 planks -> table
+  // leaves a plank column that would chain into sticks), and crafting items
+  // the player never asked for is worse than stopping. Returns the number of
+  // items crafted.
   craftMaxInto(inventory) {
     let crafted = 0;
+    const first = this.result;
+    if (!first) return 0;
     for (;;) {
       const r = this.result;
-      if (!r || !canFit(inventory, r.name, r.count)) break;
+      if (!r || r.name !== first.name || r.count !== first.count) break;
+      if (!canFit(inventory, r.name, r.count)) break;
       this._consumeOne();
       inventory.add(r.name, r.count);
       crafted += r.count;

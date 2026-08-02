@@ -563,6 +563,8 @@ export function createPlayerController({ world, camera, canvas }) {
     body.velocity.y = 0;
     body.velocity.z = 0;
     body.swimSprinting = false; // never carry the prone mode across a toggle
+    body.sneaking = false; // fly never steps the body, so the flag would
+                           // freeze — and interaction's use/place gate reads it
     if (mode === 'walk') {
       // Never re-enter walking inside terrain: lift to the nearest free spot
       let guard = 512;

@@ -142,10 +142,12 @@ function mulberry32(seed) {
 }
 
 // The 10 break-progress crack stages are the genuine Minecraft
-// destroy_stage_0..9.png textures (assets/destroy/), used directly — crack
-// texels carry alpha, the background is fully transparent. SRGBColorSpace
-// keeps the texel values exact through the output encode, so the overlay
-// multiplies the face by the authentic crack greys.
+// destroy_stage_0..9.png textures (assets/destroy/), used directly. Their
+// background texels are WHITE at alpha 1/255 (not black-transparent), so
+// the crack material must alphaTest them away — a surviving crack texel has
+// alpha 1 and the multiply-with-alpha blend reduces to dst * src.rgb, the
+// authentic darken. SRGBColorSpace keeps the texel values exact through the
+// output encode.
 function loadCrackTextures(stages) {
   const loader = new THREE.TextureLoader();
   const textures = [];
@@ -213,6 +215,8 @@ export function createInteraction({
   // --- breaking state
   let mouseLeft = false;
   let mouseRight = false;
+  let useCheckPending = false; // right-click pressed; use-vs-place resolves
+                               // in update() against that frame's raycast
   let breakKey = null;      // "x,y,z,id" of the block being broken
   let breakPlan = null;     // { time, drops } for that block
   let breakProgress = 0;    // 0..1
@@ -253,9 +257,13 @@ export function createInteraction({
       transparent: true,
       depthWrite: false,
       toneMapped: false,
-      // Multiply-with-alpha: out = dst * (src.rgb + 1 - src.a). Crack texels
-      // DARKEN whatever the face renders as — so cracks track the terrain's
-      // baked light and stay dark at night instead of glowing fullbright.
+      // The destroy-stage background texels are WHITE at alpha 1/255 — they
+      // must be discarded, not blended (blended they'd double the face
+      // brightness: dst * (1 + 1 - 1/255)). What survives the alphaTest has
+      // alpha 1, so the blend is exactly out = dst * src.rgb: crack texels
+      // DARKEN whatever the face renders as, tracking the terrain's baked
+      // light — dark at night, never a fullbright glow.
+      alphaTest: RENDER.CUTOUT_ALPHA_TEST,
       blending: THREE.CustomBlending,
       blendEquation: THREE.AddEquation,
       blendSrc: THREE.DstColorFactor,
@@ -370,13 +378,11 @@ export function createInteraction({
       mouseLeft = true;
       startSwing();
     } else if (e.button === 2) {
-      // Using the targeted block (crafting table...) takes precedence over
-      // placing, unless sneaking (vanilla). A handled use consumes the
-      // press entirely — no place, no hold-to-place repeat.
-      if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
-        startSwing();
-        return;
-      }
+      // The use-vs-place decision resolves in update() against the SAME
+      // fresh raycast placement uses — deciding here on last frame's target
+      // could open a table the crosshair just left, or place against one it
+      // just reached (one-frame asymmetry).
+      useCheckPending = true;
       mouseRight = true;
       placeTimer = 0; // place immediately, then repeat while held
     }
@@ -384,12 +390,14 @@ export function createInteraction({
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) mouseLeft = false;
     else if (e.button === 2) mouseRight = false;
+    // a sub-frame click still resolves its pending use next update
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('pointerlockchange', () => {
     if (!locked()) {
       mouseLeft = false;
       mouseRight = false;
+      useCheckPending = false;
     }
   });
 
@@ -441,8 +449,16 @@ export function createInteraction({
   }
 
   function spawnDrops(def, x, y, z) {
+    // chance entries roll independently; `fallback: true` entries drop only
+    // when no chance entry succeeded (registry doc in world/blocks.js —
+    // vanilla-style exclusive drops like gravel's flint-or-gravel).
+    let chanceDropped = false;
     for (const drop of def.drops) {
-      if (drop.chance !== undefined && Math.random() >= drop.chance) continue;
+      if (drop.fallback && chanceDropped) continue;
+      if (drop.chance !== undefined) {
+        if (Math.random() >= drop.chance) continue;
+        chanceDropped = true;
+      }
       const count = Array.isArray(drop.count)
         ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
         : drop.count;
@@ -567,6 +583,17 @@ export function createInteraction({
       }
     } else {
       outline.visible = false;
+    }
+
+    // Right-click use: the targeted block (crafting table...) takes
+    // precedence over placing, unless sneaking (vanilla). A handled use
+    // consumes the press entirely — no place, no hold-to-place repeat.
+    if (useCheckPending) {
+      useCheckPending = false;
+      if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
+        mouseRight = false;
+        startSwing();
+      }
     }
 
     updateBreaking(dt);

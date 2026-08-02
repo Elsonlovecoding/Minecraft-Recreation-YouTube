@@ -261,9 +261,11 @@ export const TOOL_TIERS = {
   diamond: { speedMultiplier: 8, durability: 1562 },
 };
 
+// Keys are the item ids the inventory uses (wooden_sword...), so the combat
+// phase can look up WEAPON_DAMAGE[inventory.selectedName] directly.
 export const WEAPON_DAMAGE = {
   fist: 1,
-  wood_sword: 4,
+  wooden_sword: 4,
   stone_sword: 5,
   iron_sword: 6,
   diamond_sword: 7,

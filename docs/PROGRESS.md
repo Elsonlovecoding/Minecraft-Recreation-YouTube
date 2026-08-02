@@ -582,6 +582,45 @@ Screenshots confirm the two bug fixes: the held block is a clean
 undistorted mini-cube (top + two sides visible, vanilla corner placement)
 and cracks are the genuine destroy-stage art multiplying the lit face.
 
+Phase 8's adversarial review (5 independent lenses — crafting logic,
+UI/DOM, render/input regression, SPEC fidelity, integration edge cases —
+each probing the real modules in node and/or headless Chromium; the logic
+lenses ran exhaustive offset/mirror placement sweeps, a 20k-state fuzz
+proving canFit exactly predicts Inventory.add acceptance, and 30k-operation
+aliasing/conservation fuzzes) confirmed and led to fixes for:
+- Crack overlay glowing near-white: the real destroy-stage PNGs' background
+  texels are WHITE at alpha 1/255 (not black-transparent), doubling the
+  face brightness under the multiply-with-alpha blend. Fixed with alphaTest
+  on the crack material — surviving texels have alpha 1 so the blend is
+  exactly dst * src.rgb. Verified numerically: a mid-grey face under the
+  overlay reads 128 -> 128 (was 255); the darkest crack texel reads
+  128 * 61/255 = 31, the exact multiply.
+- Flint was unobtainable (blocking flint_and_steel, arrows, and eventually
+  the Nether portal): gravel now drops flint at 10% replacing the gravel
+  drop, vanilla-style, via a new `fallback: true` drop-table semantic in
+  blocks.js/interaction.js (chance entries roll first; fallback entries
+  drop only when no chance entry succeeded).
+- craftMaxInto chaining into a DIFFERENT recipe when uneven cell counts
+  left a remainder matching something else (a 4-plank table craft with
+  extra planks in two cells chained into sticks) — the loop now stops when
+  the matched result changes from the recipe the player clicked.
+- The right-click use decision reading last frame's raycast while placement
+  used the current frame's (one-frame asymmetry could open a table the
+  crosshair just left, or place against one it just reached) — the use
+  check now resolves inside update() against the same fresh target
+  placement uses.
+- `body.sneaking` freezing across the F4 fly toggle (fly never steps the
+  body; Phase 8's use/place gate is its first external reader) — toggleFly
+  now clears it, like the Phase 6 swimSprinting fix.
+- WEAPON_DAMAGE config keys renamed to the real item ids (wooden_sword...)
+  so the combat phase's obvious `WEAPON_DAMAGE[selectedName]` lookup will
+  work; nothing consumed the table yet.
+- The screen cursor-ghost element staying visible over gameplay after
+  closing a screen with a stack on the cursor (pre-existing, now hidden on
+  close).
+All re-verified after the fixes: 180 automated checks (127 node + 53
+browser), zero console errors, plus the isolated WebGL blend readback.
+
 A 20-agent adversarial review (5 lenses: inventory correctness, UI/DOM,
 render/physics regression, spec fidelity, integration edge cases; every
 finding independently re-reproduced by a dedicated verifier against the
@@ -745,7 +784,14 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   engagement, so suppress mousemove (capture + stopImmediatePropagation) or
   never use page.mouse while locked. SwiftShader frames are slow and uneven
   — wait on frame counters (`renderer.info.render.frame`) or polled
-  conditions, never wall-clock.
+  conditions, never wall-clock. Phase 8 note: the hand pass is a second
+  render() per frame, so `renderer.info.render.frame` now advances by 2 per
+  displayed frame (fine for waiting on progress) and `info.render.calls/
+  triangles` report the hand pass, not the world — use a mid-frame probe if
+  world draw-call stats are ever needed again. The right-click use decision
+  resolves in interaction.update(), so a locked-pointer harness test that
+  dispatches a synthetic right mousedown must drive
+  `__interaction.update(dt)` once by hand (rAF is frozen under lock).
 - Player API for later phases: `controller.body` is the physics truth —
   `position` (feet centre), `velocity`, `onGround`, `swimming`,
   `submersion`, `eyeInWater`, `breath`/`maxBreath`, `sneaking`,
@@ -827,4 +873,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 5 | The player (controller.js): AABB body with exact swept collision (no tunnelling), vanilla-feel accel/friction, walk/sprint(double-tap W or Ctrl, FOV kick)/sneak(edge guard, lowered eye)/jump(0.5s vanilla cooldown), 1-block auto-step with camera smoothing, swimming (buoyant float, breath meter) with framerate-independent bank climb-out, safe surface spawn, first-person pointer-lock camera with view bob, debug fly camera behind F4; hud.js crosshair + breath bubbles; PLAYER config block; adversarially reviewed + 125 automated checks | Break/place (interaction.js), stats.js consuming lastLanding/breath/contact damage, hotbar/hearts HUD, caves/ores (caves.js), non-cube special shapes |
 | 6 | Block interaction (interaction.js): voxel DDA raycast (5 reach), black targeted-face outline, hold-to-break timed by hardness × tool class/tier with wrong-tier very-slow-no-drops, 10-stage generated crack overlay (multiply-blended, night-correct), right-click place onto the targeted face (air/fluid cells only, never inside the player or outside the world, hold-repeat, no stale-face placement), registry-table drops; dropped item entities (items.js): mini-block/sprite visuals, bob + rotate, midpoint collision both ways (no ceiling tunnelling), water float, wall-blocked 1.5-block magnetise, pickup, despawn, unloaded-chunk freeze; first-person depth-free hand (pixel arm or held mini-block) swinging on click/place/mining; proto-inventory scaffolding; Phase 5 fixes: step height 0.6 (jump for full blocks), space-in-any-water swims up slowly (no pool-edge levitation), submerged sprint = vanilla swim mechanic (fast, pitch-driven, prone eye, standing-eye surface disengage); INTERACTION/ITEMS config blocks; adversarially reviewed (4 lenses, all confirmed findings fixed) + 109 automated checks | Inventory/hotbar replacing the proto-inventory, tool durability, item stack merging, falling sand/gravel entities, item/hand world-light tinting, sounds, caves/ores (caves.js), non-cube special shapes |
 | 7 | Inventory (inventory.js): 36 slots / 9 hotbar, stacking to 64 with per-item registry (tools + armour stack 1, carry durability; pearls/eggs 16), pickups existing-stack-first then first-empty, vanilla click/right-click/shift-click semantics; hotbar HUD (hud.js) with real item icons (icons.js — assets/items sprites verbatim, isometric atlas cubes for blocks), counts, durability bars, selection highlight; 1-9 keys + delta-accumulating scroll wheel; inventory screen on E (screens.js) with click and press-drag-release moves, cursor ghost, close-returns-cursor (overflow drops at the feet, durability preserved through the drop); held item switches visibly (block cube / item sprite / bare arm); mining wears tools, broken tools vanish; partial pickups with retry when full. Bug fixes: held item vanilla-sized in the corner, leaves render interior faces + occlude AO (dense dark canopies), cactus sides inset 1/16 with 15/16 collision (sweep + sneak guard inset-aware), sprint-jump retuned to ~7.1 b/s. Adversarially reviewed (20 agents, 5 lenses, 8 unique confirmed findings all fixed) + 114 automated checks | Armour equip slots + damage reduction (stats/combat), crafting grid in the screen, Q-drop / click-outside-drop, dropped-entity stack merging, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
-| 8 | Crafting (systems/crafting.js): every SPEC critical-path recipe (shaped with bounding-box position independence + vanilla horizontal mirroring, shapeless as multisets), 2x2 craft area on the inventory screen + 3x3 crafting-table screen (screens.js) sharing the Phase 7 slot/cursor machinery, live result preview, click-crafts-one / shift-crafts-max (capacity-guarded), grids drain back on close; right-click on a placed crafting table opens the 3x3 via main.js `onUseBlock` (sneak bypasses to place, vanilla-style); tools craft at full durability, tier gates verified live end to end (punch wood -> planks -> table -> sticks -> wooden pickaxe -> stone -> stone pickaxe; wooden pickaxe can't harvest iron ore, stone can). Bug fixes: held item renders in a dedicated fixed-FOV hand pass (undistorted self-occluding cube; arm re-tuned with per-face shading), cracks are the real assets/destroy/destroy_stage_0..9.png advancing with progress. 175 automated checks (122 node + 53 browser incl. real-pointer-lock use-path tests) | Furnace/smelting (furnace right-click routes like the table), chest UI, drag-to-distribute crafting gesture, Q-drop, armour equip, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
+| 8 | Crafting (systems/crafting.js): every SPEC critical-path recipe (shaped with bounding-box position independence + vanilla horizontal mirroring, shapeless as multisets), 2x2 craft area on the inventory screen + 3x3 crafting-table screen (screens.js) sharing the Phase 7 slot/cursor machinery, live result preview, click-crafts-one / shift-crafts-max (capacity-guarded, stops if the matched recipe changes), grids drain back on close; right-click on a placed crafting table opens the 3x3 via main.js `onUseBlock` (resolved in update() against the fresh raycast; sneak bypasses to place, vanilla-style); tools craft at full durability, tier gates verified live end to end (punch wood -> planks -> table -> sticks -> wooden pickaxe -> stone -> stone pickaxe; wooden pickaxe can't harvest iron ore, stone can); gravel drops flint 10% (new fallback drop semantic) so flint_and_steel/arrows are reachable. Bug fixes: held item renders in a dedicated fixed-FOV hand pass (undistorted self-occluding cube; arm re-tuned with per-face shading), cracks are the real assets/destroy/destroy_stage_0..9.png advancing with progress (alphaTested — their background is white at alpha 1/255, not transparent-black). Adversarially reviewed (5 lenses, 7 confirmed findings all fixed) + 180 automated checks (127 node + 53 browser incl. real-pointer-lock use-path tests) | Furnace/smelting (furnace right-click routes like the table), chest UI, drag-to-distribute crafting gesture, Q-drop, armour equip, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
