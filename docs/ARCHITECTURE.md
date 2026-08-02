@@ -20,8 +20,10 @@ src/
     chunks.js            chunk data, meshing, face culling
     chests.js            chest block entities: contents + entity-textured
                          box model + lid animation (Phase 10 addition)
+    fluids.js            flowing lava: budgeted spread/fall/recede automaton
+                         over block-change events (Phase 12 addition)
     world.js             chunk manager, get/set block, loading, block-change
-                         listeners
+                         listeners, getLight point queries
 
   render/
     renderer.js          Three.js setup, tone mapping, shadows, post
@@ -37,6 +39,8 @@ src/
   entities/
     entity.js            base entity, physics, despawn
     pathfinding.js       A* over world blocks
+    models.js            mob models from textured boxes: standard entity
+                         unwrap, animation rigs (Phase 12 addition)
     mobs.js              mob definitions, spawn rules, AI
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup

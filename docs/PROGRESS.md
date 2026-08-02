@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 11 — full survival stats (hunger + saturation + exhaustion, regeneration, starvation, fall/drown/cactus/fire damage, knockback, death screen + respawn, hold-right-click eating, food registry) + Phase 10 bug fixes (torch box model + wall torches, working buckets, extruded dropped items, true-proportion block icons, click-outside item throw, more cave entrances, denser canopies)**
+Phase last completed: **Phase 12 — the entity foundation (base entity physics, budgeted A* pathfinding, mob spawning framework with world.getLight, box-model mob system from real entity textures, walk/head animation, one placeholder mob that spawns, pursues, bites, takes hits and dies) + Phase 11 bug fixes (true Esc pause, flowing lava, exact crack-overlay alignment, vanilla fall damage, starvation floor at 5 hearts)**
 
 ---
 
@@ -799,6 +799,132 @@ Phase 11 (this session) additions, one entry per file:
   regions: 0.32 -> ~1.0 per 100x100 columns; mouths stay clustered in
   regions rather than pockmarking, still only on dry grass/stone columns.
 
+Phase 12 (this session) additions, one entry per file:
+- `src/main.js` Phase 12 — **the pause**: whenever the pointer is unlocked
+  with no screen open (Esc from gameplay, or before the very first click)
+  the game freezes completely — player physics and mid-jump momentum,
+  interaction (break progress), items, mobs, falling blocks, smelting,
+  chests, stats, fluids, the lava-texture scroll and the day/night clock
+  all stop (`isPaused()` gates the loop; `dayNight.update(0)` keeps the
+  palette applied without advancing time). Input needs no extra gating:
+  every gameplay input path already requires pointer lock and screens can
+  only open while locked, so E/number keys/clicks are dead while paused.
+  Esc while paused retries the lock (vanilla resume; the post-Esc-cooldown
+  rejection is swallowed and a click resumes instead), and index.html shows
+  a "Game paused" title over the hint once play has begun. The harness
+  override (`player.inputOverridden`) keeps headless tests running
+  unlocked. World streaming continues while paused (terrain is not
+  gameplay).
+- `src/world/fluids.js` — **flowing lava** (the Phase 9 "no flowing fluids"
+  slice closed for lava): a budgeted cellular automaton driven by
+  block-change events plus a one-time settle scan of each newly meshed
+  chunk (generated lava with air below or beside — the Phase 10 wall leaks
+  and pool rims — starts flowing when first seen). Vanilla Overworld rules:
+  pour downward first (LAVA_FALL columns, one cell per 1.5s tick), spread
+  across surfaces up to 3 from a full-strength cell with each step a lower
+  level, falls re-spread at full strength where they land, flows revalidate
+  against their neighbours each tick and decay when the feed is cut
+  (scooping a source drains its flows outward). Only air fills — lava
+  never invades water or displaces blocks. All writes go through
+  world.setBlock, so meshing/lighting/falling-support/torch pops ride the
+  normal listener path. Config FLUIDS: tick, range, per-level render
+  heights, scroll rate, per-tick update cap (the remainder carries — a
+  lake edge can never stall a frame), chunks scanned per frame.
+- `src/world/blocks.js` Phase 12 — lava family ids 61-64 (LAVA_FLOW_1..3 +
+  LAVA_FALL): fluid, damaging, light 15, transparent (neighbours render
+  behind the partial volume), `special: 'lava_flow'`, never targetable or
+  dropped. `LAVA_LEVEL_OF` flat table + `isLava`/`isLavaSource`/
+  `lavaFlowLevel` helpers — physics, stats, items, pathfinding and the
+  mesher all key off them.
+- `src/world/chunks.js` Phase 12 — the PASS_LAVA bucket: flows/falls mesh
+  as partial-height cells (FLUIDS.FLOW_HEIGHTS per level, falls full),
+  top faces UV-oriented along the local downstream direction (gradient of
+  neighbour surface heights, air pulls downhill), side faces culled
+  against equal-or-taller lava and opaque neighbours and pulled 0.001 into
+  the cell (never z-fights a transparent neighbour's boundary face), lit
+  flat by their own emitting cell like torches. The material samples its
+  own repeating copy of the still-lava atlas tile; one shared offset.y
+  scroll (`materials.scrollLava(dt)`, driven un-paused from main.js)
+  animates every face along its own local flow axis — downstream on tops,
+  downward on sides. Also: `chunk.lightData` — the centre chunk's computed
+  light packed sky<<4|block per cell, copied on every remesh for
+  `world.getLight` point queries.
+- `src/player/interaction.js` Phase 12 — the crack overlay is a UNIT cube
+  exactly on the block faces with polygonOffset (-1/-2) winning the depth
+  test against the coplanar face: crack texels align with the block's own
+  texel grid from every angle (the old inflated cube parallaxed the crack
+  up to a pixel off the face at grazing views). Combat interception: a mob
+  under the crosshair (nearer than the targeted block, within
+  MOBS.ATTACK_REACH) makes the pending left click an attack via the
+  `combat` bridge and holds mining while aimed at it; bucket scooping now
+  fills only from SOURCE cells (flowing lava is not a bucketful, vanilla).
+- `src/entities/entity.js` — the base entity every mob builds on, pure
+  logic (node-testable with any { getBlock, getChunkIfLoaded } world): the
+  PlayerBody collision model simplified for mobs — exact per-axis swept
+  cell scans (no tunnelling at terminal velocity), gravity, a
+  MOBS.STEP_HEIGHT (1 block) auto-step retry so mobs climb full blocks
+  without jumping, water buoyancy + bank-exit hop, lava as a slow dense
+  fluid; health with a single damage() entry point (knockback along the
+  hit direction, never cancelling upward velocity), hurt/death timers,
+  despawn rules (hostiles beyond DESPAWN_DISTANCE 128, anything below
+  VOID_DESPAWN_Y), unloaded-chunk freeze like dropped items.
+- `src/entities/pathfinding.js` — budgeted A* over walkable feet cells
+  (`findPath`, `standableAt` — both pure over a getBlock fn): solid
+  harmless floor + body clearance, step up 1 (with headroom over the
+  current cell), walk off ledges landing within MAX_DROP 3 (lava or solid
+  interrupting the drop column rejects it), lava and contact-damage floors
+  never standable. Binary-heap open set; at most NODE_BUDGET (500)
+  expansions per call so a search can never stall a frame — budget
+  exhaustion (or a walled-off goal) returns the closest-approach path so
+  the mob keeps moving while the next repath refines.
+- `src/entities/models.js` — mob models from textured boxes using the real
+  assets/entity sheets with the STANDARD entity unwrap (top/bottom over a
+  right/front/left/back strip — unlike the chest's rotated variant),
+  `mirror` flipping U for left limbs on legacy sheets (the zombie's bottom
+  half is empty), optional per-part inflate. Parts are pivot Groups for
+  animation; geometry cached per (texture, part); material cloned per mob
+  instance (hurt flash + local light tint) over a shared NearestFilter
+  SRGB texture; per-face brightness vertex colours like chests/items (mobs
+  are unlit, tinted by baked world light).
+- `src/entities/mobs.js` — the registry (per-mob stats/models live here
+  per ARCHITECTURE.md; one `placeholder` entry this phase: zombie stats
+  and skin from SPEC, arms-raised pose), the spawning framework (per
+  SPAWN_INTERVAL_SECONDS: random ring 24..96 from the player, column walk
+  to solid opaque harmless ground, no water, hostile gate effective light
+  <= 7 where effective = max(block, sky - dayNight.skyDarken), passive
+  gate >= 9 on grass — framework in place, no passive types yet; caps
+  HOSTILE_CAP/PASSIVE_CAP; unmeshed chunks (no light data) never spawn),
+  pursue AI (repath every 0.5s, waypoint following, straight-line inside
+  CHASE_DIRECT_RANGE, melee bite with stats.damage + applyKnockback —
+  fly-mode and dead players exempt), animation (body yaw eases toward the
+  move direction, limb swing rides actual ground speed, arms counter-sway
+  over their pose, head tracks the player within 8 blocks clamped to neck
+  limits), per-frame light tint from world.getLight (cave mobs dark,
+  torch-lit mobs warm, eased to avoid cell popping) + red hurt flash,
+  death fall-over then drops (rotten_flesh 0-2), lava contact damage for
+  mobs. Player combat: `raycast` (slab test over live mob AABBs) +
+  `attack` with the swing cooldown; main.js bridges it into interaction
+  with WEAPON_DAMAGE[selectedName] ?? fist.
+- `src/world/world.js` Phase 12 — `getLight(x, y, z)` -> { sky, block }
+  (0-15) from the chunk's mesh-time light copy, or null when the chunk has
+  never meshed; refreshed on every remesh (it can lag an edit by the frame
+  or two until the dirty chunk remeshes — fine for spawn checks, never
+  rebuild windows per query).
+- `src/render/lighting.js` Phase 12 — `dayNight.skyDarken` getter (0 day
+  .. 11 deep night) for the hostile spawn gate.
+- config Phase 12 — FLUIDS block; MOBS grew the spawning framework, entity
+  physics, combat feel, AI, animation and PATH tunables; INTERACTION crack
+  polygonOffset constants replace CRACK_INFLATE; PLAYER.FALL_DAMAGE_PER_
+  BLOCK 2 -> 1 (half a heart per block beyond 3 — 4 blocks = 0.5 hearts,
+  10 = 3.5, 23+ kills from full, the SPEC examples); PLAYER.STARVE_FLOOR_
+  HEALTH 2 -> 10 (5 hearts, Easy difficulty). The exhaustion values were
+  audited against vanilla and were already exact (sprint 0.1/block, swim
+  0.01, jump 0.05/0.2, damage 0.1, regen 6.0, 4.0 per hunger point) — the
+  "hunger drains too fast" report was the doubled fall damage feeding the
+  eat-to-heal regen loop (each heal costs 6.0 exhaustion), now halved to
+  vanilla; measured: standing still and 5 minutes of walking drain
+  nothing, continuous sprinting loses its first hunger point after ~43s.
+
 Phase 6 verification: 70 node checks against the real modules — raycast
 geometry (axis-aligned/diagonal/negative directions, boundary origins,
 through-water, inside-block starts, reach limit), mining plans for every
@@ -1158,13 +1284,66 @@ regression-checked:
 All 74 automated checks re-run green after the fixes (44 node + 22
 browser gameplay + 8 fix regressions), zero console errors.
 
+Phase 12 verification: 26 node checks against the real modules —
+pathfinding (flat direct path; 1-block step-up; routing around a 2-high
+wall; taking a 3-drop and refusing a 4-drop; lava floor avoided and not
+standable; a sealed goal returns a fast (<50ms) best-effort path toward
+it), entity physics (terminal-velocity landing flush at dt=0.1; walking
+with the 1-block auto-step; a 2-block wall stopping; knockback velocities;
+lethal damage -> death timer -> removal; hostile despawn beyond 128), and
+the corrected stats (falls of 3/4/10/23 costing exactly 0/0.5/3.5/10
+hearts; starvation flooring at 5 hearts and never killing; standing still
+and 5 minutes of walking draining nothing; continuous sprint losing its
+first hunger point after ~43s — all vanilla). In headless Chromium (zero
+console errors throughout): boot pauses before the first click (day/night
+frozen) and the harness override resumes it; E and number keys are dead
+while paused; a mid-fall pause freezes position AND velocity exactly and
+resume continues the same arc; the placeholder mob spawns on the surface,
+pursues the player (10.0 -> 8.1 blocks over ~4s at the vanilla 2.2-2.3
+blocks/s with limb swing at full amplitude), takes a raycast melee hit
+(-5 hp, red hurt flash confirmed by material colour readback), dies with
+the fall-over and is removed, and the night spawn framework produced 11-13
+hostiles within caps at legal distances; a staged lava source spread the
+exact vanilla diamond (4x level-1, 8x level-2, 12x level-3 around one
+source), a rim source poured a falling column one cell per 1.5s tick,
+landed ~15 blocks below and re-spread across the ground, and removing the
+centre source drained its flows to zero within a few ticks; the flow ids
+read back as air,3,2,1,S,1,2,3,air across the pool. Screenshots verify the
+look: crack stages exactly inside the outlined face both straight-on and
+at a grazing angle (the parallax case), lava terraces stepping visibly
+lower with the real animated tile, the falling lava column, the zombie
+model (legacy 64x64 sheet: face/body/limbs correct, arms-raised pose,
+mirrored left limbs) walking, and the night scene where the mob reads
+near-black in darkness (brightness 0.09) and warm-lit next to a placed
+torch (0.63).
+
 ---
 
 ## Partially built
 
-- The rest of `src/` exists as empty stub modules with responsibility headers
-  (entities/entity.js, entities/mobs.js, entities/pathfinding.js,
-  entities/dragon.js, systems/brewing.js, systems/combat.js, dimensions/).
+- Remaining stub modules with responsibility headers: entities/dragon.js,
+  systems/brewing.js, systems/combat.js, dimensions/ (entities/entity.js,
+  pathfinding.js, models.js and mobs.js are real as of Phase 12).
+- Phase 12 deliberate slices:
+  - One placeholder mob only (zombie stats/skin, pursue-and-bite). The
+    real roster — skeleton bow AI, creeper fuse, spider walls, enderman,
+    passive herds with the meat drops the food registry expects — is the
+    next phase: each is a registry entry in entities/mobs.js + an AI state
+    function. Zombies do not burn in daylight yet (needs the fire state on
+    entities).
+  - Mobs don't push the player or each other (no entity-entity collision);
+    melee reach compensates. Mob-vs-mob damage unused.
+  - Only lava flows. Water stays static (generation seals its lakes; water
+    flow + springs are a later phase — the fluids.js automaton generalises
+    when needed). Lava meeting water makes nothing (no obsidian/cobble
+    yet); flows hover where a fall lands on water.
+  - Flowing lava has flat partial-height tops per level (no corner-sloped
+    surfaces), and sources keep the static still-lava tile.
+  - Mob melee ignores armour (ARMOR_REDUCTION still unconsumed — armour
+    equip slots remain the combat phase's job) and there is no attack
+    exhaustion cost yet.
+  - Spawning is one-at-a-time (no vanilla pack spawns) and there is no
+    per-category mob-cap density scaling by loaded chunks.
 - `player/stats.js` is complete for solo survival (Phase 11). Still
   missing: armour equip slots + damage reduction (combat phase — armour
   items exist in the registry), and block-break/attack exhaustion costs
@@ -1177,8 +1356,9 @@ browser gameplay + 8 fix regressions), zero console errors.
     partial sinking, crawl movement, slow rise on jump). Still no
     fire/burning damage-over-time after leaving lava; contact damage plus
     the slow escape remains usually fatal, vanilla-accurate in outcome.
-  - No flowing fluids: carved caves never breach water (ocean shield), so
-    nothing needs to flow; lava pools are still lakes.
+  - ~~No flowing fluids~~ — Phase 12 made lava flow (world/fluids.js:
+    pours, spreads 3, recedes; generated wall leaks settle). Water still
+    static: carved caves never breach it (ocean shield).
   - Rivers (SPEC overworld row) remain unbuilt — the only SPEC world
     feature not yet placed; needs a fluid-aware carver pass of its own.
   - Sand/gravel floating at generation time (e.g. a tunnel roof under a
@@ -1281,14 +1461,41 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 12 is mobs (hostile spawning wants a `getLight(x,y,z)`
-  helper on World; passive mobs should drop the meat item ids the smelting
-  recipes AND the Phase 11 food registry expect: beef, porkchop, chicken,
-  mutton — texture names, NOT SPEC's raw_beef spelling, which has no
-  texture in assets/items). Combat should call `stats.damage(amount)` +
-  `stats.applyKnockback(dx, dz)` for mob hits, apply `ARMOR_REDUCTION`
-  (armour equip slots still unbuilt), read `WEAPON_DAMAGE[selectedName]`
-  for player attacks, and add the vanilla attack/break exhaustion costs.
+- Phase 13 is likely the real mob roster over the Phase 12 foundation.
+  Adding a mob = a MOB_TYPES entry in entities/mobs.js (stats from
+  SPEC.md, model parts in the models.js format — verify each sheet's
+  layout by inspecting the PNG; 64x32 sheets exist for creeper/skeleton/
+  spider/sheep/enderman/chicken, cow/pig are 64x64) + an AI function next
+  to `pursue` (the manager currently hardwires pursue — split per-type AI
+  when the second behaviour arrives). Passive mobs should drop the meat
+  item ids the smelting recipes AND food registry expect: beef, porkchop,
+  chicken, mutton (texture names, NOT SPEC's raw_beef spelling).
+- Phase 12 APIs for later phases: `Entity` (entities/entity.js) is the
+  physics base — construct with (world, pos, typeDef), steer via
+  wishX/wishZ, `damage(amount, dirX, dirZ)`, `aabb`. `findPath`/
+  `standableAt` (entities/pathfinding.js) are pure over a getBlock fn;
+  budget knobs in MOBS.PATH. `createMobModel(type)` (entities/models.js)
+  -> { group, parts, material } — parts are pivot Groups (swing via
+  rotation), material is per-instance for tinting. `world.getLight(x,y,z)`
+  -> { sky, block } | null (never rebuild light windows per query);
+  `dayNight.skyDarken` for effective-light gates. The combat bridge in
+  main.js passes WEAPON_DAMAGE[selectedName] ?? fist into `mobs.attack`;
+  skeleton arrows and creeper explosions should call `stats.damage` +
+  `applyKnockback` like the melee bite does, and apply `ARMOR_REDUCTION`
+  once armour equip slots exist (still unbuilt). Vanilla attack/break
+  exhaustion costs also remain for the combat phase.
+- Flowing lava (world/fluids.js): event-driven — anything that edits
+  blocks gets flow updates for free via the world listener. If water flow
+  arrives later, generalise the automaton (feeder levels + heights are
+  the only lava-specific parts; water spreads 7 with faster ticks). The
+  Nether phase should widen LAVA_RANGE there (vanilla doubles range and
+  halves the tick in the Nether).
+- The pause: `isPaused()` in main.js is the single gate — new per-frame
+  systems must tick inside the `if (!paused)` block. Anything input-driven
+  must gate on pointer lock (that is what makes input dead while paused).
+- Mob visuals: mobs are unlit like chests/items — the per-frame
+  world.getLight tint in mobs.js `animate` is the pattern; if items/hand
+  ever get light tinting, reuse it.
 - Phase 11 APIs for later phases: `foodValue(name)` (player/inventory.js)
   is the edibility registry — new foods just add an entry (and a texture).
   `stats.eat/canEat/hunger/saturation/burning/dead/respawn`,
@@ -1466,3 +1673,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 9 | Underground (world/caves.js): two-layer cave carving (winding tunnel pair-intersection + deep caverns, world-aligned interpolation lattice, y -50..60), rare long/deep/narrow V-profile ravines, walkable surface entrances gated to sparse entrance regions (plus rare 1-block rabbit holes), ocean-sealed floors, lava filling all carved space below y=10, granite/diorite/andesite blobs, gravel pockets, ore veins per SPEC ranges (coal/iron 4-12, gold/redstone 4-8, diamond 1-4 bottom-biased — 39/40 simulated 10-min branch-mining trials find diamond, avg 4.9 ore); trees/cacti refuse carved surfaces; falling sand/gravel entities (entities/falling.js + world.onBlockChanged) with torch-break/fluid-sink (fills lava lakes like vanilla)/cascade rules; stats.js slice — health, lava contact damage, death drops inventory + respawn — with hearts HUD + damage flash; dropped items burn in lava; held-tool fix (extruded 1px-slab item models, vanilla lower-right diagonal) and held-block scale-up. 21 node + 10 browser gameplay checks + screenshot suite, zero console errors | Rivers; hunger/fall/drowning/cactus damage + death screen (stats.js continues); swimmable lava; gen-time floating sand settles only on disturbance; smelting; mobs |
 | 10 | Smelting (systems/smelting.js): every SPEC recipe + fuel value, per-position furnaces ticking with the UI closed and independently, vanilla fuel/progress rules (ignite only when a smelt can run, rewind when blocked, lava-bucket residue), furnace block family (4 facings x unlit/lit, oriented placement toward the player, lit front tile + light 13), furnace screen (input/fuel/output, pixel-art progress arrow + flame indicator), break drops contents. Chests (world/chests.js): entity-textured box model from chest_normal.png (base/lid/latch, modern 180-degree-flipped unwrap decoded, back-hinge lid animation while open), placement facing the player, persistent 27-slot containers, break drops contents, chest recipe, model-routed item visuals (dropped/held/hotbar icon). Generic container UI (ui/screens.js): SlotContainer (player/inventory.js) + event-time container resolution + cross-container shift routing; world.addBlockListener list. Phase 9 bug fixes: lava rework (lakes only y<=-54, sparse 1-deep pools + rare wall leaks in -54..10, caves deepened to -60), cave size variety (girth-modulated tunnels ~2-4 wide, caverns bigger and rarer), dense-lava player physics + near-opaque lava-tile overlay + collapsed fog, hotbar highlight as a transform-moved element (repaint bug), held item moved into the corner, arm shortened, held-tool re-select TDZ crash fixed, PASS_NONE culling fix (torch-on-chest). 115 node + 38 browser checks, zero console errors | Brewing stand (reuses SlotContainer + furnace screen pattern); stats phase (hunger/fall/drowning/cactus, eating the new cooked food); mobs (drop ids beef/porkchop/chicken/mutton); buckets scooping lava/water; chest icon uses static sheet (no animated open state in the icon) |
 | 11 | Full survival stats (player/stats.js): hunger 20 + hidden saturation + exhaustion from activity (sprint/swim/jump/damage/regen), natural regen at hunger>=18 costing exhaustion (the eat-to-heal loop), starvation to the SPEC 1-heart floor, fall damage 1 heart/block beyond 3 via body.lastLanding, drowning 2/s at breath 0, lava contact + 15s burning DoT that water extinguishes, cactus contact with knockback (applyKnockback API for combat), death screen with Respawn button + inventory dropped at the death site (open screens close first, dead players collect nothing) + respawn at world spawn; hunger drumstick HUD row (right-to-left) with breath bubbles moved above; eating: hold right click ~1.6s with nibble hand animation, FOODS registry (vanilla hunger/saturation, cooked > raw, stew leaves a bowl). Bug fixes: torch box model (2x10px floor post + 22.5-degree wall variants, ids 57-60, face-aware placement, solid-support requirement, support-break pop, atlas-sprite item visuals), buckets scoop/place water and lava (fluid-aware raycast, one action per press), dropped sprite items extruded 1px thick, block icons redrawn in true dimetric proportions (~11% taller), click-outside-panel throws the cursor stack (left all / right one), cave entrances ~3x more common (census-tuned), canopies a layer deeper with hash-kept corners. 44 node + 22 browser checks + screenshot suite, zero console errors; adversarial 5-lens review with per-finding verification | Brewing stand; mobs + combat (armour equip/reduction, attack/break exhaustion, WEAPON_DAMAGE consumer); rivers; Q-drop; fire overlay visual; eating doesn't slow movement |
+| 12 | Entity foundation: base entity (entities/entity.js — swept-AABB physics with 1-block step-up, water/lava handling, health/knockback/hurt/death timers, despawn rules, unloaded-chunk freeze), budgeted A* pathfinding (entities/pathfinding.js — step up 1, drops capped at 3, lava/cactus avoided, 500-expansion budget with closest-approach fallback), mob spawning framework (entities/mobs.js — ring 24..96, solid opaque ground, hostile light <= 7 via new world.getLight + dayNight.skyDarken, passive >= 9 on grass, caps from config), box-model mob system (entities/models.js — standard entity unwrap from the real sheets, mirrored legacy limbs, pivot rigs, per-instance tint materials), walking limb swing + head tracking + body-yaw easing + baked-light tinting + red hurt flash + death fall-over, player melee via crosshair mob raycast with WEAPON_DAMAGE, mob melee biting through stats.damage/applyKnockback; placeholder mob (zombie stats/skin) proves spawn->pursue->bite->hit->die->drops. Bug fixes: true Esc pause (everything freezes — physics, momentum, day/night, entities, break progress, furnaces; input dead while paused; Esc/click resumes), flowing lava (world/fluids.js: pour-first spread 3 with descending partial-height animated rendering, falls, recedes, settles generated leaks), crack overlay exactly on the face via polygonOffset, fall damage halved to vanilla (0.5 hearts/block past 3), starvation floor 5 hearts (Easy). 26 node + browser suites (pause/mob/lava/visual), zero console errors; adversarial multi-lens review with per-finding refutation | Real mob roster (zombie/skeleton/creeper/spider/enderman + passives, daylight burning, per-type AI split); combat polish (armour equip + reduction, attack/break exhaustion, mob-vs-mob); water flow; lava+water -> obsidian/cobble; entity-entity collision; mob sounds |
