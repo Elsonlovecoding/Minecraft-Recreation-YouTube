@@ -11,6 +11,7 @@
 
 import { OVERWORLD, CHUNK, TERRAIN } from '../config.js';
 import { BLOCK } from './blocks.js';
+import { CaveCarver } from './caves.js';
 
 // ---------------------------------------------------------------------------
 // Seeded randomness
@@ -154,6 +155,9 @@ export class TerrainGenerator {
     this.moistureNoise = table(0x4d5e6f70);
     this.mountainRegionNoise = table(0x5e6f7081);
     this.ridgeNoise = table(0x6f708192);
+    // Phase 9: caves, ravines, ores, stone variants (world/caves.js) — carved
+    // after the base column fill, before decorations.
+    this.caves = new CaveCarver(this.seed);
   }
 
   // --- climate and biome weights -------------------------------------------
@@ -334,6 +338,10 @@ export class TerrainGenerator {
       }
     }
 
+    // Caves/ravines/ores carve before decorations so trees and cacti can
+    // refuse anchors whose surface block was carved away (surfaceOpenAt).
+    this.caves.apply(chunk, colAt);
+
     this.placeTrees(chunk, colAt);
     this.placeCacti(chunk, colAt);
   }
@@ -422,7 +430,11 @@ export class TerrainGenerator {
       for (let ax = x0 - reach; ax < x0 + size + reach; ax++) {
         const col = colAt(ax, az);
         const trunkH = this.treeAt(col, colAt);
-        if (trunkH > 0) this.placeTree(chunk, ax, az, col.height, trunkH);
+        // Never anchor a tree on a surface a cave mouth or ravine carved
+        // away (pure query — margin anchors agree with the owning chunk).
+        if (trunkH > 0 && !this.caves.surfaceOpenAt(col, colAt)) {
+          this.placeTree(chunk, ax, az, col.height, trunkH);
+        }
       }
     }
   }
@@ -484,6 +496,7 @@ export class TerrainGenerator {
         if (col.surface.top !== BLOCK.SAND) continue;
         if (col.height <= OVERWORLD.SEA_LEVEL) continue;
         if (hash01(this.seed ^ SALT_CACTUS, col.x, col.z) >= C.DENSITY) continue;
+        if (this.caves.surfaceOpenAt(col, colAt)) continue; // carved surface
 
         const span = C.MAX_HEIGHT - C.MIN_HEIGHT + 1;
         const h = C.MIN_HEIGHT +

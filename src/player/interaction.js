@@ -27,7 +27,7 @@ import {
   OVERWORLD, CHUNK, LIGHTING,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
-import { createBlockMesh, createSpriteMesh, itemVisualInfo } from '../entities/items.js';
+import { createBlockMesh, createExtrudedItemMesh, itemVisualInfo } from '../entities/items.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 
@@ -358,7 +358,10 @@ export function createInteraction({
         heldMesh.position.set(...H.BLOCK_OFFSET);
         heldMesh.rotation.set(...H.BLOCK_TILT);
       } else {
-        heldMesh = createSpriteMesh(info.sprite, H.SPRITE_SCALE);
+        // Tools and materials: the extruded slab model (flat sprite with
+        // one-pixel depth), angled diagonally across the lower-right like a
+        // vanilla held tool — never a cube.
+        heldMesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE);
         heldMesh.position.set(...H.SPRITE_OFFSET);
         heldMesh.rotation.set(...H.SPRITE_TILT);
       }

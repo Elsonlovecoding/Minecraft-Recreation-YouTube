@@ -149,6 +149,20 @@ export class Inventory {
     return this._insert(stack.name, stack.count, stack.durability ?? null);
   }
 
+  // Empties every slot and returns the removed stacks (durability intact) —
+  // death drops (player/stats.js).
+  drainAll() {
+    const stacks = [];
+    for (let i = 0; i < this.slots.length; i++) {
+      if (this.slots[i]) {
+        stacks.push(this.slots[i]);
+        this.slots[i] = null;
+      }
+    }
+    if (stacks.length) this._emit();
+    return stacks;
+  }
+
   // Could add() accept at least one of this item right now? Gates the item
   // magnet so a full inventory doesn't vacuum drops around forever.
   canAccept(name) {

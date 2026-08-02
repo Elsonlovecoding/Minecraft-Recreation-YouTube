@@ -17,7 +17,9 @@ import { createChunkMaterials } from './world/chunks.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
 import { createInventory } from './player/inventory.js';
+import { createStats } from './player/stats.js';
 import { createItemManager } from './entities/items.js';
+import { createFallingBlocks } from './entities/falling.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -59,6 +61,10 @@ async function init() {
   // clicks can only arrive long after init finishes).
   const inventory = createInventory();
   const items = createItemManager({ world, scene });
+  // Phase 9: sand/gravel fall when their support goes; lava damages (stats).
+  const falling = createFallingBlocks({ world, scene, items });
+  world.onBlockChanged = falling.onBlockChanged;
+  const stats = createStats({ world, player, inventory, items });
   let screens;
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory,
@@ -92,6 +98,8 @@ async function init() {
   window.__items = items;
   window.__interaction = interaction;
   window.__inventory = inventory;
+  window.__falling = falling;
+  window.__stats = stats;
 
   initDebug();
   initHud(inventory);
@@ -112,9 +120,11 @@ async function init() {
     player.update(delta);
     interaction.update(delta);
     items.update(delta, player.position, onPickup);
+    falling.update(delta);
+    stats.update(delta);
     world.updateStreaming(camera.position);
     dayNight.update(delta, camera.position); // also recentres the sky dome
-    updateHud(player);
+    updateHud(player, stats);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);
     interaction.renderHand(renderer); // hand pass over the finished frame
