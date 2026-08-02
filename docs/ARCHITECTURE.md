@@ -37,6 +37,7 @@ src/
     mobs.js              mob definitions, spawn rules, AI
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup
+    falling.js           falling sand/gravel entities (Phase 9 addition)
 
   systems/
     crafting.js          recipes, grid matching

@@ -64,9 +64,91 @@ export const STREAMING = {
 // Terrain generation
 // ---------------------------------------------------------------------------
 
+// Cave carving (world/caves.js). Two noise layers — winding tunnels and open
+// caverns — carve the band MIN_Y..MAX_Y; tunnels additionally fade upward to
+// the surface so their strongest cores pierce it as findable entrances.
+// Noise fields are sampled on a world-aligned lattice every LATTICE_STEP
+// blocks and interpolated per block (fast, and identical across chunk
+// borders whatever the generation order).
 export const CAVES = {
   MIN_Y: -50,
   MAX_Y: 60,
+  LATTICE_STEP: 4,
+  BOTTOM_FADE_BLOCKS: 8,     // caves taper closed over this band above MIN_Y
+
+  // Tunnels: carve where fieldA² + fieldB² < RADIUS² — the neighbourhood of
+  // the intersection curve of two 3D noise zero-surfaces (long winding
+  // spaghetti). The y frequency is higher than xz so tunnels run mostly
+  // horizontal and slightly wider than tall.
+  TUNNEL: {
+    SCALE_XZ: 1 / 95,
+    SCALE_Y: 1 / 68,
+    OCTAVES: 2,
+    RADIUS: 0.11,
+  },
+
+  // Caverns: carve where a low-frequency squashed 3D field exceeds a
+  // threshold that loosens with depth — open rooms, common deep down,
+  // fading out entirely above MAX_Y.
+  CAVERN: {
+    SCALE_XZ: 1 / 130,
+    SCALE_Y: 1 / 72,
+    OCTAVES: 2,
+    MAX_Y: 48,               // no caverns above this (only tunnels reach up)
+    FULL_BELOW_Y: -6,        // deep threshold applies at/below this
+    SHALLOW_Y: 30,           // threshold reaches SHALLOW value here
+    THRESHOLD_DEEP: 0.62,
+    THRESHOLD_SHALLOW: 0.76,
+  },
+
+  // Surface entrances: above MAX_Y tunnels keep carving only inside sparse
+  // "entrance regions" (a low-frequency 2D mask), where they stay wide
+  // enough to walk into — few walkable cave mouths instead of a pockmarked
+  // surface. Only dry grass/stone columns qualify (no holes in beaches,
+  // deserts or under oceans; sand would float).
+  ENTRANCE: {
+    MASK_SCALE: 1 / 140,     // 2D mask field frequency (region size)
+    MASK_START: 0.38,        // mask noise where entrance regions begin
+    MASK_FULL: 0.60,         // mask noise where the gate saturates
+    MAX_FACTOR: 0.85,        // tunnel radius fraction inside a full-gate region
+    DECAY: 0.04,             // additional gentle taper with height above MAX_Y
+    MAX_SURFACE_Y: 96,       // columns higher than this never get mouths
+  },
+
+  // Never carve within DEPTH blocks below the surface when any column in a
+  // (2*RADIUS+1)² neighbourhood is at or below sea level — keeps ocean and
+  // shore floors sealed (no static-water walls, no drained-looking pockets).
+  OCEAN_SHIELD: { RADIUS: 2, DEPTH: 6 },
+
+  // Ravines: rare long, deep, narrow cuts. A 2D noise zero-line supplies the
+  // path (|line| < WIDTH carves), a very low-frequency mask gates where
+  // ravines exist at all, and depth shrinks toward the edges (V profile).
+  RAVINE: {
+    LINE_SCALE: 1 / 150,
+    MASK_SCALE: 1 / 420,
+    MASK_START: 0.50,        // mask noise where ravines begin (depth 0)
+    MASK_FULL: 0.62,         // mask noise where ravines reach full depth
+    WIDTH: 0.04,             // line-noise threshold — half-width in noise units
+    MAX_DEPTH: 48,           // depth of the ravine centre at full mask
+    NARROW: 0.65,            // fraction of the width band that shallows the V
+    EDGE_JITTER: 0.12,       // per-column jitter on the width test (rough walls)
+  },
+};
+
+// Stone variants and non-ore pockets underground (world/caves.js).
+export const UNDERGROUND = {
+  // Granite / diorite / andesite blobs: two low-frequency 3D fields — the
+  // primary picks granite (above threshold) or diorite (below negative
+  // threshold); the secondary picks andesite where the primary is quiet.
+  VARIANTS: {
+    SCALE_XZ: 1 / 26,
+    SCALE_Y: 1 / 26,
+    OCTAVES: 2,
+    PRIMARY_THRESHOLD: 0.52,
+    ANDESITE_THRESHOLD: 0.55,
+  },
+  // Gravel pockets in stone — the renewable flint source underground.
+  GRAVEL_POCKETS: { MIN_Y: -56, MAX_Y: 56, ATTEMPTS_PER_CHUNK: 2, SIZE_MIN: 8, SIZE_MAX: 16 },
 };
 
 // Overworld heightmap, biomes and decoration (world/terrain.js).
@@ -154,13 +236,18 @@ export const TERRAIN = {
   },
 };
 
-// Ore distribution from SPEC.md. rarity = attempts per chunk (tuning knob).
+// Ore distribution from SPEC.md (Y ranges and relative rarity). Each chunk
+// makes ATTEMPTS vein attempts per ore at a seeded random position in the
+// Y range; a vein is a compact random walk of VEIN_MIN..VEIN_MAX blocks
+// replacing stone. BIAS_BOTTOM concentrates an ore toward the bottom of its
+// range (diamond — "the right depth" is deep). Tool gating lives in the
+// block registry (world/blocks.js), not here.
 export const ORES = {
-  coal:     { minY: 0,   maxY: 120, attemptsPerChunk: 16, veinSize: 8, tool: 'wood' },
-  iron:     { minY: -32, maxY: 64,  attemptsPerChunk: 12, veinSize: 6, tool: 'stone' },
-  gold:     { minY: -48, maxY: 32,  attemptsPerChunk: 4,  veinSize: 5, tool: 'iron' },
-  redstone: { minY: -60, maxY: 16,  attemptsPerChunk: 4,  veinSize: 6, tool: 'iron' },
-  diamond:  { minY: -60, maxY: 12,  attemptsPerChunk: 2,  veinSize: 4, tool: 'iron' },
+  coal:     { MIN_Y: 0,   MAX_Y: 120, ATTEMPTS_PER_CHUNK: 14, VEIN_MIN: 4, VEIN_MAX: 12 },
+  iron:     { MIN_Y: -32, MAX_Y: 64,  ATTEMPTS_PER_CHUNK: 10, VEIN_MIN: 4, VEIN_MAX: 12 },
+  gold:     { MIN_Y: -48, MAX_Y: 32,  ATTEMPTS_PER_CHUNK: 4,  VEIN_MIN: 4, VEIN_MAX: 8 },
+  redstone: { MIN_Y: -60, MAX_Y: 16,  ATTEMPTS_PER_CHUNK: 6,  VEIN_MIN: 4, VEIN_MAX: 8 },
+  diamond:  { MIN_Y: -60, MAX_Y: 12,  ATTEMPTS_PER_CHUNK: 5,  VEIN_MIN: 1, VEIN_MAX: 4, BIAS_BOTTOM: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -247,6 +334,32 @@ export const PLAYER = {
 
   // Safe spawn: nearest dry, clear surface column to this point
   SPAWN: { X: 8, Z: 8, SEARCH_RADIUS: 48 },
+};
+
+// ---------------------------------------------------------------------------
+// Stats (player/stats.js) — Phase 9 slice: health and lava contact damage.
+// Hunger, fall damage, drowning and the rest arrive with the full stats phase.
+// ---------------------------------------------------------------------------
+
+export const STATS = {
+  LAVA_DAMAGE: 4,               // per contact tick while touching lava (2 hearts)
+  DAMAGE_TICK_SECONDS: 0.5,     // minimum time between contact damage ticks
+  CONTACT_INSET: 0.05,          // body AABB shrink for contact sampling
+  DAMAGE_FLASH_SECONDS: 0.35,   // red screen flash on damage
+  DEATH_DROP_SCATTER: 2.0,      // horizontal scatter speed of dropped inventory
+  DEATH_DROP_POP: 2.5,          // upward pop speed of dropped inventory
+  DEATH_DROP_Y_OFFSET: 1,       // drops spawn this far above the feet
+  HEART_PX: 18,                 // HUD heart icon size
+};
+
+// ---------------------------------------------------------------------------
+// Falling blocks (entities/falling.js) — sand and gravel fall when the block
+// under them is removed (registry `falls` flag).
+// ---------------------------------------------------------------------------
+
+export const FALLING = {
+  GRAVITY: 24,                  // blocks/s² on a detached falling block
+  MAX_FALL_SPEED: 40,
 };
 
 // ---------------------------------------------------------------------------
@@ -397,17 +510,19 @@ export const INTERACTION = {
                                      // end reaches up toward screen centre and
                                      // the roll shows two faces (reads 3D)
     ARM_FORWARD: 0.12,               // arm reach forward, fraction of its length
-    BLOCK_SCALE: 0.17,               // held mini-block edge length — small, sits
-                                     // in the lower-right corner like vanilla
+    BLOCK_SCALE: 0.19,               // held mini-block edge length — sits in
+                                     // the lower-right corner like vanilla
     BLOCK_TILT: [0.22, 0.785, 0],    // held block yawed ~45°, tipped a touch so
                                      // the top and two side faces read (vanilla)
     BLOCK_OFFSET: [0.05, -0.02, -0.1], // held block offset from POSITION
-    SPRITE_SCALE: 0.34,              // held flat-item sprite edge length (tools)
-    SPRITE_TILT: [-0.2, 3.04, 0.1], // sprite angled like a vanilla held tool —
-                                     // the ~180° yaw shows the mirrored back
-                                     // face so the handle points at the hand
-                                     // corner (vanilla orientation)
-    SPRITE_OFFSET: [0.02, 0.05, -0.1],  // held sprite offset from POSITION
+    SPRITE_SCALE: 0.38,              // held tool/item slab edge length
+    SPRITE_TILT: [-0.6, 2.9, 0.67], // held tool orientation (screenshot-tuned
+                                     // against vanilla): the ~180° yaw shows
+                                     // the mirrored back face, pitch + roll
+                                     // put the handle toward the bottom-right
+                                     // corner with the head raised up and
+                                     // forward on a ~45° diagonal
+    SPRITE_OFFSET: [0.05, -0.03, -0.1], // held sprite offset from POSITION
     SWING_SECONDS: 0.28,             // one swing animation
     SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
     SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)

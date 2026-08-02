@@ -27,7 +27,7 @@ import {
   OVERWORLD, CHUNK, LIGHTING,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
-import { createBlockMesh, createSpriteMesh, itemVisualInfo } from '../entities/items.js';
+import { createBlockMesh, createExtrudedItemMesh, itemVisualInfo } from '../entities/items.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 
@@ -357,14 +357,25 @@ export function createInteraction({
         heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
         heldMesh.position.set(...H.BLOCK_OFFSET);
         heldMesh.rotation.set(...H.BLOCK_TILT);
+        arm.visible = false;
       } else {
-        heldMesh = createSpriteMesh(info.sprite, H.SPRITE_SCALE);
-        heldMesh.position.set(...H.SPRITE_OFFSET);
-        heldMesh.rotation.set(...H.SPRITE_TILT);
+        // Tools and materials: the extruded slab model (flat sprite with
+        // one-pixel depth), angled diagonally across the lower-right like a
+        // vanilla held tool — never a cube. The slab may arrive async (the
+        // first selection of each item builds it from its texture) — keep
+        // the arm until it does, so the hand is never empty.
+        const mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
+          if (heldMesh === mesh) arm.visible = false;
+        });
+        mesh.position.set(...H.SPRITE_OFFSET);
+        mesh.rotation.set(...H.SPRITE_TILT);
+        heldMesh = mesh;
+        arm.visible = mesh.children.length === 0;
       }
       hand.add(heldMesh);
+    } else {
+      arm.visible = true;
     }
-    arm.visible = !heldMesh;
   }
   inventory.subscribe(refreshHeldMesh);
   refreshHeldMesh();

@@ -134,12 +134,147 @@ export function itemVisualInfo(name) {
 }
 
 // Flat sprite quad for a non-block item (shared geometry, cached material).
-// Also used by player/interaction.js for the held tool in the hand.
 export function createSpriteMesh(name, size) {
   if (!spriteGeometry) spriteGeometry = new THREE.PlaneGeometry(1, 1);
   const mesh = new THREE.Mesh(spriteGeometry, getSpriteMaterial(name));
   mesh.scale.setScalar(size);
   return mesh;
+}
+
+// ---------------------------------------------------------------------------
+// Extruded item model (the vanilla held-item look): the sprite as a thin
+// slab — full front and back quads plus one edge quad per opaque/transparent
+// pixel boundary, each edge sampling its pixel's centre so the rim takes the
+// art's colours. Used by the first-person hand for tools (interaction.js);
+// dropped items stay flat sprites.
+// ---------------------------------------------------------------------------
+
+const extrudedCache = new Map(); // name -> { geometry, material } once built
+
+// Depth of the slab as a fraction of the sprite's width (vanilla items are
+// one pixel thick: 1/16 of their 16px span).
+const EXTRUDE_DEPTH = 1 / 16;
+
+function buildExtrudedGeometry(img) {
+  const w = img.width;
+  const h = img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  // Same cutoff as the slab material's alphaTest, so edge quads are built
+  // for exactly the pixels the shader keeps.
+  const alphaCut = RENDER.CUTOUT_ALPHA_TEST * 255;
+  const opaque = (px, py) =>
+    px >= 0 && px < w && py >= 0 && py < h && data[(py * w + px) * 4 + 3] >= alphaCut;
+
+  const t2 = EXTRUDE_DEPTH / 2;
+  const pos = [];
+  const uv = [];
+  const col = [];
+  const idx = [];
+  const FB = LIGHTING.FACE_BRIGHTNESS;
+  // corners: [x, y, z, u, v] (geometry y up; image rows count down)
+  const quad = (corners, brightness) => {
+    const base = pos.length / 3;
+    for (const [x, y, z, u, v] of corners) {
+      pos.push(x, y, z);
+      uv.push(u, v);
+      col.push(brightness, brightness, brightness);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+
+  // Front (+z) and back (-z) full quads with the plain sprite mapping.
+  quad([
+    [-0.5, -0.5, t2, 0, 0], [0.5, -0.5, t2, 1, 0],
+    [0.5, 0.5, t2, 1, 1], [-0.5, 0.5, t2, 0, 1],
+  ], 1.0);
+  quad([
+    [0.5, -0.5, -t2, 1, 0], [-0.5, -0.5, -t2, 0, 0],
+    [-0.5, 0.5, -t2, 0, 1], [0.5, 0.5, -t2, 1, 1],
+  ], 1.0);
+
+  // Edge quads at every opaque/transparent pixel boundary.
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      if (!opaque(px, py)) continue;
+      const u = (px + 0.5) / w;
+      const v = 1 - (py + 0.5) / h;
+      const xl = px / w - 0.5;
+      const xr = (px + 1) / w - 0.5;
+      const yt = 0.5 - py / h;
+      const yb = 0.5 - (py + 1) / h;
+      if (!opaque(px - 1, py)) {
+        quad([[xl, yb, -t2, u, v], [xl, yb, t2, u, v], [xl, yt, t2, u, v], [xl, yt, -t2, u, v]], FB.side);
+      }
+      if (!opaque(px + 1, py)) {
+        quad([[xr, yb, t2, u, v], [xr, yb, -t2, u, v], [xr, yt, -t2, u, v], [xr, yt, t2, u, v]], FB.side);
+      }
+      if (!opaque(px, py - 1)) {
+        quad([[xl, yt, t2, u, v], [xr, yt, t2, u, v], [xr, yt, -t2, u, v], [xl, yt, -t2, u, v]], FB.top);
+      }
+      if (!opaque(px, py + 1)) {
+        quad([[xl, yb, -t2, u, v], [xr, yb, -t2, u, v], [xr, yb, t2, u, v], [xl, yb, t2, u, v]], FB.bottom);
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geometry.setIndex(idx);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    alphaTest: RENDER.CUTOUT_ALPHA_TEST,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  return { geometry, material };
+}
+
+// Extruded mesh for an item sprite. Returns a group immediately; the slab
+// mesh appears once the texture image is loaded (cached after the first
+// build). Falls back to the flat sprite if the image can't load. `onReady`
+// (optional) fires when the group actually has content — synchronously on
+// a cache hit, after the image load otherwise (the hand keeps the arm
+// visible until then, so it is never empty).
+export function createExtrudedItemMesh(name, size, onReady) {
+  const group = new THREE.Group();
+  group.scale.setScalar(size);
+  const cached = extrudedCache.get(name);
+  if (cached) {
+    group.add(new THREE.Mesh(cached.geometry, cached.material));
+    onReady?.();
+    return group;
+  }
+  const img = new Image();
+  img.onload = () => {
+    let built = extrudedCache.get(name);
+    if (!built) {
+      built = buildExtrudedGeometry(img);
+      extrudedCache.set(name, built);
+    }
+    group.add(new THREE.Mesh(built.geometry, built.material));
+    onReady?.();
+  };
+  img.onerror = () => {
+    console.warn(`[items] missing texture assets/items/${name}.png`);
+    group.add(createSpriteMesh(name, 1));
+    onReady?.();
+  };
+  img.src = `assets/items/${name}.png`;
+  return group;
 }
 
 // Visual for an item name. Returns { mesh, halfHeight }.
@@ -329,6 +464,15 @@ export function createItemManager({ world, scene }) {
         e.age >= ITEMS.DESPAWN_SECONDS ||
         e.pos.y < OVERWORLD.MIN_Y - ITEMS.VOID_DESPAWN_DEPTH
       ) {
+        remove(i);
+        continue;
+      }
+      // Lava burns dropped items (vanilla), checked at the item's midpoint.
+      if (world.getBlock(
+        Math.floor(e.pos.x),
+        Math.floor(e.pos.y + e.halfHeight),
+        Math.floor(e.pos.z),
+      ) === BLOCK.LAVA) {
         remove(i);
         continue;
       }
