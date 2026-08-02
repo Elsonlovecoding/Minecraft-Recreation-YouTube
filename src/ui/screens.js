@@ -1,23 +1,37 @@
-// ui/screens.js — Screens over the running game. Phase 7 ships the inventory
-// screen: E opens it (releasing pointer lock), showing the 27 main slots and
-// the 9 hotbar slots. Interactions are the vanilla ones, all implemented by
-// player/inventory.js:
+// ui/screens.js — Screens over the running game. Phase 7 shipped the
+// inventory screen; Phase 8 adds crafting to it and the crafting-table
+// screen:
+//   - the inventory screen (E) carries a 2x2 craft grid with a result slot
+//   - right-clicking a crafting table opens the same panel with a 3x3 grid
+//   - the result slot previews the recipe match live; clicking it crafts
+//     once onto the cursor, shift-clicking crafts as many as possible
+//     straight into the inventory
+//   - closing a screen returns craft-grid contents to the inventory (drops
+//     what doesn't fit), then the cursor stack the same way
+// Slot interactions are the vanilla ones from player/inventory.js and
+// systems/crafting.js:
 //   - left click: pick up / put down / swap / merge (and press-drag-release
 //     moves a stack in one gesture)
 //   - right click: pick up half / place one
-//   - shift click: move the stack between hotbar and main
-// E or Esc closes it; whatever is still on the cursor goes back into the
-// inventory (or drops at the player's feet if nothing fits).
-// Crafting, furnace, death and victory screens arrive with later phases.
+//   - shift click: move between hotbar and main, or out of the craft grid
+// E or Esc closes. Furnace, death and victory screens arrive later.
 
-import { INVENTORY, UI } from '../config.js';
+import { INVENTORY, UI, CRAFTING } from '../config.js';
 import { renderSlotContent } from './icons.js';
+import { CraftingGrid } from '../systems/crafting.js';
 
 export function createScreens({ inventory, canvas, items, player }) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
-  let cursor = null;    // stack picked up onto the mouse cursor
-  let downSlot = null;  // slot index the current left press started on
+  let mode = 'inventory'; // 'inventory' (2x2 grid) | 'table' (3x3 grid)
+  let cursor = null;      // stack picked up onto the mouse cursor
+  let downRef = null;     // { container, index } the current left press started on
+
+  // The craft grids persist across opens (they are drained on every close,
+  // so nothing can hide in a closed screen's grid).
+  const invGrid = new CraftingGrid(CRAFTING.INVENTORY_GRID);
+  const tableGrid = new CraftingGrid(CRAFTING.TABLE_GRID);
+  const activeGrid = () => (mode === 'table' ? tableGrid : invGrid);
 
   // --- DOM
   const style = document.createElement('style');
@@ -49,6 +63,15 @@ export function createScreens({ inventory, canvas, items, player }) {
       border: 2px solid; border-color: #373737 #ffffff #ffffff #373737;
     }
     .screen-slot:hover { background: #a0a0a0; }
+    .screen-craft {
+      display: flex; align-items: center; justify-content: center;
+      gap: 12px; margin-bottom: 14px;
+    }
+    .screen-craft-cells { display: grid; }
+    .screen-craft-arrow {
+      color: #6f6f6f; font: bold 30px/1 monospace;
+      text-shadow: 1px 1px 0 #ffffff;
+    }
     #screen-cursor {
       position: fixed; z-index: 11; pointer-events: none; display: none;
       width: ${UI.SCREEN_SLOT_PX}px; height: ${UI.SCREEN_SLOT_PX}px;
@@ -63,8 +86,96 @@ export function createScreens({ inventory, canvas, items, player }) {
   const panel = document.createElement('div');
   panel.id = 'screen-panel';
   const title = document.createElement('h2');
-  title.textContent = 'Inventory';
   panel.appendChild(title);
+
+  // Craft area: one section per grid, the active mode's shown. Grid cells,
+  // an arrow, then the result slot.
+  function makeCraftSection(grid) {
+    const section = document.createElement('div');
+    section.className = 'screen-craft';
+    const cells = document.createElement('div');
+    cells.className = 'screen-craft-cells';
+    cells.style.gridTemplateColumns = `repeat(${grid.width}, ${UI.SCREEN_SLOT_PX}px)`;
+    const cellEls = [];
+    for (let i = 0; i < grid.width * grid.width; i++) {
+      const el = document.createElement('div');
+      el.className = 'screen-slot';
+      attachSlotEvents(el, grid, i);
+      cells.appendChild(el);
+      cellEls.push(el);
+    }
+    const arrow = document.createElement('div');
+    arrow.className = 'screen-craft-arrow';
+    arrow.textContent = '→';
+    const resultEl = document.createElement('div');
+    resultEl.className = 'screen-slot';
+    attachResultEvents(resultEl, grid);
+    section.appendChild(cells);
+    section.appendChild(arrow);
+    section.appendChild(resultEl);
+    panel.appendChild(section);
+    return { grid, section, cellEls, resultEl };
+  }
+
+  // --- slot interactions
+
+  // A container is the inventory or a CraftingGrid — both share the same
+  // click/right-click semantics. Shift-click routes per container: between
+  // hotbar and main inside the inventory, out of the grid otherwise.
+  function attachSlotEvents(el, container, i) {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (e.button === 0) {
+        if (e.shiftKey) {
+          if (container === inventory) inventory.shiftClick(i);
+          else container.shiftOut(i, inventory);
+          downRef = null;
+        } else {
+          cursor = container.clickSlot(i, cursor);
+          downRef = { container, index: i };
+        }
+      } else if (e.button === 2) {
+        cursor = container.rightClickSlot(i, cursor);
+        downRef = null;
+      }
+      refresh();
+      moveCursorEl(e);
+    });
+    el.addEventListener('mouseup', (e) => {
+      // Press-drag-release: releasing over a different slot drops the stack
+      // there, so both click-click and drag-drop gestures work.
+      if (
+        e.button === 0 && cursor && downRef &&
+        (downRef.container !== container || downRef.index !== i)
+      ) {
+        cursor = container.clickSlot(i, cursor);
+        refresh();
+      }
+      downRef = null;
+    });
+  }
+
+  // The result slot: click (either button) crafts once onto the cursor;
+  // shift-click crafts the maximum into the inventory. Never a drop target.
+  function attachResultEvents(el, grid) {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (e.button !== 0 && e.button !== 2) return;
+      if (e.shiftKey) grid.craftMaxInto(inventory);
+      else cursor = grid.takeResult(cursor);
+      downRef = null;
+      refresh();
+      moveCursorEl(e);
+    });
+    el.addEventListener('mouseup', () => {
+      downRef = null;
+    });
+  }
+
+  const craftSections = [
+    makeCraftSection(invGrid),
+    makeCraftSection(tableGrid),
+  ];
 
   // Main slots (9..35) above, hotbar slots (0..8) below, like vanilla.
   const slotEls = new Array(INVENTORY.SIZE).fill(null);
@@ -75,7 +186,7 @@ export function createScreens({ inventory, canvas, items, player }) {
       const el = document.createElement('div');
       el.className = 'screen-slot';
       el.dataset.slot = String(i);
-      attachSlotEvents(el, i);
+      attachSlotEvents(el, inventory, i);
       grid.appendChild(el);
       slotEls[i] = el;
     }
@@ -100,10 +211,28 @@ export function createScreens({ inventory, canvas, items, player }) {
     for (let i = 0; i < INVENTORY.SIZE; i++) {
       renderSlotContent(slotEls[i], inventory.get(i), iconPx);
     }
+    for (const s of craftSections) {
+      const active = s.grid === activeGrid();
+      s.section.style.display = active ? 'flex' : 'none';
+      if (!active) continue;
+      for (let i = 0; i < s.cellEls.length; i++) {
+        renderSlotContent(s.cellEls[i], s.grid.get(i), iconPx);
+      }
+      // Live recipe preview — a result stack that isn't in any container
+      // until it's actually taken.
+      const result = s.grid.result;
+      renderSlotContent(s.resultEl, result, iconPx);
+    }
     renderSlotContent(cursorEl, cursor, iconPx);
     cursorEl.style.display = cursor ? 'flex' : 'none';
   }
   inventory.subscribe(() => {
+    if (open) refresh();
+  });
+  invGrid.subscribe(() => {
+    if (open) refresh();
+  });
+  tableGrid.subscribe(() => {
     if (open) refresh();
   });
 
@@ -112,71 +241,54 @@ export function createScreens({ inventory, canvas, items, player }) {
     cursorEl.style.top = `${e.clientY}px`;
   }
 
-  // --- slot interactions
-
-  function attachSlotEvents(el, i) {
-    el.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      if (e.button === 0) {
-        if (e.shiftKey) {
-          inventory.shiftClick(i);
-          downSlot = null;
-        } else {
-          cursor = inventory.clickSlot(i, cursor);
-          downSlot = i;
-        }
-      } else if (e.button === 2) {
-        cursor = inventory.rightClickSlot(i, cursor);
-        downSlot = null;
-      }
-      refresh();
-      moveCursorEl(e);
-    });
-    el.addEventListener('mouseup', (e) => {
-      // Press-drag-release: releasing over a different slot drops the stack
-      // there, so both click-click and drag-drop gestures work.
-      if (e.button === 0 && cursor && downSlot !== null && downSlot !== i) {
-        cursor = inventory.clickSlot(i, cursor);
-        refresh();
-      }
-      downSlot = null;
-    });
-  }
   root.addEventListener('contextmenu', (e) => e.preventDefault());
   root.addEventListener('mousemove', moveCursorEl);
   root.addEventListener('mouseup', () => {
     // A release outside any slot just ends the gesture; the stack stays on
     // the cursor for the next click.
-    downSlot = null;
+    downRef = null;
   });
 
   // --- open / close
 
-  function openScreen() {
+  function openScreen(newMode = 'inventory') {
     if (open) return;
     open = true;
+    mode = newMode;
+    title.textContent = mode === 'table' ? 'Crafting' : 'Inventory';
     document.body.classList.add('mc-screen-open');
     root.style.display = 'flex';
     document.exitPointerLock();
     refresh();
   }
 
+  // Right-clicking a crafting table (wired through main.js) lands here.
+  function openCrafting() {
+    openScreen('table');
+  }
+
+  function dropAtFeet(name, count, durability) {
+    if (!items) return;
+    const p = player.position;
+    items.spawn(name, count, { x: p.x, y: p.y + 1, z: p.z }, undefined, durability);
+  }
+
   function closeScreen() {
     if (!open) return;
     open = false;
-    downSlot = null;
-    // Return the cursor stack; anything that truly doesn't fit drops at the
-    // player's feet instead of vanishing — a worn tool keeps its durability
-    // through the drop and back.
+    downRef = null;
+    // Craft-grid contents go back into the inventory (vanilla), then the
+    // cursor stack; anything that truly doesn't fit drops at the player's
+    // feet instead of vanishing — worn tools keep their durability through
+    // the drop and back.
+    for (const grid of [invGrid, tableGrid]) {
+      for (const o of grid.drainInto(inventory)) {
+        dropAtFeet(o.name, o.count, o.durability ?? undefined);
+      }
+    }
     if (cursor) {
       const leftover = inventory.addStack(cursor);
-      if (leftover > 0 && items) {
-        const p = player.position;
-        items.spawn(
-          cursor.name, leftover, { x: p.x, y: p.y + 1, z: p.z },
-          undefined, cursor.durability,
-        );
-      }
+      if (leftover > 0) dropAtFeet(cursor.name, leftover, cursor.durability);
       cursor = null;
     }
     document.body.classList.remove('mc-screen-open');
@@ -195,7 +307,7 @@ export function createScreens({ inventory, canvas, items, player }) {
         closeScreen();
       } else if (document.pointerLockElement === canvas) {
         e.preventDefault();
-        openScreen();
+        openScreen('inventory');
       }
     } else if (e.code === 'Escape' && open) {
       // Esc closes like vanilla (the pointer is already unlocked here)
@@ -205,10 +317,16 @@ export function createScreens({ inventory, canvas, items, player }) {
 
   return {
     openScreen,
+    openCrafting,
     closeScreen,
     refresh,
+    invGrid,   // exposed for tests/debugging
+    tableGrid,
     get isOpen() {
       return open;
+    },
+    get mode() {
+      return mode;
     },
     get cursor() {
       return cursor;
