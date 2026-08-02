@@ -274,11 +274,16 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
               // so canopies read dense with no coplanar z-fight pairs.
               if (SELF_CULL[id]) continue;
               if (d[0] + d[1] + d[2] < 0) continue;
-            } else if (nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid) {
+            } else if (
+              nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid &&
+              PASS[nid] !== PASS_NONE
+            ) {
               // Where two DIFFERENT transparent blocks touch (leaves|cactus,
               // water|glass) only the lower id emits the shared plane — the
               // cutout/water materials are DoubleSide, so one quad reads from
-              // both sides while a coplanar pair would z-fight.
+              // both sides while a coplanar pair would z-fight. A PASS_NONE
+              // neighbour (chest, portal interiors) renders no cube faces at
+              // all, so this block must emit regardless of id order.
               continue;
             }
           }

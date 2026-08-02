@@ -95,6 +95,16 @@ export const BLOCK = {
   GRANITE: 47,
   DIORITE: 48,
   ANDESITE: 49,
+  // Phase 10: furnace facing/lit variants (the base FURNACE id stays 20 and
+  // faces south/+z; placement picks the variant facing the player, smelting
+  // swaps lit <-> unlit in place). All variants drop 'furnace'.
+  FURNACE_N: 50,
+  FURNACE_E: 51,
+  FURNACE_W: 52,
+  FURNACE_LIT_S: 53,
+  FURNACE_LIT_N: 54,
+  FURNACE_LIT_E: 55,
+  FURNACE_LIT_W: 56,
 };
 
 export const BLOCKS = [];
@@ -247,18 +257,40 @@ register(BLOCK.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', {
   },
   hardness: 2.5, tool: 'axe',
 });
-register(BLOCK.FURNACE, 'furnace', 'Furnace', {
-  faces: {
+// Furnace family (Phase 10): one block per facing, unlit and lit. The base
+// 'furnace' id is what crafting yields and every variant drops; placement
+// (player/interaction.js via placementVariant) picks the facing toward the
+// player, and systems/smelting.js swaps lit <-> unlit in place while
+// burning. The lit front tile glows and the block emits light 13 (vanilla).
+function registerFurnace(id, name, facingFace, lit) {
+  const faces = {
     top: TILE.FURNACE_TOP, bottom: TILE.FURNACE_TOP,
-    pz: TILE.FURNACE_FRONT, nz: TILE.FURNACE_SIDE,
     px: TILE.FURNACE_SIDE, nx: TILE.FURNACE_SIDE,
-  },
-  hardness: 3.5, tool: 'pickaxe', minTier: 'wood',
-});
-// The atlas has no chest tile (chests use assets/entity/chest_normal.png);
-// planks faces are a safe cube fallback until the entity-style renderer.
+    pz: TILE.FURNACE_SIDE, nz: TILE.FURNACE_SIDE,
+  };
+  faces[facingFace] = lit ? TILE.FURNACE_FRONT_ON : TILE.FURNACE_FRONT;
+  register(id, name, 'Furnace', {
+    faces, hardness: 3.5, tool: 'pickaxe', minTier: 'wood',
+    drops: [{ item: 'furnace', count: 1 }],
+    light: lit ? 13 : 0,
+  });
+}
+registerFurnace(BLOCK.FURNACE, 'furnace', 'pz', false);
+registerFurnace(BLOCK.FURNACE_N, 'furnace_n', 'nz', false);
+registerFurnace(BLOCK.FURNACE_E, 'furnace_e', 'px', false);
+registerFurnace(BLOCK.FURNACE_W, 'furnace_w', 'nx', false);
+registerFurnace(BLOCK.FURNACE_LIT_S, 'furnace_lit_s', 'pz', true);
+registerFurnace(BLOCK.FURNACE_LIT_N, 'furnace_lit_n', 'nz', true);
+registerFurnace(BLOCK.FURNACE_LIT_E, 'furnace_lit_e', 'px', true);
+registerFurnace(BLOCK.FURNACE_LIT_W, 'furnace_lit_w', 'nx', true);
+// The chest renders as a 14/16 box model from assets/entity/chest_normal.png
+// (world/chests.js), not as atlas cube faces: tiles stay null so the chunk
+// mesher emits nothing, `transparent` so neighbouring blocks still draw
+// their faces against the gap around the box, `solid` for a full collision
+// cell, opacity 0 so light passes (vanilla — chests don't block light).
 register(BLOCK.CHEST, 'chest', 'Chest', {
-  faces: { all: TILE.OAK_PLANKS }, hardness: 2.5, tool: 'axe', special: 'chest',
+  faces: null, hardness: 2.5, tool: 'axe', special: 'chest',
+  transparent: true, opacity: 0,
 });
 register(BLOCK.TORCH, 'torch', 'Torch', {
   faces: { all: TILE.TORCH }, hardness: 0, solid: false, transparent: true,
@@ -418,4 +450,58 @@ export function lightOpacity(id) {
 // blocks without a cube texture.
 export function faceTiles(id) {
   return blockDef(id).tiles;
+}
+
+// ---------------------------------------------------------------------------
+// Furnace family + oriented placement (Phase 10)
+// ---------------------------------------------------------------------------
+
+// facing -> { unlit, lit } block ids. 'S' fronts +z, 'N' -z, 'E' +x, 'W' -x.
+const FURNACE_BY_FACING = {
+  S: { unlit: BLOCK.FURNACE, lit: BLOCK.FURNACE_LIT_S },
+  N: { unlit: BLOCK.FURNACE_N, lit: BLOCK.FURNACE_LIT_N },
+  E: { unlit: BLOCK.FURNACE_E, lit: BLOCK.FURNACE_LIT_E },
+  W: { unlit: BLOCK.FURNACE_W, lit: BLOCK.FURNACE_LIT_W },
+};
+const FURNACE_LIT_OF = new Map();
+const FURNACE_UNLIT_OF = new Map();
+const FURNACE_IDS = new Set();
+for (const { unlit, lit } of Object.values(FURNACE_BY_FACING)) {
+  FURNACE_LIT_OF.set(unlit, lit);
+  FURNACE_LIT_OF.set(lit, lit);
+  FURNACE_UNLIT_OF.set(lit, unlit);
+  FURNACE_UNLIT_OF.set(unlit, unlit);
+  FURNACE_IDS.add(unlit);
+  FURNACE_IDS.add(lit);
+}
+
+export function isFurnace(id) {
+  return FURNACE_IDS.has(id);
+}
+
+export function furnaceLitVariant(id) {
+  return FURNACE_LIT_OF.get(id) ?? id;
+}
+
+export function furnaceUnlitVariant(id) {
+  return FURNACE_UNLIT_OF.get(id) ?? id;
+}
+
+// Cardinal facing from a block cell toward a viewer position ('S' = the
+// front should face +z). Used for furnace placement and the chest model.
+export function facingToward(cell, pos) {
+  const dx = pos.x - (cell.x + 0.5);
+  const dz = pos.z - (cell.z + 0.5);
+  if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? 'E' : 'W';
+  return dz > 0 ? 'S' : 'N';
+}
+
+// The id actually placed for a selected block item: oriented blocks
+// (furnace) turn their front toward the player; everything else places
+// as-is. `cell` is the target cell, `pos` the player's feet position.
+export function placementVariant(id, cell, pos) {
+  if (id === BLOCK.FURNACE) {
+    return FURNACE_BY_FACING[facingToward(cell, pos)].unlit;
+  }
+  return id;
 }

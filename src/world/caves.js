@@ -249,6 +249,7 @@ class Field3D {
 
 const SALT_RAVINE_JITTER = 0x8a71;
 const SALT_GRAVEL = 0x67a1;
+const SALT_LAVA_LEAK = 0x1afa;
 // Per-ore PRNG stream salts (stable — never reorder).
 const ORE_SALTS = { coal: 0xc0a1, iron: 0x1207, gold: 0x601d, redstone: 0x8ed5, diamond: 0xd1a3 };
 const ORE_BLOCKS = {
@@ -290,6 +291,20 @@ export class CaveCarver {
     this.ravineLine = new SimplexNoise(rand(0x4a710006));
     this.ravineMask = new SimplexNoise(rand(0x4a710007));
     this.entranceMask = new SimplexNoise(rand(0xe4a70008));
+    // Phase 10: tunnel girth variation and the lava pool-region mask.
+    const G = T.GIRTH;
+    this.girth = new Field3D(rand(0x617a0009), G.SCALE_XZ, G.SCALE_Y, G.OCTAVES);
+    this.lavaMask = new SimplexNoise(rand(0x1a7a000a));
+  }
+
+  // Tunnel radius multiplier from a raw girth-field value: MIN..MAX across
+  // the noise range, clamped to at least 1 above the cave band so surface
+  // mouths never shrink below walkable.
+  _girthFactor(gv, y) {
+    const G = CAVES.TUNNEL.GIRTH;
+    let g = G.MIN + (G.MAX - G.MIN) * (gv * 0.5 + 0.5);
+    if (y > CAVES.MAX_Y && g < 1) g = 1;
+    return g;
   }
 
   // --- ravines (pure per-column 2D) ----------------------------------------
@@ -379,10 +394,13 @@ export class CaveCarver {
     return lerp(v0, v1, ty);
   }
 
-  // Would the tunnel layer carve this cell? (pure; used by surfaceOpenAt)
+  // Would the tunnel layer carve this cell? (pure; used by surfaceOpenAt —
+  // the girth lookup interpolates the same lattice arithmetic the chunk
+  // carve uses, so the two can never disagree)
   _tunnelCarvesAt(x, y, z, gate) {
-    const r = CAVES.TUNNEL.RADIUS * this._radiusFactor(y, gate);
-    if (r <= 0) return false;
+    const base = CAVES.TUNNEL.RADIUS * this._radiusFactor(y, gate);
+    if (base <= 0) return false;
+    const r = base * this._girthFactor(this._fieldAt(this.girth, x, y, z), y);
     const a = this._fieldAt(this.tunnelA, x, y, z);
     const b = this._fieldAt(this.tunnelB, x, y, z);
     return a * a + b * b < r * r;
@@ -482,13 +500,14 @@ export class CaveCarver {
     const latA = this._buildLattice(this.tunnelA, x0, z0, yLo, yHi);
     const latB = this._buildLattice(this.tunnelB, x0, z0, yLo, yHi);
     const latC = this._buildLattice(this.cavern, x0, z0, yLo, yHi);
+    const latG = this._buildLattice(this.girth, x0, z0, yLo, yHi);
     const ny = latA.ny;
     const colValA = new Float64Array(ny);
     const colValB = new Float64Array(ny);
     const colValC = new Float64Array(ny);
+    const colValG = new Float64Array(ny);
 
     const rTun = CAVES.TUNNEL.RADIUS;
-    const lavaY = OVERWORLD.LAVA_POOL_MAX_Y;
     for (let lz = 0; lz < size; lz++) {
       for (let lx = 0; lx < size; lx++) {
         const i = lz * size + lx;
@@ -500,6 +519,7 @@ export class CaveCarver {
           this._blendColumn(latA, lx, lz, colValA);
           this._blendColumn(latB, lx, lz, colValB);
           this._blendColumn(latC, lx, lz, colValC);
+          this._blendColumn(latG, lx, lz, colValG);
           for (let y = top; y >= CAVES.MIN_Y; y--) {
             const id = chunk.get(lx, y, lz);
             if (!CARVABLE[id]) continue;
@@ -510,7 +530,8 @@ export class CaveCarver {
             const ty = j - j0;
             const a = lerp(colValA[j0], colValA[j0 + 1], ty);
             const b = lerp(colValB[j0], colValB[j0 + 1], ty);
-            const r = rTun * this._radiusFactor(y, gate);
+            const g = this._girthFactor(lerp(colValG[j0], colValG[j0 + 1], ty), y);
+            const r = rTun * g * this._radiusFactor(y, gate);
             let carve = a * a + b * b < r * r;
             if (!carve) {
               const tc = this._cavernThreshold(y);
@@ -518,9 +539,7 @@ export class CaveCarver {
                 carve = lerp(colValC[j0], colValC[j0 + 1], ty) > tc;
               }
             }
-            if (carve) {
-              chunk.set(lx, y, lz, y < lavaY ? BLOCK.LAVA : BLOCK.AIR);
-            }
+            if (carve) chunk.set(lx, y, lz, BLOCK.AIR);
           }
         }
         if (rav > 0) {
@@ -528,12 +547,13 @@ export class CaveCarver {
           for (let y = h; y >= floor; y--) {
             const id = chunk.get(lx, y, lz);
             if (!CARVABLE[id]) continue;
-            chunk.set(lx, y, lz, y < lavaY ? BLOCK.LAVA : BLOCK.AIR);
+            chunk.set(lx, y, lz, BLOCK.AIR);
           }
         }
       }
     }
 
+    this._placeLava(chunk, colH);
     this._placeVariants(chunk, maxH);
     const G = UNDERGROUND.GRAVEL_POCKETS;
     this._placeVeins(chunk, BLOCK.GRAVEL, SALT_GRAVEL, {
@@ -579,6 +599,69 @@ export class CaveCarver {
     const c11 = ((ix + 1) * n + iz + 1) * ny;
     for (let j = 0; j < ny; j++) {
       out[j] = bilerp(data[c00 + j], data[c10 + j], data[c01 + j], data[c11 + j], tx, tz);
+    }
+  }
+
+  // --- lava placement (Phase 10) --------------------------------------------
+
+  // Runs after all carving (its wall tests read final in-chunk carve state,
+  // never a neighbour chunk, so generation order can't matter):
+  //   - at/below CAVES.LAVA.LAKE_MAX_Y every carved cell floods — the deep
+  //     lava lakes
+  //   - between there and OVERWORLD.LAVA_POOL_MAX_Y, only small occasional
+  //     pools: 1-deep puddles on cave floors inside sparse mask regions,
+  //     plus rare single-block leaks against cave walls (interior cells
+  //     only — border cells never leak, keeping the test in-chunk)
+  _placeLava(chunk, colH) {
+    const size = CHUNK.SIZE;
+    const L = CAVES.LAVA;
+    const x0 = chunk.cx * size;
+    const z0 = chunk.cz * size;
+    const bandTop = OVERWORLD.LAVA_POOL_MAX_Y - 1;
+    const solidish = (id) =>
+      id !== BLOCK.AIR && id !== BLOCK.LAVA && id !== BLOCK.WATER;
+    for (let lz = 0; lz < size; lz++) {
+      for (let lx = 0; lx < size; lx++) {
+        const top = Math.min(bandTop, colH[lz * size + lx] - 1);
+        if (top < CAVES.MIN_Y) continue;
+        const wx = x0 + lx;
+        const wz = z0 + lz;
+        let poolRegion = null; // per-column mask, computed lazily
+        for (let y = CAVES.MIN_Y; y <= top; y++) {
+          if (chunk.get(lx, y, lz) !== BLOCK.AIR) continue;
+          if (y <= L.LAKE_MAX_Y) {
+            chunk.set(lx, y, lz, BLOCK.LAVA);
+            continue;
+          }
+          // Floor puddles (scanning upward, a fresh puddle below reads as
+          // lava — puddles never stack deeper than 1).
+          if (solidish(chunk.get(lx, y - 1, lz))) {
+            if (poolRegion === null) {
+              poolRegion = fbm2(
+                this.lavaMask,
+                wx * L.POOL_MASK_SCALE, wz * L.POOL_MASK_SCALE, 2,
+              ) > L.POOL_MASK_MIN;
+            }
+            if (poolRegion) {
+              chunk.set(lx, y, lz, BLOCK.LAVA);
+              continue;
+            }
+          }
+          // Single-block wall leaks.
+          if (
+            lx > 0 && lx < size - 1 && lz > 0 && lz < size - 1 &&
+            hash01(
+              this.seed ^ SALT_LAVA_LEAK ^ Math.imul(y, 0x9e3779b1), wx, wz,
+            ) < L.LEAK_CHANCE &&
+            (solidish(chunk.get(lx - 1, y, lz)) ||
+             solidish(chunk.get(lx + 1, y, lz)) ||
+             solidish(chunk.get(lx, y, lz - 1)) ||
+             solidish(chunk.get(lx, y, lz + 1)))
+          ) {
+            chunk.set(lx, y, lz, BLOCK.LAVA);
+          }
+        }
+      }
     }
   }
 

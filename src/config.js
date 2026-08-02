@@ -71,34 +71,59 @@ export const STREAMING = {
 // blocks and interpolated per block (fast, and identical across chunk
 // borders whatever the generation order).
 export const CAVES = {
-  MIN_Y: -50,
+  MIN_Y: -60,                // Phase 10: down to the jagged bedrock band so
+                             // lava lakes have somewhere to live below -54
   MAX_Y: 60,
   LATTICE_STEP: 4,
-  BOTTOM_FADE_BLOCKS: 8,     // caves taper closed over this band above MIN_Y
+  BOTTOM_FADE_BLOCKS: 4,     // caves taper closed over this band above MIN_Y
 
   // Tunnels: carve where fieldA² + fieldB² < RADIUS² — the neighbourhood of
   // the intersection curve of two 3D noise zero-surfaces (long winding
   // spaghetti). The y frequency is higher than xz so tunnels run mostly
-  // horizontal and slightly wider than tall.
+  // horizontal and slightly wider than tall. Phase 10: RADIUS is modulated
+  // along the tunnel by a low-frequency GIRTH field, so passages vary from
+  // tight 2-wide crawls to broader corridors instead of one uniform bore.
   TUNNEL: {
     SCALE_XZ: 1 / 95,
     SCALE_Y: 1 / 68,
     OCTAVES: 2,
-    RADIUS: 0.11,
+    RADIUS: 0.085,
+    GIRTH: {
+      SCALE_XZ: 1 / 230,     // slow variation — girth changes over ~100 blocks
+      SCALE_Y: 1 / 160,
+      OCTAVES: 2,
+      MIN: 0.55,             // radius multiplier range (noise -1..1 mapped in)
+      MAX: 1.35,
+    },
   },
 
   // Caverns: carve where a low-frequency squashed 3D field exceeds a
   // threshold that loosens with depth — open rooms, common deep down,
-  // fading out entirely above MAX_Y.
+  // fading out entirely above MAX_Y. Phase 10 retune: lower frequency +
+  // higher threshold = larger caverns (10-30 blocks across, stacked levels
+  // where the field folds) that appear clearly less often than tunnels.
   CAVERN: {
-    SCALE_XZ: 1 / 130,
-    SCALE_Y: 1 / 72,
+    SCALE_XZ: 1 / 200,
+    SCALE_Y: 1 / 78,
     OCTAVES: 2,
     MAX_Y: 48,               // no caverns above this (only tunnels reach up)
     FULL_BELOW_Y: -6,        // deep threshold applies at/below this
     SHALLOW_Y: 30,           // threshold reaches SHALLOW value here
-    THRESHOLD_DEEP: 0.62,
-    THRESHOLD_SHALLOW: 0.76,
+    THRESHOLD_DEEP: 0.71,
+    THRESHOLD_SHALLOW: 0.85,
+  },
+
+  // Lava placement in carved space (Phase 10 — replaces the old "everything
+  // below y=10 floods" rule that drowned the deep caves in lava):
+  //   - full lava lakes only at/below LAKE_MAX_Y (all carved cells flood)
+  //   - between LAKE_MAX_Y and OVERWORLD.LAVA_POOL_MAX_Y, only small
+  //     occasional pools: 1-deep puddles on cave floors inside sparse
+  //     pool-mask regions, plus rare single-block wall leaks
+  LAVA: {
+    LAKE_MAX_Y: -54,         // vanilla-style lava-flood level
+    POOL_MASK_SCALE: 1 / 55, // 2D pool-region mask frequency
+    POOL_MASK_MIN: 0.42,     // mask noise (-1..1) above which puddles form
+    LEAK_CHANCE: 0.0012,     // per carved wall-adjacent cell in the pool band
   },
 
   // Surface entrances: above MAX_Y tunnels keep carving only inside sparse
@@ -312,6 +337,21 @@ export const PLAYER = {
   SNEAK_EDGE_DROP: 0.6,         // sneaking refuses moves with no floor within this
   SNEAK_CLAMP_INCREMENT: 0.05,  // granularity of the sneak edge clamp
 
+  // Lava (Phase 10 — a dense fluid, per the PROGRESS note extending the
+  // water handling behind a fluid-kind flag). Movement is very slow, the
+  // body sinks slowly and only partially (buoyancy ~ neutral at full
+  // submersion), and holding jump climbs back out.
+  LAVA_SPEED: 1.1,              // horizontal blocks/s target in lava
+  LAVA_DRAG: 9,                 // 1/s velocity damping (dense — kills plunges)
+  LAVA_GRAVITY: 9,              // blocks/s² downward pull in lava
+  LAVA_BUOYANCY: 1.0,           // lift as a multiple of lava gravity at full
+                                // submersion — neutral when fully under, so
+                                // the body drifts just below the surface
+                                // instead of dropping to the floor
+  LAVA_UP_ACCEL: 14,            // blocks/s² while holding jump in lava
+  LAVA_DOWN_ACCEL: 8,           // blocks/s² while holding sneak in lava
+  LAVA_RESPONSE: 3,             // 1/s horizontal approach rate in lava
+
   // Swimming
   SWIM_MIN_SUBMERSION: 0.35,    // waterline fraction of body height where water
                                 // physics take over from walking
@@ -399,6 +439,19 @@ export const SHAPES = {
   CACTUS_INSET: 1 / 16,           // cactus side faces AND collision box sit this
                                   // far inside the cell on x/z (vanilla: sides
                                   // render 1/16..15/16, top/bottom full size)
+};
+
+// ---------------------------------------------------------------------------
+// Smelting (systems/smelting.js — the recipe and fuel tables are registries
+// in that file, like crafting recipes; these are the global tunables)
+// ---------------------------------------------------------------------------
+
+export const SMELTING = {
+  SMELT_SECONDS: 10,              // one item smelts in this long (vanilla 10s);
+                                  // SPEC fuel values are in items smelted, so
+                                  // burn seconds = value * SMELT_SECONDS
+  PROGRESS_DECAY: 2,              // unlit/blocked progress rewinds at this
+                                  // multiple of the forward speed (vanilla)
 };
 
 // ---------------------------------------------------------------------------
@@ -501,11 +554,15 @@ export const INTERACTION = {
     FOV: 50,
     NEAR: 0.05,
     FAR: 10,
-    POSITION: [0.36, -0.3, -0.72],   // hand-camera-space resting spot
-                                     // (right, down, forward — lower-right
-                                     // corner inside the FOV-50 frustum)
-    ARM_SIZE: [0.15, 0.15, 0.48],    // first-person arm box dimensions (sized
-                                     // for the FOV-50 hand camera)
+    POSITION: [0.5, -0.4, -0.72],    // hand-camera-space resting spot
+                                     // (right, down, forward — Phase 10 moved
+                                     // it further into the lower-right corner;
+                                     // it sat too close to screen centre and
+                                     // blocked the view)
+    ARM_SIZE: [0.15, 0.15, 0.33],    // first-person arm box dimensions (sized
+                                     // for the FOV-50 hand camera; Phase 10
+                                     // shortened the reach — it filled too
+                                     // much of the screen)
     ARM_TILT: [0.45, 0.55, 0.55],    // resting rotation (radians) — the far
                                      // end reaches up toward screen centre and
                                      // the roll shows two faces (reads 3D)
@@ -612,6 +669,19 @@ export const CELESTIAL = {
   MOON_SIZE: 95,
   SUN_COLOR: 0xfff7d0,
   MOON_COLOR: 0xdfe4f2,
+};
+
+// The view while the eye is submerged in lava (Phase 10): a heavy, nearly
+// opaque orange overlay (the real lava tile, darkened, over the whole frame
+// below the HUD) plus a very short fog so the few visible blocks vanish
+// within arm's reach — vanilla's blind-in-lava look.
+export const LAVA_VIEW = {
+  FOG_COLOR: 0x991a00,
+  FOG_NEAR: 0,
+  FOG_FAR: 2.5,
+  OVERLAY_OPACITY: 0.88,          // DOM overlay strength (HUD renders above)
+  OVERLAY_BRIGHTNESS: 0.55,       // lava tile darkened to this for the overlay
+  OVERLAY_TILE_PX: 96,            // on-screen size of one repeated lava tile
 };
 
 export const NETHER_SKY = {

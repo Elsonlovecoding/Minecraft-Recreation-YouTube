@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 9 — underground (caves, ravines, ores, stone variants, lava pools + lava damage, falling sand/gravel) + Phase 8 bug fixes (held-tool orientation via extruded item models, held-block scale)**
+Phase last completed: **Phase 10 — smelting (furnace UI + per-position furnaces with lit block variants), chests (entity-textured box model + persistent 27-slot containers), generic container screens + Phase 9 bug fixes (lava volume/placement rework, cave size variety, dense-lava physics + submerged overlay, hotbar highlight repaint, held item/arm framing)**
 
 ---
 
@@ -491,6 +491,144 @@ Phase last completed: **Phase 9 — underground (caves, ravines, ores, stone var
   `HAND.SPRITE_TILT`); held blocks scaled up modestly
   (`HAND.BLOCK_SCALE` 0.17 -> 0.19).
 
+- `src/systems/smelting.js` — Phase 10 smelting core, two layers, the state
+  machine pure and node-tested: (1) **`Furnace`** — a 3-slot SlotContainer
+  (input/fuel/output) plus the burn/progress state machine. Registries in
+  the file (like crafting recipes): every SPEC smelting recipe (raw_iron,
+  raw_gold, sand→glass, cobblestone→stone, the four meats beef/porkchop/
+  chicken/mutton → cooked_*; meat item ids follow the texture names) and the
+  SPEC fuel values in items-smelted (coal 8, oak_planks 1.5, stick 0.5,
+  lava_bucket 100 — burn seconds = value × `SMELTING.SMELT_SECONDS` 10).
+  Vanilla rules: fuel is consumed only when a smelt can actually run (recipe
+  matched, output empty or same item below cap); once lit it burns to
+  exhaustion; progress rewinds at 2× while unlit/blocked; a lava bucket
+  leaves the empty bucket in the fuel slot. Vanilla slot gates in the click
+  semantics: output never accepts placement (clicking it with a matching
+  plain cursor pulls the stack ONTO the cursor), fuel slot accepts fuels
+  only; `addStack` (the shift-click router) sends smeltables to input and
+  fuel to fuel. (2) **`createSmeltingSystem`** — the per-position furnace
+  map (`furnaceAt` creates lazily on first open). `update(dt)` ticks EVERY
+  furnace each frame — smelting continues with the screen closed, and
+  multiple furnaces run fully independently — and swaps the block between
+  its lit/unlit variant (facing preserved) as the burn state changes; the
+  block-change listener drops all three slots as items when a furnace is
+  mined (lit↔unlit swaps stay in the family and keep state).
+- `src/world/blocks.js` Phase 10: the furnace is a family of 8 block ids
+  (4 facings × unlit/lit, ids 50-56 appended; base id 20 stays 'furnace') —
+  every variant drops 'furnace', lit variants show FURNACE_FRONT_ON on the
+  facing face and emit light 13 (the Phase 4 flood fill picks emitters up
+  from the registry, so the glow needed zero lighting changes).
+  `placementVariant(id, cell, playerPos)` orients a placed furnace toward
+  the player (interaction.tryPlace calls it); `isFurnace`/`furnaceLitVariant`/
+  `furnaceUnlitVariant`/`facingToward` are the family helpers. The chest
+  block is now `faces: null` (no cube faces — the mesher emits nothing),
+  `transparent` (neighbours draw their faces against the model's gaps) but
+  `solid` (full-cell collision), opacity 0 (light passes, vanilla).
+- `src/world/chests.js` — Phase 10 chest block entities. One small mesh per
+  placed chest built from `assets/entity/chest_normal.png` with the classic
+  Minecraft box unwrap (base 14x10x14 at texOffs 0,19; lid 14x5x14 + latch
+  2x4x1 at 0,0) — the modern (1.15+) sheet stores every face rotated 180°,
+  which the UV builder un-rotates; the front (latch-recess) faces sit in the
+  fourth side slot of each strip. Shared geometries/material; per-face
+  brightness vertex colours (unlit like items/hand — same known slice). The
+  lid + latch hang on a back hinge and ease open/closed while the chest's
+  screen is open. Placing a chest (block listener) creates its state facing
+  the player (position-derived cardinal); each state owns a persistent
+  27-slot SlotContainer; breaking the block drops the contents and removes
+  mesh + state; mesh visibility follows the owning chunk's mesh so far-away
+  chests don't float in the fog. `createChestMesh(size)` is exported for the
+  dropped-item/held-hand model (items.js `createModelMesh` centres it) and
+  ui/icons.js draws the hotbar icon from the same sheet (isometric top/front/
+  side composite, latch overlaid). Crafting: 8-plank ring → chest
+  (systems/crafting.js).
+- `src/player/inventory.js` Phase 10: generic **`SlotContainer`** — the slot
+  array behind chests, the furnace and any future block container (brewing
+  stand). Shares the hardened Inventory click semantics and `_insert` the
+  CraftingGrid way (prototype assignment, not re-implementation; `_insert`
+  loops over `slots.length` now so any size works). Adds `moveSlotTo(i,
+  target)` (the cross-container shift-click, merge-first, partial-fit aware,
+  durability preserved — also grafted onto Inventory) and `drainAll`;
+  `subscribe` returns an unsubscriber so screens can bind/unbind whichever
+  container is open.
+- `src/ui/screens.js` Phase 10: generic container screens on the same panel/
+  cursor machinery. Slot event binding now resolves its container at event
+  time (`attachSlotEvents(el, getContainer, i)`), so one set of DOM slots
+  serves whichever chest/furnace is open. New modes: **'chest'** (9×3 grid
+  bound to the open chest's SlotContainer; the chest's lid opens while the
+  screen is up) and **'furnace'** (input above flame above fuel, pixel-art
+  progress arrow filling with `progressFraction`, flame draining with
+  `fuelFraction`, polled per frame via `screens.update(dt)` from main.js —
+  slot changes re-render via container emits). Shift-click routing: with a
+  container open, inventory slots shift INTO it (`moveSlotTo` → the
+  container's `addStack` rules) and container slots shift back to the
+  inventory; craft-grid and hotbar↔main routing unchanged in the other
+  modes. Closing unsubscribes the container, eases the chest lid shut and
+  leaves container contents in place (only craft grids drain — chest and
+  furnace contents persisting is the point). E/Esc close paths, cursor
+  return-or-drop, and the Phase 8 crafting behaviour are untouched.
+- `src/main.js` Phase 10: block-change listeners are a list
+  (`world.addBlockListener` — falling, smelting, chests). `onUseBlock`
+  routes furnace family ids to `screens.openFurnace(smelting.furnaceAt(...))`
+  and chest to `screens.openChest(chests.chestAt(...))` exactly like the
+  crafting table. The loop ticks `smelting.update` (always — UI-independent),
+  `chests.update` (lid + visibility), `screens.update` (indicators), and
+  after `dayNight.update` applies the submerged-in-lava fog override
+  (`LAVA_VIEW` colour/near/far; dayNight rewrites fog colour every frame so
+  leaving lava restores itself, near/far restored explicitly).
+  `window.__smelting`/`__chests` join the dev scaffolding.
+- Phase 9 bug fixes shipped in Phase 10:
+  - **Lava volume/placement** (`world/caves.js` `_placeLava`, config
+    `CAVES.LAVA`): carving now writes air only; a post-carve pass floods
+    every carved cell at/below `LAKE_MAX_Y` (-54) — the deep lava lakes —
+    and above that, up to `OVERWORLD.LAVA_POOL_MAX_Y` (10), places only
+    small occasional pools (1-deep puddles on cave floors inside a sparse
+    2D mask region) and rare single-block wall leaks (interior cells only,
+    so the neighbour test never leaves the chunk). `CAVES.MIN_Y` deepened
+    to -60 (fade 4) so the lake band exists; deep mining at y≈-52 is now
+    practical. Census over 192×192: zero lava at/above y=10, zero unflooded
+    lake cells, pool band ~0.07 cells per column (was: every carved cell
+    below y=10).
+  - **Cave size variety** (`CAVES.TUNNEL.GIRTH`, cavern retune): tunnel
+    radius is modulated along the passage by a low-frequency girth field
+    (0.55–1.35×, clamped ≥1 above the cave band so surface mouths stay
+    walkable), and caverns got lower frequency + higher thresholds — larger
+    (10-40 blocks across, stacked levels where the field folds) and clearly
+    rarer. Census: median horizontal crossing 4 (50% ≤4 — the narrow
+    winding tunnels), 14% ≥10 wide (the caverns), max ~41.
+    `surfaceOpenAt` gained the girth term through the same lattice
+    arithmetic — region-verified zero mismatches against the actual carve.
+  - **Dense lava physics** (`controller.js`, config `PLAYER.LAVA_*`): lava
+    is a real fluid kind now (per the Phase 9 note — extends the water
+    handling, water maths untouched). Very slow movement (`LAVA_SPEED`
+    1.1), strong drag kills entry plunges within a fraction of a second,
+    buoyancy neutral at full submersion so the body sinks slowly and only
+    partially (drifts just under the surface instead of dropping to the
+    floor), jump/sneak rise/dive slowly, the bank exit hop works from lava,
+    both fluids reset fall distance. A grounded edge-graze (dry centre
+    column) keeps the normal jump so puddle rims stay escapable.
+  - **Submerged-lava view** (`ui/hud.js` + main.js fog override, config
+    `LAVA_VIEW`): while the eye is in lava, a near-opaque tiled overlay of
+    the real still-lava atlas texel art (darkened) covers the frame below
+    the HUD and the fog collapses to arm's reach; both clear instantly on
+    surfacing.
+  - **Hotbar highlight repaint** (`ui/hud.js`): the selection box is a
+    dedicated element moved by transform — repositioned on inventory emits
+    AND guarded per frame in updateHud — replacing the per-slot `.selected`
+    ::after class whose toggle sometimes didn't repaint under pointer lock.
+  - **Held item/arm framing** (config `INTERACTION.HAND`): POSITION moved
+    to [0.5, -0.4, -0.72] (further into the lower-right corner — it blocked
+    the view), ARM_SIZE z shortened 0.48 → 0.33.
+  - **Held-tool re-select crash** (`player/interaction.js`): re-selecting a
+    previously held tool crashed — `createExtrudedItemMesh` fires onReady
+    synchronously on a cache hit and the callback closed over a `const`
+    still in its temporal dead zone. The mesh variable is pre-declared now;
+    the sync call safely no-ops and the visibility line after the call
+    covers the cache-hit case.
+  - **Mesher culling** (`world/chunks.js`): the "lower transparent id emits
+    the shared plane" rule now ignores PASS_NONE neighbours (chest, portal
+    interiors render no cube faces) — a torch or cactus on a chest keeps
+    its bottom face; also future-proofs iron bars against portal blocks.
+
 Phase 2 verification (still holds): Node checks against the real modules —
 chunk-order determinism (byte-identical chunks regardless of generation
 order), solid bedrock layer + jagged band percentages (80/60/40/20), water
@@ -752,14 +890,49 @@ off as an item and the torch survives; standing in a lava pool ticks
 damage, kills, drops the full inventory (which burns in the lava,
 vanilla-style) and respawns at the spawn point with full health.
 
+Phase 10 verification: 115 node checks against the real modules — 82 on
+smelting/containers (every SPEC recipe and fuel value; coal ignition/burn
+duration/chaining across 3 smelts/idle burn-out; no ignition without a
+recipe, with a full output, or with a mismatched output; stick 0.5 can never
+finish a smelt and progress rewinds to zero without consuming input; planks
+smelt exactly 1.5 worth; lava bucket burns 100 worth and leaves the empty
+bucket; output slot rejects placement and merges onto a matching cursor;
+fuel slot rejects non-fuel; addStack shift-routing incl. cap merges and
+tool/junk refusal; Inventory<->SlotContainer moves with partial fits and
+durability preserved; unsubscribe; furnace block family helpers, oriented
+placement for all four approach directions, lit light 13; chest recipe vs
+2x2 table recipe; system-level: two furnaces independent, lit swap preserves
+facing, UI-closed smelting, burn-out swaps back unlit, break drops contents
+and lit<->unlit swaps don't), 19 lava/water physics (slow partial sinking,
+entry-plunge kill, crawl movement, slow jump-rise + sink on release, waist
+-deep puddle rise-out, bank climb-out from lava; water regressions: float
+eye-above-surface, swim speed, breath, dry-land walk speed, no lava flags in
+water), 14 cave/lava census over 192x192 (no lava at/above y=10, lake band
+fully flooded below -54, pool band sparse ~0.07 cells/column, median
+crossing 4 with 50% narrow and 14% >=10-wide, chunk-order byte determinism,
+zero surfaceOpenAt mismatches with the girth term). In headless Chromium:
+38 gameplay checks, zero console errors — furnace placed/oriented, screen
+DOM (title, flame, arrow), shift-click routing into input/fuel through the
+real DOM events, ignition swaps to the lit facing variant, indicator DOM
+tracks progressFraction, smelting 5 iron with the screen closed, burn-out
+swap-back, reopen shows persisted output and shift-collects it, two
+furnaces independent in-browser, break drops stacks; chest placed facing
+the player, model in scene, 27-slot screen, shift a stack in, lid opens
+(-1.45 rad) and closes, contents persist across close/reopen, break drops
+and removes model+state; selection highlight tracks 12 switches incl. a
+wheel wrap; lit furnace at night; body settles partially submerged in a
+staged lava pool with the near-opaque tile overlay + fog collapse, both
+clearing on exit. Screenshots verify the chest model art (rim/planks/latch,
+correct facing), the chest hotbar icon, held block/tool tucked into the
+lower-right corner, the shortened arm, and the lava overlay.
+
 ---
 
 ## Partially built
 
 - The rest of `src/` exists as empty stub modules with responsibility headers
   (entities/entity.js, entities/mobs.js, entities/pathfinding.js,
-  entities/dragon.js, systems/smelting.js, systems/brewing.js,
-  systems/combat.js, dimensions/).
+  entities/dragon.js, systems/brewing.js, systems/combat.js, dimensions/).
 - `ui/hud.js` has hearts (Phase 9) but still lacks hunger (stats phase).
 - `player/stats.js` is the Phase 9 slice only: health + lava damage + death/
   respawn. Still missing: hunger, regeneration, fall damage (consume
@@ -767,9 +940,10 @@ vanilla-style) and respawns at the spawn point with full health.
   (inset-aware), armour reduction, starvation, death screen (respawn is
   currently immediate).
 - Phase 9 deliberate slices:
-  - Lava is not swimmable (physically it's air that hurts) and has no
-    fire/burning damage-over-time after leaving it; falling into a deep
-    lava lake is usually fatal, which is vanilla-accurate in outcome.
+  - ~~Lava is not swimmable~~ — Phase 10 made lava a dense fluid (slow
+    partial sinking, crawl movement, slow rise on jump). Still no
+    fire/burning damage-over-time after leaving lava; contact damage plus
+    the slow escape remains usually fatal, vanilla-accurate in outcome.
   - No flowing fluids: carved caves never breach water (ocean shield), so
     nothing needs to flow; lava pools are still lakes.
   - Rivers (SPEC overworld row) remain unbuilt — the only SPEC world
@@ -784,13 +958,14 @@ vanilla-style) and respawns at the spawn point with full health.
     inventory when the screen closes) instead of dropping them at the
     death site like vanilla — nothing is lost or duplicated; closing
     screens on death belongs to the death-screen phase.
-- `ui/screens.js` has the inventory + crafting screens; furnace/death/
-  victory screens are later phases (the panel/slot/cursor structure is
-  ready to extend).
+- `ui/screens.js` has the inventory, crafting, chest and furnace screens;
+  death/victory screens are later phases. The brewing stand should reuse
+  the Phase 10 container machinery (SlotContainer with slot gates +
+  a screen mode with indicator art — the furnace is the template).
 - Phase 8 deliberate slices:
-  - Crafting recipes only cover what the item set supports — no chest
-    recipe (the chest block has no container UI yet), no golden tools
-    (gold tier isn't in SPEC's tool table), no shield/ladder/door.
+  - Crafting recipes only cover what the item set supports — no golden
+    tools (gold tier isn't in SPEC's tool table), no shield/ladder/door.
+    (~~no chest recipe~~ — shipped in Phase 10 with the chest UI.)
   - Vanilla's drag-to-distribute across grid cells (holding a button and
     sweeping) isn't implemented — click/right-click per cell is.
   - Recipe unlocking/recipe book: none, by design.
@@ -843,10 +1018,9 @@ vanilla-style) and respawns at the spawn point with full health.
   not a regression.
 - Rivers are the one remaining SPEC world feature (see Phase 9 slices);
   caves, ravines, ores and lava pools are done (world/caves.js).
-- `blocks.js`: chest uses oak-planks tiles as a cube fallback (its real
-  texture is an entity texture); nether/end portal blocks have `faces: null`
-  plus a `special` tag — the mesher skips `tiles === null` (their custom
-  rendering comes with the portal phase).
+- `blocks.js`: nether/end portal blocks have `faces: null` plus a `special`
+  tag — the mesher skips `tiles === null` (their custom rendering comes with
+  the portal phase; the chest got its real model in Phase 10 the same way).
 - `special` blocks (torch, cactus, brewing stand, iron bars) currently mesh
   as full textured cubes in the cutout pass; their real non-cube shapes are
   a later polish. Terrain only ever places cactus, which reads fine.
@@ -873,17 +1047,35 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 10 is smelting (systems/smelting.js + a furnace screen —
-  the screens.js craft-area/slot machinery extends; furnace right-click
-  should route through main.js `onUseBlock` exactly like the crafting
-  table does; raw_iron/raw_gold now drop from real ores) or the full
-  stats phase (hunger + regen + fall damage/drowning/cactus — stats.js
-  `damage()` is the entry point, hud.js hearts extend with hunger) or
-  mobs (hostile spawning wants a `getLight(x,y,z)` helper on World).
-- Phase 9 APIs for later phases: `world.onBlockChanged` is a single-slot
-  hook (main.js assigns falling.onBlockChanged) — if another system needs
-  block-change events later, turn it into a listener list, don't chain
-  functions ad hoc. `stats.damage(amount)` for any damage source;
+- Likely Phase 11 is the full stats phase (hunger + regen + fall damage/
+  drowning/cactus — stats.js `damage()` is the entry point, hud.js hearts
+  extend with hunger; cooked food now exists to eat) or mobs (hostile
+  spawning wants a `getLight(x,y,z)` helper on World; passive mobs should
+  drop the meat item ids the smelting recipes expect: beef, porkchop,
+  chicken, mutton — texture names, NOT SPEC's raw_beef spelling, which has
+  no texture in assets/items).
+- Phase 10 APIs for later phases: `world.addBlockListener(fn)` — the
+  block-change hook is a list now (falling, smelting, chests subscribe);
+  listeners must not throw. `SlotContainer` (player/inventory.js) is the
+  base for any block container — the brewing stand should subclass it like
+  `Furnace` does (slot gates via canPlaceIn/clickSlot overrides, shift
+  routing via addStack) and get a screen mode next to 'furnace' in
+  screens.js (indicator art + screens.update polling is the template).
+  `smelting.furnaceAt(x,y,z)` / `chests.chestAt(x,y,z)` are the state
+  lookups (lazy-create). `createChestMesh(size)` for anything chest-shaped;
+  `createModelMesh(model, size)` (entities/items.js) is the centred item
+  variant. Oriented placement: extend `placementVariant` in blocks.js.
+  The bucket item exists as fuel residue; actual lava/water scooping is
+  still an item-phase concern.
+- Mining note (Phase 10 update): lava lakes flood all carved space at
+  y<=-54, so "the right depth" to tell players is now y≈-52 (diamond
+  density there is within ~12% of the old -54 guidance; the 39/40
+  findability simulation was ore-density-driven and unaffected).
+- Furnace facings: placement picks FURNACE/_N/_E/_W toward the player;
+  smelting swaps lit variants in place. If another oriented block arrives
+  (dispenser-like), follow the same pattern — ids are cheap, the mesher
+  needs nothing.
+- Phase 9 APIs for later phases: `stats.damage(amount)` for any damage source;
   `stats.health/maxHealth/flashFraction` for UI. `inventory.drainAll()`
   empties and returns stacks. `createExtrudedItemMesh(name, size)`
   (entities/items.js) for any held/shown item slab (async texture build,
@@ -891,12 +1083,14 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   (`ravineDepthAt`, `surfaceOpenAt` are pure and cheap; the mining-sim
   and cave-census harnesses in the session scratchpad show how to drive
   it for tests).
-- Lava physics: lava is air-like (no buoyancy/drag) + contact damage —
-  if a later phase makes it swimmable, extend PlayerBody's water handling
-  behind a fluid-kind flag rather than duplicating the swim code, and keep
-  the standing-eye disengage rule.
+- Lava physics (Phase 10): lava is a dense fluid in PlayerBody behind the
+  existing fluid handling (touchingLava/lavaSubmersion/eyeInLava; tunables
+  in PLAYER.LAVA_*). Water maths are untouched — keep it that way; the
+  swim-sprint mechanic and breath stay water-only, and the standing-eye
+  disengage rule still applies to water.
 - Mining note for balance: diamond concentrates hard toward y=-60..-40
-  (bottom-biased); "the right depth" to tell players is y≈-54.
+  (bottom-biased); with lava lakes flooding y<=-54, "the right depth" to
+  tell players is y≈-52.
 - Phase 8 APIs for later phases: `craftResult(slots, width)` is the only
   matcher; add recipes via the `shaped`/`shapeless` helpers at the top of
   systems/crafting.js (append — order matters only if two patterns could
@@ -1025,3 +1219,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 7 | Inventory (inventory.js): 36 slots / 9 hotbar, stacking to 64 with per-item registry (tools + armour stack 1, carry durability; pearls/eggs 16), pickups existing-stack-first then first-empty, vanilla click/right-click/shift-click semantics; hotbar HUD (hud.js) with real item icons (icons.js — assets/items sprites verbatim, isometric atlas cubes for blocks), counts, durability bars, selection highlight; 1-9 keys + delta-accumulating scroll wheel; inventory screen on E (screens.js) with click and press-drag-release moves, cursor ghost, close-returns-cursor (overflow drops at the feet, durability preserved through the drop); held item switches visibly (block cube / item sprite / bare arm); mining wears tools, broken tools vanish; partial pickups with retry when full. Bug fixes: held item vanilla-sized in the corner, leaves render interior faces + occlude AO (dense dark canopies), cactus sides inset 1/16 with 15/16 collision (sweep + sneak guard inset-aware), sprint-jump retuned to ~7.1 b/s. Adversarially reviewed (20 agents, 5 lenses, 8 unique confirmed findings all fixed) + 114 automated checks | Armour equip slots + damage reduction (stats/combat), crafting grid in the screen, Q-drop / click-outside-drop, dropped-entity stack merging, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
 | 8 | Crafting (systems/crafting.js): every SPEC critical-path recipe (shaped with bounding-box position independence + vanilla horizontal mirroring, shapeless as multisets), 2x2 craft area on the inventory screen + 3x3 crafting-table screen (screens.js) sharing the Phase 7 slot/cursor machinery, live result preview, click-crafts-one / shift-crafts-max (capacity-guarded, stops if the matched recipe changes), grids drain back on close; right-click on a placed crafting table opens the 3x3 via main.js `onUseBlock` (resolved in update() against the fresh raycast; sneak bypasses to place, vanilla-style); tools craft at full durability, tier gates verified live end to end (punch wood -> planks -> table -> sticks -> wooden pickaxe -> stone -> stone pickaxe; wooden pickaxe can't harvest iron ore, stone can); gravel drops flint 10% (new fallback drop semantic) so flint_and_steel/arrows are reachable. Bug fixes: held item renders in a dedicated fixed-FOV hand pass (undistorted self-occluding cube; arm re-tuned with per-face shading), cracks are the real assets/destroy/destroy_stage_0..9.png advancing with progress (alphaTested — their background is white at alpha 1/255, not transparent-black). Adversarially reviewed (5 lenses, 7 confirmed findings all fixed) + 180 automated checks (127 node + 53 browser incl. real-pointer-lock use-path tests) | Furnace/smelting (furnace right-click routes like the table), chest UI, drag-to-distribute crafting gesture, Q-drop, armour equip, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
 | 9 | Underground (world/caves.js): two-layer cave carving (winding tunnel pair-intersection + deep caverns, world-aligned interpolation lattice, y -50..60), rare long/deep/narrow V-profile ravines, walkable surface entrances gated to sparse entrance regions (plus rare 1-block rabbit holes), ocean-sealed floors, lava filling all carved space below y=10, granite/diorite/andesite blobs, gravel pockets, ore veins per SPEC ranges (coal/iron 4-12, gold/redstone 4-8, diamond 1-4 bottom-biased — 39/40 simulated 10-min branch-mining trials find diamond, avg 4.9 ore); trees/cacti refuse carved surfaces; falling sand/gravel entities (entities/falling.js + world.onBlockChanged) with torch-break/fluid-sink (fills lava lakes like vanilla)/cascade rules; stats.js slice — health, lava contact damage, death drops inventory + respawn — with hearts HUD + damage flash; dropped items burn in lava; held-tool fix (extruded 1px-slab item models, vanilla lower-right diagonal) and held-block scale-up. 21 node + 10 browser gameplay checks + screenshot suite, zero console errors | Rivers; hunger/fall/drowning/cactus damage + death screen (stats.js continues); swimmable lava; gen-time floating sand settles only on disturbance; smelting; mobs |
+| 10 | Smelting (systems/smelting.js): every SPEC recipe + fuel value, per-position furnaces ticking with the UI closed and independently, vanilla fuel/progress rules (ignite only when a smelt can run, rewind when blocked, lava-bucket residue), furnace block family (4 facings x unlit/lit, oriented placement toward the player, lit front tile + light 13), furnace screen (input/fuel/output, pixel-art progress arrow + flame indicator), break drops contents. Chests (world/chests.js): entity-textured box model from chest_normal.png (base/lid/latch, modern 180-degree-flipped unwrap decoded, back-hinge lid animation while open), placement facing the player, persistent 27-slot containers, break drops contents, chest recipe, model-routed item visuals (dropped/held/hotbar icon). Generic container UI (ui/screens.js): SlotContainer (player/inventory.js) + event-time container resolution + cross-container shift routing; world.addBlockListener list. Phase 9 bug fixes: lava rework (lakes only y<=-54, sparse 1-deep pools + rare wall leaks in -54..10, caves deepened to -60), cave size variety (girth-modulated tunnels ~2-4 wide, caverns bigger and rarer), dense-lava player physics + near-opaque lava-tile overlay + collapsed fog, hotbar highlight as a transform-moved element (repaint bug), held item moved into the corner, arm shortened, held-tool re-select TDZ crash fixed, PASS_NONE culling fix (torch-on-chest). 115 node + 38 browser checks, zero console errors | Brewing stand (reuses SlotContainer + furnace screen pattern); stats phase (hunger/fall/drowning/cactus, eating the new cooked food); mobs (drop ids beef/porkchop/chicken/mutton); buckets scooping lava/water; chest icon uses static sheet (no animated open state in the icon) |

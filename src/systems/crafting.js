@@ -69,6 +69,8 @@ shapeless(['oak_log'], 'oak_planks', 4);
 shaped(['P', 'P'], { P: 'oak_planks' }, 'stick', 4);
 shaped(['PP', 'PP'], { P: 'oak_planks' }, 'crafting_table');
 shaped(['CCC', 'C C', 'CCC'], { C: 'cobblestone' }, 'furnace');
+// Phase 10: the chest has a container UI now, so the vanilla recipe ships.
+shaped(['PPP', 'P P', 'PPP'], { P: 'oak_planks' }, 'chest');
 
 // Tools: one recipe per material tier, vanilla shapes. S = stick.
 const TOOL_MATERIALS = {

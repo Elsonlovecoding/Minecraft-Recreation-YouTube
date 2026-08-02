@@ -16,8 +16,10 @@ export class World {
     this.chunks = new Map(); // "cx,cz" -> Chunk
     this.scene = null;       // set by bindScene once rendering starts
     this.materials = null;
-    this.onBlockChanged = null; // optional (x, y, z, id) hook fired by
-                                // setBlock — falling-block support checks
+    // Block-change listeners, fired by setBlock as (x, y, z, id). Phase 9
+    // had a single onBlockChanged slot (falling-block support checks);
+    // Phase 10 turned it into a list — furnaces and chests listen too.
+    this._blockListeners = [];
     this.meshedCount = 0;
     this._pcx = null;        // player chunk from the last streaming update
     this._pcz = null;
@@ -104,7 +106,13 @@ export class World {
     if (lx + 1 + SIZE - lz <= reach) markDirty(cx - 1, cz + 1);
     if (SIZE - lx + SIZE - lz <= reach) markDirty(cx + 1, cz + 1);
 
-    this.onBlockChanged?.(x, y, z, id);
+    for (const listener of this._blockListeners) listener(x, y, z, id);
+  }
+
+  // Registers a block-change listener (x, y, z, id). Listeners must never
+  // throw — an exception would stop later listeners from seeing the edit.
+  addBlockListener(fn) {
+    this._blockListeners.push(fn);
   }
 
   // Terrain height (surface block y) from the generator — pre-decoration,
