@@ -261,9 +261,11 @@ export const TOOL_TIERS = {
   diamond: { speedMultiplier: 8, durability: 1562 },
 };
 
+// Keys are the item ids the inventory uses (wooden_sword...), so the combat
+// phase can look up WEAPON_DAMAGE[inventory.selectedName] directly.
 export const WEAPON_DAMAGE = {
   fist: 1,
-  wood_sword: 4,
+  wooden_sword: 4,
   stone_sword: 5,
   iron_sword: 6,
   diamond_sword: 7,
@@ -339,6 +341,16 @@ export const INVENTORY = {
 };
 
 // ---------------------------------------------------------------------------
+// Crafting (SPEC.md: 2x2 grid in the inventory, 3x3 at a crafting table;
+// the recipes themselves are the registry in systems/crafting.js)
+// ---------------------------------------------------------------------------
+
+export const CRAFTING = {
+  INVENTORY_GRID: 2,              // craft grid width on the inventory screen
+  TABLE_GRID: 3,                  // craft grid width at a crafting table
+};
+
+// ---------------------------------------------------------------------------
 // UI (HUD hotbar and inventory screen) — sizes only; the pixel-art styling
 // itself is inline in ui/hud.js / ui/screens.js like the other generated art
 // ---------------------------------------------------------------------------
@@ -367,22 +379,35 @@ export const INTERACTION = {
   OUTLINE_OPACITY: 0.75,
   OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)
   CRACK_INFLATE: 0.008,           // crack overlay cube inflation over the block
-  CRACK_TEXTURE_SIZE: 16,         // pixels per generated crack stage tile
+  DESTROY_STAGE_PATH: 'assets/destroy/destroy_stage_', // real Minecraft crack
+                                  // textures, `${PATH}${stage}.png`, 10 stages
   HAND: {
-    POSITION: [0.52, -0.49, -0.72],  // camera-space resting spot (right, down, fwd)
-    ARM_SIZE: [0.22, 0.22, 0.65],    // first-person arm box dimensions
-    ARM_TILT: [0.35, -0.25, 0.1],    // resting rotation (radians)
-    ARM_FORWARD: 0.25,               // arm reach forward, fraction of its length
-    BLOCK_SCALE: 0.15,               // held mini-block edge length — small, sits
+    // The hand renders in its own pass with a fixed-FOV camera (never the
+    // world camera — its wide FOV skews anything in a screen corner, and the
+    // sprint FOV kick would stretch it further).
+    FOV: 50,
+    NEAR: 0.05,
+    FAR: 10,
+    POSITION: [0.36, -0.3, -0.72],   // hand-camera-space resting spot
+                                     // (right, down, forward — lower-right
+                                     // corner inside the FOV-50 frustum)
+    ARM_SIZE: [0.15, 0.15, 0.48],    // first-person arm box dimensions (sized
+                                     // for the FOV-50 hand camera)
+    ARM_TILT: [0.45, 0.55, 0.55],    // resting rotation (radians) — the far
+                                     // end reaches up toward screen centre and
+                                     // the roll shows two faces (reads 3D)
+    ARM_FORWARD: 0.12,               // arm reach forward, fraction of its length
+    BLOCK_SCALE: 0.17,               // held mini-block edge length — small, sits
                                      // in the lower-right corner like vanilla
-    BLOCK_TILT: [0, 0.785, 0],       // held block yawed ~45° (vanilla angle)
-    BLOCK_OFFSET: [0.14, -0.01, -0.13], // held block offset from POSITION
+    BLOCK_TILT: [0.22, 0.785, 0],    // held block yawed ~45°, tipped a touch so
+                                     // the top and two side faces read (vanilla)
+    BLOCK_OFFSET: [0.05, -0.02, -0.1], // held block offset from POSITION
     SPRITE_SCALE: 0.34,              // held flat-item sprite edge length (tools)
     SPRITE_TILT: [-0.2, 3.04, 0.1], // sprite angled like a vanilla held tool —
                                      // the ~180° yaw shows the mirrored back
                                      // face so the handle points at the hand
                                      // corner (vanilla orientation)
-    SPRITE_OFFSET: [0.1, 0.03, -0.13],  // held sprite offset from POSITION
+    SPRITE_OFFSET: [0.02, 0.05, -0.1],  // held sprite offset from POSITION
     SWING_SECONDS: 0.28,             // one swing animation
     SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
     SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)

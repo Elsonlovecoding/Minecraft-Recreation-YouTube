@@ -12,6 +12,7 @@ import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } 
 import { initHud, updateHud } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
+import { BLOCK } from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
@@ -51,14 +52,23 @@ async function init() {
   const player = createPlayerController({ world, camera, canvas });
 
   // Phase 6: dropped items and block interaction (break/place/outline/hand).
-  // The camera joins the scene so the first-person hand (a camera child)
-  // renders. Phase 7: the inventory owns items/selection; pickups flow into
-  // it and the inventory screen (E) sits over the game.
-  scene.add(camera);
+  // Phase 7: the inventory owns items/selection; pickups flow into it and
+  // the inventory screen (E) sits over the game. Phase 8: the hand renders
+  // in its own pass (no camera-in-scene needed), and right-clicking a
+  // crafting table opens the 3x3 crafting screen (`screens` binds below —
+  // clicks can only arrive long after init finishes).
   const inventory = createInventory();
   const items = createItemManager({ world, scene });
+  let screens;
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory,
+    onUseBlock: (target) => {
+      if (target.id === BLOCK.CRAFTING_TABLE) {
+        screens.openCrafting();
+        return true;
+      }
+      return false;
+    },
   });
 
   const buildStart = performance.now();
@@ -85,7 +95,7 @@ async function init() {
 
   initDebug();
   initHud(inventory);
-  const screens = createScreens({ inventory, canvas, items, player });
+  screens = createScreens({ inventory, canvas, items, player });
   window.__screens = screens;
 
   // Pickups go to the inventory (existing stacks first, then the first empty
@@ -107,6 +117,7 @@ async function init() {
     updateHud(player);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);
+    interaction.renderHand(renderer); // hand pass over the finished frame
   });
 }
 

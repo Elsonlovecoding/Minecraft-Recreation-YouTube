@@ -15,11 +15,16 @@
 // shows, what mining checks and what right-click places; breaking a block
 // with a tool wears its durability. Number keys 1-9 and the scroll wheel
 // change the selection here (gameplay input, pointer-locked only).
+//
+// Phase 8: cracks are the real destroy_stage_0..9.png textures; the hand
+// renders in its own fixed-FOV pass (renderHand) so the held block is an
+// undistorted cube; right-click on a usable block defers to onUseBlock
+// (main.js opens the crafting screen for a crafting table).
 
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  OVERWORLD, CHUNK,
+  OVERWORLD, CHUNK, LIGHTING,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName } from '../world/blocks.js';
 import { createBlockMesh, createSpriteMesh, itemVisualInfo } from '../entities/items.js';
@@ -122,7 +127,7 @@ export function placementBlockedByPlayer(x, y, z, feet) {
 }
 
 // ---------------------------------------------------------------------------
-// Generated overlay art (crack stages, arm skin) — deterministic
+// Overlay art: the real destroy-stage textures, and the generated arm skin
 // ---------------------------------------------------------------------------
 
 function mulberry32(seed) {
@@ -136,67 +141,22 @@ function mulberry32(seed) {
   };
 }
 
-// The 10 destroy-stage textures, generated as cumulative crack random-walks:
-// every stage keeps the previous stage's cracks and grows them, so breaking
-// reads as one spreading fracture.
-function createCrackTextures(stages) {
-  const size = INTERACTION.CRACK_TEXTURE_SIZE;
-  const rand = mulberry32(0xc0ffee);
-  const stageOf = new Float64Array(size * size).fill(Infinity);
-  const marked = [];
-  const mark = (x, y, s) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    const i = y * size + x;
-    if (stageOf[i] === Infinity) marked.push(i);
-    if (s < stageOf[i]) stageOf[i] = s;
-  };
-  for (let s = 0; s < stages; s++) {
-    for (let w = 0; w < 3; w++) {
-      // Walk out from an existing crack pixel (the centre at first)
-      let x = Math.floor(size / 2);
-      let y = Math.floor(size / 2);
-      if (marked.length > 0) {
-        const from = marked[Math.floor(rand() * marked.length)];
-        x = from % size;
-        y = Math.floor(from / size);
-      }
-      let dx = rand() < 0.5 ? -1 : 1;
-      let dy = rand() < 0.5 ? -1 : 1;
-      const steps = 3 + Math.floor(rand() * size * 0.55);
-      for (let i = 0; i < steps; i++) {
-        mark(x, y, s);
-        // Mostly continue, sometimes turn — jagged but connected
-        if (rand() < 0.4) dx = rand() < 0.5 ? -1 : 1;
-        if (rand() < 0.4) dy = rand() < 0.5 ? -1 : 1;
-        if (rand() < 0.5) x += dx;
-        else y += dy;
-      }
-    }
-  }
-  // Per-pixel shade so the cracks aren't a flat mask
-  const shade = new Float64Array(size * size);
-  for (let i = 0; i < size * size; i++) shade[i] = 15 + rand() * 55;
-
+// The 10 break-progress crack stages are the genuine Minecraft
+// destroy_stage_0..9.png textures (assets/destroy/), used directly. Their
+// background texels are WHITE at alpha 1/255 (not black-transparent), so
+// the crack material must alphaTest them away — a surviving crack texel has
+// alpha 1 and the multiply-with-alpha blend reduces to dst * src.rgb, the
+// authentic darken. SRGBColorSpace keeps the texel values exact through the
+// output encode.
+function loadCrackTextures(stages) {
+  const loader = new THREE.TextureLoader();
   const textures = [];
-  for (let s = 0; s < stages; s++) {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    for (let i = 0; i < size * size; i++) {
-      if (stageOf[i] > s) continue;
-      const g = shade[i];
-      img.data[i * 4] = g;
-      img.data[i * 4 + 1] = g;
-      img.data[i * 4 + 2] = g;
-      img.data[i * 4 + 3] = 190;
-    }
-    ctx.putImageData(img, 0, 0);
-    const texture = new THREE.CanvasTexture(canvas);
+  for (let i = 0; i < stages; i++) {
+    const texture = loader.load(`${INTERACTION.DESTROY_STAGE_PATH}${i}.png`);
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
     texture.generateMipmaps = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
     textures.push(texture);
   }
   return textures;
@@ -237,7 +197,13 @@ function createArmTexture() {
 // Wires targeting, breaking, placing and the first-person hand into the game.
 // `player` is the Phase 5 controller (body + mode), `items` the item manager,
 // `inventory` the Phase 7 inventory (selection, stacks, durability).
-export function createInteraction({ world, camera, scene, canvas, player, items, inventory }) {
+// `onUseBlock(target)` (optional, wired by main.js) handles right-clicking a
+// usable block — a crafting table opening its screen — returning true when it
+// consumed the click; sneaking bypasses it so blocks can still be placed
+// against usable blocks, like vanilla.
+export function createInteraction({
+  world, camera, scene, canvas, player, items, inventory, onUseBlock,
+}) {
   const H = INTERACTION.HAND;
 
   // --- targeting state
@@ -249,6 +215,8 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
   // --- breaking state
   let mouseLeft = false;
   let mouseRight = false;
+  let useCheckPending = false; // right-click pressed; use-vs-place resolves
+                               // in update() against that frame's raycast
   let breakKey = null;      // "x,y,z,id" of the block being broken
   let breakPlan = null;     // { time, drops } for that block
   let breakProgress = 0;    // 0..1
@@ -277,7 +245,7 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
   const zAxis = new THREE.Vector3(0, 0, 1);
 
   // --- crack overlay
-  const crackTextures = createCrackTextures(RENDER.BREAK_STAGES);
+  const crackTextures = loadCrackTextures(RENDER.BREAK_STAGES);
   const crackMesh = new THREE.Mesh(
     new THREE.BoxGeometry(
       1 + INTERACTION.CRACK_INFLATE,
@@ -289,9 +257,13 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       transparent: true,
       depthWrite: false,
       toneMapped: false,
-      // Multiply-with-alpha: out = dst * (src.rgb + 1 - src.a). Crack texels
-      // DARKEN whatever the face renders as — so cracks track the terrain's
-      // baked light and stay dark at night instead of glowing fullbright.
+      // The destroy-stage background texels are WHITE at alpha 1/255 — they
+      // must be discarded, not blended (blended they'd double the face
+      // brightness: dst * (1 + 1 - 1/255)). What survives the alphaTest has
+      // alpha 1, so the blend is exactly out = dst * src.rgb: crack texels
+      // DARKEN whatever the face renders as, tracking the terrain's baked
+      // light — dark at night, never a fullbright glow.
+      alphaTest: RENDER.CUTOUT_ALPHA_TEST,
       blending: THREE.CustomBlending,
       blendEquation: THREE.AddEquation,
       blendSrc: THREE.DstColorFactor,
@@ -301,34 +273,65 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
   crackMesh.visible = false;
   scene.add(crackMesh);
 
-  // --- first-person hand (camera child; main.js adds the camera to the scene)
-  // Hand meshes skip the depth test and draw after the world (vanilla draws
-  // the hand over everything), so facing a wall can't swallow the arm.
-  const HAND_RENDER_ORDER = 3; // above chunks (0) and the face outline (1)
+  // --- first-person hand, drawn in its own pass over the finished frame
+  // (main.js calls renderHand after the world render). Its camera has a
+  // fixed, modest FOV: the world camera's wide FOV would perspective-skew
+  // anything sitting in a screen corner, and the sprint FOV kick would
+  // stretch it — the held block must read as a clean, undistorted cube.
+  // Depth is cleared before the pass, so the hand draws over point-blank
+  // walls like vanilla while still self-occluding correctly (its own back
+  // faces hidden — depth-free materials scrambled the cube's faces before).
+  const handScene = new THREE.Scene();
+  const handCamera = new THREE.PerspectiveCamera(
+    H.FOV, window.innerWidth / window.innerHeight, H.NEAR, H.FAR,
+  );
+  window.addEventListener('resize', () => {
+    handCamera.aspect = window.innerWidth / window.innerHeight;
+    handCamera.updateProjectionMatrix();
+  });
   const hand = new THREE.Group();
+  // Per-face brightness (top/side/bottom like blocks) so the arm box reads
+  // as a 3D limb instead of a flat plane whichever face dominates.
+  const armGeometry = new THREE.BoxGeometry(...H.ARM_SIZE);
+  {
+    const normals = armGeometry.getAttribute('normal');
+    const colors = new Float32Array(normals.count * 3);
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    for (let i = 0; i < normals.count; i++) {
+      const ny = normals.getY(i);
+      const b = ny > 0.5 ? FB.top : ny < -0.5 ? FB.bottom : FB.side;
+      colors[i * 3] = b;
+      colors[i * 3 + 1] = b;
+      colors[i * 3 + 2] = b;
+    }
+    armGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
   const arm = new THREE.Mesh(
-    new THREE.BoxGeometry(...H.ARM_SIZE),
+    armGeometry,
     new THREE.MeshBasicMaterial({
       map: createArmTexture(),
+      vertexColors: true,
       toneMapped: false,
-      depthTest: false,
-      depthWrite: false,
     }),
   );
   // The arm reaches forward from the bottom-right screen corner
   arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
-  arm.renderOrder = HAND_RENDER_ORDER;
   hand.add(arm);
   let heldMesh = null; // mini-block or sprite of the current selection
-  let heldMaterial = null; // shared atlas material cloned for over-world drawing
-  const spriteMaterialCache = new Map(); // item name -> depth-free material clone
   let shownItem = false; // item name the hand currently shows (false = never set)
   const handBase = new THREE.Vector3(...H.POSITION);
   const handTilt = new THREE.Euler(...H.ARM_TILT);
   hand.position.copy(handBase);
   hand.rotation.copy(handTilt);
-  camera.add(hand);
+  handScene.add(hand);
   let swingT = 1; // 0..1, animation finished at >= 1
+
+  function renderHand(renderer) {
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(handScene, handCamera);
+    renderer.autoClear = true;
+  }
 
   function startSwing() {
     swingT = 0;
@@ -346,31 +349,19 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       heldMesh = null;
     }
     if (name) {
+      // The shared item-visual meshes/materials are used as-is — the hand
+      // pass clears depth itself, so no depth-free clones are needed and
+      // the mini-cube self-occludes like a real block.
       const info = itemVisualInfo(name);
       if (info.blockId !== undefined) {
         heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
-        if (!heldMaterial) {
-          heldMaterial = heldMesh.material.clone(); // shares the atlas texture
-          heldMaterial.depthTest = false;
-          heldMaterial.depthWrite = false;
-        }
-        heldMesh.material = heldMaterial;
         heldMesh.position.set(...H.BLOCK_OFFSET);
         heldMesh.rotation.set(...H.BLOCK_TILT);
       } else {
         heldMesh = createSpriteMesh(info.sprite, H.SPRITE_SCALE);
-        let material = spriteMaterialCache.get(info.sprite);
-        if (!material) {
-          material = heldMesh.material.clone(); // shares the sprite texture
-          material.depthTest = false;
-          material.depthWrite = false;
-          spriteMaterialCache.set(info.sprite, material);
-        }
-        heldMesh.material = material;
         heldMesh.position.set(...H.SPRITE_OFFSET);
         heldMesh.rotation.set(...H.SPRITE_TILT);
       }
-      heldMesh.renderOrder = HAND_RENDER_ORDER;
       hand.add(heldMesh);
     }
     arm.visible = !heldMesh;
@@ -387,6 +378,11 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       mouseLeft = true;
       startSwing();
     } else if (e.button === 2) {
+      // The use-vs-place decision resolves in update() against the SAME
+      // fresh raycast placement uses — deciding here on last frame's target
+      // could open a table the crosshair just left, or place against one it
+      // just reached (one-frame asymmetry).
+      useCheckPending = true;
       mouseRight = true;
       placeTimer = 0; // place immediately, then repeat while held
     }
@@ -394,12 +390,14 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) mouseLeft = false;
     else if (e.button === 2) mouseRight = false;
+    // a sub-frame click still resolves its pending use next update
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('pointerlockchange', () => {
     if (!locked()) {
       mouseLeft = false;
       mouseRight = false;
+      useCheckPending = false;
     }
   });
 
@@ -451,8 +449,16 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
   }
 
   function spawnDrops(def, x, y, z) {
+    // chance entries roll independently; `fallback: true` entries drop only
+    // when no chance entry succeeded (registry doc in world/blocks.js —
+    // vanilla-style exclusive drops like gravel's flint-or-gravel).
+    let chanceDropped = false;
     for (const drop of def.drops) {
-      if (drop.chance !== undefined && Math.random() >= drop.chance) continue;
+      if (drop.fallback && chanceDropped) continue;
+      if (drop.chance !== undefined) {
+        if (Math.random() >= drop.chance) continue;
+        chanceDropped = true;
+      }
       const count = Array.isArray(drop.count)
         ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
         : drop.count;
@@ -579,10 +585,23 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       outline.visible = false;
     }
 
+    // Right-click use: the targeted block (crafting table...) takes
+    // precedence over placing, unless sneaking (vanilla). A handled use
+    // consumes the press entirely — no place, no hold-to-place repeat.
+    if (useCheckPending) {
+      useCheckPending = false;
+      if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
+        mouseRight = false;
+        startSwing();
+      }
+    }
+
     updateBreaking(dt);
     updatePlacing(dt);
 
-    // Crack overlay over the block being broken
+    // Crack overlay over the block being broken. A destroy-stage texture
+    // that hasn't finished loading yet would bind as an empty texture and
+    // blacken the whole block for a frame — skip until its image is in.
     if (breakKey && breakProgress > 0 && target) {
       const stage = Math.min(
         RENDER.BREAK_STAGES - 1,
@@ -590,7 +609,7 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
       );
       crackMesh.material.map = crackTextures[stage];
       crackMesh.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
-      crackMesh.visible = true;
+      crackMesh.visible = !!crackTextures[stage].image;
     } else {
       crackMesh.visible = false;
     }
@@ -600,6 +619,7 @@ export function createInteraction({ world, camera, scene, canvas, player, items,
 
   return {
     update,
+    renderHand, // main.js calls this right after the world render
     get target() {
       return target;
     },

@@ -14,8 +14,11 @@
 //   tool         tool class that mines it fast ('pickaxe'|'axe'|'shovel'|null)
 //   minTier      minimum tool tier for drops: 'hand'|'wood'|'stone'|'iron'|'diamond'
 //                (lower tiers still break it, very slowly, dropping nothing)
-//   drops        [{ item, count | [min, max], chance? }] — item ids for the
-//                (later) item registry; empty array = drops nothing
+//   drops        [{ item, count | [min, max], chance?, fallback? }] — item ids
+//                for the item registry; empty array = drops nothing. chance
+//                entries roll independently; a `fallback: true` entry drops
+//                only when NO chance entry succeeded (vanilla-style exclusive
+//                drops: gravel yields flint OR itself, never both)
 //   solid        has a collision box
 //   transparent  does NOT fully occlude neighbouring faces (meshing/culling)
 //   selfCull     transparent blocks only: cull faces between same-id
@@ -177,8 +180,15 @@ register(BLOCK.COBBLESTONE, 'cobblestone', 'Cobblestone', {
 register(BLOCK.SAND, 'sand', 'Sand', {
   faces: { all: TILE.SAND }, hardness: 0.5, tool: 'shovel', falls: true,
 });
+// Gravel sources flint like vanilla (10%, replacing the gravel drop) —
+// flint_and_steel and arrows are on the SPEC critical path, and gravel is
+// their only source.
 register(BLOCK.GRAVEL, 'gravel', 'Gravel', {
   faces: { all: TILE.GRAVEL }, hardness: 0.6, tool: 'shovel', falls: true,
+  drops: [
+    { item: 'flint', count: 1, chance: 0.1 },
+    { item: 'gravel', count: 1, fallback: true },
+  ],
 });
 register(BLOCK.OAK_LOG, 'oak_log', 'Oak Log', {
   faces: { top: TILE.OAK_LOG_TOP, bottom: TILE.OAK_LOG_TOP, side: TILE.OAK_LOG },
