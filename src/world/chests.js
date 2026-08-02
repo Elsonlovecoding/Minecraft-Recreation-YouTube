@@ -141,7 +141,11 @@ function getGeometries() {
     // +z runs toward the chest front.
     lidGeometry = buildGeometry((a) => {
       appendBox(a, -7 * PX, 0, 0, 7 * PX, 5 * PX, 14 * PX, 0, 0, 14, 5, 14);
-      appendBox(a, -1 * PX, -2 * PX, 14 * PX, 1 * PX, 2 * PX, 15 * PX, 0, 0, 2, 4, 1);
+      // Latch depth stops 0.1px short of the cell boundary: a solid block
+      // placed against the chest front draws its face on that exact plane
+      // (the chest is `transparent`), and a full-depth latch would z-fight
+      // with it.
+      appendBox(a, -1 * PX, -2 * PX, 14 * PX, 1 * PX, 2 * PX, 14.9 * PX, 0, 0, 2, 4, 1);
     });
   }
   return { baseGeometry, lidGeometry };

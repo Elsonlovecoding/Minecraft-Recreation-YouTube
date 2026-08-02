@@ -396,11 +396,14 @@ export class CaveCarver {
 
   // Would the tunnel layer carve this cell? (pure; used by surfaceOpenAt —
   // the girth lookup interpolates the same lattice arithmetic the chunk
-  // carve uses, so the two can never disagree)
+  // carve uses, AND the radius product multiplies in the same order —
+  // float multiplication is non-associative, so a different association
+  // here would leave agreement to rounding luck)
   _tunnelCarvesAt(x, y, z, gate) {
-    const base = CAVES.TUNNEL.RADIUS * this._radiusFactor(y, gate);
-    if (base <= 0) return false;
-    const r = base * this._girthFactor(this._fieldAt(this.girth, x, y, z), y);
+    const factor = this._radiusFactor(y, gate);
+    if (factor <= 0) return false;
+    const g = this._girthFactor(this._fieldAt(this.girth, x, y, z), y);
+    const r = CAVES.TUNNEL.RADIUS * g * factor; // same order as the carve loop
     const a = this._fieldAt(this.tunnelA, x, y, z);
     const b = this._fieldAt(this.tunnelB, x, y, z);
     return a * a + b * b < r * r;

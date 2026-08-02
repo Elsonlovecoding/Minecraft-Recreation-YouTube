@@ -26,7 +26,9 @@
 import { INVENTORY, UI, CRAFTING } from '../config.js';
 import { renderSlotContent } from './icons.js';
 import { CraftingGrid } from '../systems/crafting.js';
-import { SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT } from '../systems/smelting.js';
+import {
+  SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT, isFuel, smeltResult,
+} from '../systems/smelting.js';
 import { CHEST_SLOTS } from '../world/chests.js';
 
 // Furnace indicator pixel art (inline like the other generated art):
@@ -104,6 +106,8 @@ export function createScreens({ inventory, canvas, items, player }) {
   let activeChest = null;   // chest state (world/chests.js) while mode==='chest'
   let activeFurnace = null; // Furnace (systems/smelting.js) while mode==='furnace'
   let containerUnsub = null; // active container subscription teardown
+  let activeBlockPos = null; // { x, y, z, kind } of the open container's block —
+                             // main.js closes the screen if that block goes away
 
   // The craft grids persist across opens (they are drained on every close,
   // so nothing can hide in a closed screen's grid).
@@ -248,13 +252,23 @@ export function createScreens({ inventory, canvas, items, player }) {
 
   // Shift-click routing. With a block container open, stacks move between
   // it and the inventory (the furnace's addStack routes smeltables to the
-  // input and fuel to the fuel slot; whatever the container refuses stays).
+  // input and fuel to the fuel slot). Vanilla details: an item the furnace
+  // takes no interest in at all falls back to the hotbar <-> main move; a
+  // chest accepts anything, and a FULL chest leaves the stack where it is.
   // Otherwise the Phase 7/8 semantics: hotbar <-> main, craft grid -> out.
   function shiftMove(container, i) {
     const external = activeExternal();
     if (container === inventory) {
-      if (external) inventory.moveSlotTo(i, external);
-      else inventory.shiftClick(i);
+      const s = inventory.get(i);
+      if (!external || !s) {
+        if (s) inventory.shiftClick(i);
+        return;
+      }
+      if (mode === 'furnace' && !smeltResult(s.name) && !isFuel(s.name)) {
+        inventory.shiftClick(i);
+      } else {
+        inventory.moveSlotTo(i, external);
+      }
     } else if (container === invGrid || container === tableGrid) {
       container.shiftOut(i, inventory);
     } else {
@@ -496,6 +510,7 @@ export function createScreens({ inventory, canvas, items, player }) {
   function openChest(chest) {
     if (open || !chest) return;
     activeChest = chest;
+    activeBlockPos = { x: chest.x, y: chest.y, z: chest.z, kind: 'chest' };
     chest.open = true;
     containerUnsub = chest.container.subscribe(() => {
       if (open) refresh();
@@ -503,10 +518,12 @@ export function createScreens({ inventory, canvas, items, player }) {
     openScreen('chest');
   }
 
-  // Right-clicking a furnace: `furnace` is the systems/smelting.js Furnace.
-  function openFurnace(furnace) {
+  // Right-clicking a furnace: `furnace` is the systems/smelting.js Furnace,
+  // `pos` its block position (for the disappeared-block guard).
+  function openFurnace(furnace, pos) {
     if (open || !furnace) return;
     activeFurnace = furnace;
+    activeBlockPos = pos ? { x: pos.x, y: pos.y, z: pos.z, kind: 'furnace' } : null;
     containerUnsub = furnace.subscribe(() => {
       if (open) refresh();
     });
@@ -546,6 +563,7 @@ export function createScreens({ inventory, canvas, items, player }) {
       activeChest = null;
     }
     activeFurnace = null;
+    activeBlockPos = null;
     cursorEl.style.display = 'none'; // never leave the ghost over gameplay
     document.body.classList.remove('mc-screen-open');
     root.style.display = 'none';
@@ -595,6 +613,9 @@ export function createScreens({ inventory, canvas, items, player }) {
     },
     get cursor() {
       return cursor;
+    },
+    get activeBlockPos() {
+      return activeBlockPos;
     },
   };
 }

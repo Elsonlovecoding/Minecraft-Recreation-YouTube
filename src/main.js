@@ -84,7 +84,10 @@ async function init() {
         return true;
       }
       if (isFurnace(target.id)) {
-        screens.openFurnace(smelting.furnaceAt(target.x, target.y, target.z));
+        screens.openFurnace(
+          smelting.furnaceAt(target.x, target.y, target.z),
+          { x: target.x, y: target.y, z: target.z },
+        );
         return true;
       }
       if (target.id === BLOCK.CHEST) {
@@ -134,7 +137,20 @@ async function init() {
       ? count - inventory.addStack({ name, count, durability })
       : count - inventory.add(name, count);
 
+  // Defensive: if the block backing an open container screen stops being
+  // that container (unreachable by hand today — breaking needs pointer
+  // lock — but explosions arrive with mobs), close the screen so stacks
+  // can't be deposited into an orphaned container. The chest/furnace
+  // listeners above already dropped its contents.
+  world.addBlockListener((x, y, z, id) => {
+    const pos = screens.activeBlockPos;
+    if (!pos || pos.x !== x || pos.y !== y || pos.z !== z) return;
+    const stillThere = pos.kind === 'furnace' ? isFurnace(id) : id === BLOCK.CHEST;
+    if (!stillThere) screens.closeScreen();
+  });
+
   const clock = new THREE.Clock();
+  let wasEyeInLava = false;
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     player.update(delta);
@@ -150,14 +166,17 @@ async function init() {
     // Submerged in lava: near-blind orange view — the fog collapses to
     // arm's reach (the HUD overlay in ui/hud.js does the rest). dayNight
     // rewrites the fog colour every frame, so leaving lava restores itself;
-    // near/far are put back explicitly.
+    // near/far are put back once on the exit transition (edge-triggered, so
+    // this never fights a future dimension's own fog settings per frame).
     if (player.body.eyeInLava) {
       scene.fog.color.setHex(LAVA_VIEW.FOG_COLOR);
       scene.fog.near = LAVA_VIEW.FOG_NEAR;
       scene.fog.far = LAVA_VIEW.FOG_FAR;
-    } else if (scene.fog.far !== SKY.FOG_FAR) {
+      wasEyeInLava = true;
+    } else if (wasEyeInLava) {
       scene.fog.near = SKY.FOG_NEAR;
       scene.fog.far = SKY.FOG_FAR;
+      wasEyeInLava = false;
     }
     updateHud(player, stats);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);

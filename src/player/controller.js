@@ -76,7 +76,10 @@ export class PlayerBody {
     this.sneaking = !!input.sneak;
     const moving = input.forward !== 0 || input.strafe !== 0;
     this.sprinting =
-      !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming;
+      !!input.sprint && input.forward > 0 && !this.sneaking && !this.swimming &&
+      !(this.touchingLava && this.lavaSubmersion > 0); // no sprint (or FOV
+                                                       // kick) while crawling
+                                                       // through lava
     // Vanilla swim mechanic: sprinting while fully submerged tips the body
     // prone and swims fast toward the look direction. Entry AND persistence
     // key off the STANDING eye height (previous step's sense) — if a
@@ -240,9 +243,12 @@ export class PlayerBody {
     }
 
     // Fall tracking (fall damage itself is applied by the stats phase);
-    // both fluids break a fall.
+    // both fluids break a fall — landing INTO either reports no drop
+    // (otherwise a 1-deep lava puddle would add full fall damage on top of
+    // contact damage at some framerates and not others).
     if (this.touchingWater || this.touchingLava || this.onGround) {
-      if (this.onGround && !this.touchingWater && this.fallDistance > 0) {
+      if (this.onGround && !this.touchingWater && !this.touchingLava &&
+          this.fallDistance > 0) {
         // Measure from the fall's start height so the landing step's final
         // partial move is included.
         this.lastLanding = Math.max(0, this._fallStartY - p.y);
@@ -451,13 +457,23 @@ export class PlayerBody {
     );
     this.touchingWater = water;
     this.touchingLava = lava;
+    // Submersion from the topmost fluid cell in the centre column. A run
+    // reaching the feet uses the classic waterline (identical to Phase 5
+    // for every natural, contiguous pool); a FLOATING pocket (a Phase 10
+    // lava wall leak with air beneath) only counts its overlapped band —
+    // otherwise a single leak block at head height read as submersion ~1,
+    // zeroing gravity and hanging the player mid-air under it.
     const lineOf = (blockId) => {
       const cx = Math.floor(p.x);
       const cz = Math.floor(p.z);
       const top = Math.floor(p.y + PLAYER.HEIGHT - EPS);
-      for (let y = top; y >= Math.floor(p.y + EPS); y--) {
+      const bottom = Math.floor(p.y + EPS);
+      for (let y = top; y >= bottom; y--) {
         if (this.world.getBlock(cx, y, cz) === blockId) {
-          return Math.min(1, (y + 1 - p.y) / PLAYER.HEIGHT);
+          let lo = y;
+          while (lo - 1 >= bottom && this.world.getBlock(cx, lo - 1, cz) === blockId) lo--;
+          if (lo <= bottom) return Math.min(1, (y + 1 - p.y) / PLAYER.HEIGHT);
+          return Math.min(1, (y + 1 - Math.max(p.y, lo)) / PLAYER.HEIGHT);
         }
       }
       return 0;

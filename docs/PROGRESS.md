@@ -890,13 +890,71 @@ off as an item and the torch survives; standing in a lava pool ticks
 damage, kills, drops the full inventory (which burns in the lava,
 vanilla-style) and respawns at the spawn point with full health.
 
-Phase 10 verification: 115 node checks against the real modules — 82 on
+Phase 10's adversarial review (5 independent lenses — smelting/container
+logic, screens/HUD DOM, physics/world-gen regression, integration/lifecycle,
+spec fidelity — each probing the real modules with its own node repro
+scripts, including a 400k-operation conservation fuzz over every
+click/shift/drag path and a byte-identical water-physics regression fuzz
+against the pre-change PlayerBody) confirmed and led to fixes for:
+- One coal smelted 7 items, not SPEC's 8: completing a smelt discarded the
+  frame overshoot (`progress = 0`) while burn time debited exactly, so the
+  8th item stranded at ~99% as an 80.0s coal died. Progress now carries the
+  remainder (plus a 1e-9s epsilon for burns that divide into frames
+  exactly); regression-tested at jittered 60fps and dt=1/240 for 1/2/4
+  coal → exactly 8/16/32.
+- Smelt progress survived an input swap: cobblestone at 95% + click-swap to
+  raw_gold yielded a gold ingot in 0.5s. Progress now belongs to the input
+  item name and resets when it changes (vanilla).
+- The furnace blinked unlit for one frame at every fuel-unit boundary
+  (ignite was checked before the burn decrement), costing ~10 chunk
+  remeshes per boundary and a visible glow flicker; a unit exhausting
+  mid-smelt now re-ignites within the same update.
+- Landing while touching lava reported the full drop in `lastLanding`
+  (framerate-dependent) — a latent double-punishment for the future fall-
+  damage phase; both fluids now suppress the landing report.
+- A floating lava wall leak (air beneath — ~20 per 12x12 chunks) read as
+  submersion ~1.0 through the topmost-cell waterline, zeroing gravity and
+  hanging a falling player mid-air beneath it while contact damage ticked.
+  The fluid line now only counts the contiguous run overlapping the body
+  (natural contiguous pools take the identical old formula — re-verified
+  byte-identical water physics).
+- `sprinting` stayed true while crawling through lava (FOV kick at 1.1
+  blocks/s); lava now clears the sprint gate.
+- Furnace-mode shift-click of an item the furnace takes no interest in was
+  a silent no-op; it now falls back to the vanilla hotbar<->main move (a
+  full chest still leaves the stack, vanilla).
+- The chest latch's front face sat exactly on the cell boundary plane and
+  z-fought a block placed against the chest front (the chest is
+  `transparent`, so that neighbour face renders); the latch now stops
+  0.1px short.
+- The girth radius product multiplied in a different association order in
+  the pure surfaceOpenAt query vs the carve loop — 0.38% of cells were
+  bit-different (zero decision flips observed, but the Phase 9
+  float-exactness contract rested on luck); both sites now multiply in the
+  same order.
+- Hardening: the submerged-lava fog restore is edge-triggered (never fights
+  a future dimension's own fog per frame), and main.js closes an open
+  chest/furnace screen if its backing block stops existing (unreachable by
+  hand today — breaking needs pointer lock — but explosions arrive with
+  mobs; without it, deposits into the orphaned container would vanish).
+Review lenses also verified clean: zero conservation violations in the
+400k-op fuzz, no reachable dupe/loss path through any slot gate, listener
+reentrancy safe (Map delete-during-iteration incl.), falling sand can never
+replace a container block, PASS_NONE culling audit over all ordered id
+pairs found zero new z-fights/holes, chest icon async races benign,
+per-chunk generation cost unchanged (~2.5ms), and every item id reachable
+from the new code resolves to a real texture/model (98 names checked).
+
+Phase 10 verification: 122 node checks against the real modules — 89 on
 smelting/containers (every SPEC recipe and fuel value; coal ignition/burn
-duration/chaining across 3 smelts/idle burn-out; no ignition without a
-recipe, with a full output, or with a mismatched output; stick 0.5 can never
-finish a smelt and progress rewinds to zero without consuming input; planks
-smelt exactly 1.5 worth; lava bucket burns 100 worth and leaves the empty
-bucket; output slot rejects placement and merges onto a matching cursor;
+duration/chaining across 3 smelts/idle burn-out; exactly 8/16 smelts per
+1/2 coal at jittered 60fps frames and at dt=1/240; input swap mid-smelt
+resets the cook; continuous burns never blink unlit at fuel boundaries;
+no ignition without a recipe, with a full output, or with a mismatched
+output; stick 0.5 can never finish a smelt and progress rewinds to zero
+without consuming input; planks smelt exactly 1.5 worth; lava bucket burns
+100 worth and leaves the empty bucket; output slot rejects placement and
+merges onto a matching cursor;
 fuel slot rejects non-fuel; addStack shift-routing incl. cap merges and
 tool/junk refusal; Inventory<->SlotContainer moves with partial fits and
 durability preserved; unsubscribe; furnace block family helpers, oriented

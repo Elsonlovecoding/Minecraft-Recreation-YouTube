@@ -77,6 +77,7 @@ export class Furnace extends SlotContainer {
     this.burnRemaining = 0; // seconds of the current fuel unit left
     this.burnCapacity = 0;  // what the current fuel unit started with
     this.progress = 0;      // seconds toward the current smelt
+    this._cookingName = null; // input item the progress belongs to
   }
 
   get isLit() {
@@ -163,6 +164,14 @@ export class Furnace extends SlotContainer {
   update(dt) {
     if (dt <= 0) return;
     const input = this.slots[SLOT_INPUT];
+    // Progress belongs to a specific input item (vanilla): swapping the
+    // input mid-smelt restarts the cook — otherwise a cheap item could be
+    // run to 99% and swapped for a slow one to finish near-instantly.
+    const inputName = input?.name ?? null;
+    if (inputName !== this._cookingName) {
+      this._cookingName = inputName;
+      this.progress = 0;
+    }
     const result = input ? SMELT_RECIPES[input.name] : null;
     const out = this.slots[SLOT_OUTPUT];
     const canSmelt = !!result &&
@@ -171,28 +180,42 @@ export class Furnace extends SlotContainer {
     let changed = false;
 
     // Ignite: consume one fuel unit only when a smelt can actually run.
-    if (this.burnRemaining <= 0 && canSmelt) {
+    const tryIgnite = () => {
       const fuel = this.slots[SLOT_FUEL];
       const value = fuel && fuel.durability == null ? FUEL_ITEMS[fuel.name] : undefined;
-      if (value) {
-        this.burnCapacity = value * SMELTING.SMELT_SECONDS;
-        this.burnRemaining = this.burnCapacity;
-        const residue = FUEL_RESIDUE[fuel.name];
-        fuel.count -= 1;
-        if (fuel.count <= 0) {
-          this.slots[SLOT_FUEL] = residue ? { name: residue, count: 1 } : null;
-        }
-        changed = true;
+      if (!value) return;
+      this.burnCapacity = value * SMELTING.SMELT_SECONDS;
+      this.burnRemaining = this.burnCapacity;
+      const residue = FUEL_RESIDUE[fuel.name];
+      fuel.count -= 1;
+      if (fuel.count <= 0) {
+        this.slots[SLOT_FUEL] = residue ? { name: residue, count: 1 } : null;
       }
-    }
+      changed = true;
+    };
+    if (this.burnRemaining <= 0 && canSmelt) tryIgnite();
 
     const lit = this.burnRemaining > 0;
-    if (lit) this.burnRemaining = Math.max(0, this.burnRemaining - dt);
+    if (lit) {
+      this.burnRemaining = Math.max(0, this.burnRemaining - dt);
+      // A fuel unit exhausting mid-smelt re-ignites within the same update:
+      // a continuous burn must never observe an unlit frame — the one-frame
+      // blink swapped the block unlit and back, costing ~10 chunk remeshes
+      // per fuel boundary (review finding).
+      if (this.burnRemaining <= 0 && canSmelt) tryIgnite();
+    }
 
     if (lit && canSmelt) {
       this.progress += dt;
-      if (this.progress >= SMELTING.SMELT_SECONDS) {
-        this.progress = 0;
+      // The epsilon absorbs float drift when the burn divides into frames
+      // exactly (fuel worth N smelts must complete N, never N-1 by 1e-13).
+      if (this.progress >= SMELTING.SMELT_SECONDS - 1e-9) {
+        // Carry the overshoot into the next smelt: progress accrues 1:1
+        // with burn time, so discarding the remainder here would eat one
+        // frame of burn per item — a coal (exactly 8 smelts of burn)
+        // finished only 7 items, with the 8th stranded at ~99% as the
+        // flame died (review finding, regression-tested).
+        this.progress -= SMELTING.SMELT_SECONDS;
         input.count -= 1;
         if (input.count <= 0) this.slots[SLOT_INPUT] = null;
         if (out) out.count += 1;
