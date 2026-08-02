@@ -83,7 +83,11 @@ docs/
 not wherever is convenient.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document.
+in this document. Current state of the cap: `config.js` is exempt (it is the
+constants registry — splitting it would scatter the single source of tunables);
+`player/interaction.js` sits just past the cap (~810) as of Phase 12 — the next
+session that grows it should split the first-person hand rendering into its own
+`player/hand.js` and note it here.
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.

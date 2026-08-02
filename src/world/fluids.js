@@ -42,6 +42,29 @@ export function createFluids({ world }) {
     pending.add(x + ',' + y + ',' + z);
   }
 
+  // A cell may only process while every chunk its reads/writes can touch
+  // (itself + the 4 face neighbours, so at most a 2x2 chunk corner) still
+  // holds data. Without this, queue entries surviving an unload would make
+  // the next tick's getBlock regenerate far chunks synchronously and march
+  // the spread away from the player forever (items and falling blocks
+  // freeze in unloaded chunks for the same reason). Dropped updates heal:
+  // disposeChunkMesh clears _fluidScanned, so a returning chunk re-scans.
+  function cellChunksLoaded(x, z) {
+    // A pure-logic mock world without chunk streaming counts as all-loaded
+    // (node tests drive the automaton with a plain { getBlock, setBlock }).
+    if (!world.getChunkIfLoaded) return true;
+    const c0x = Math.floor((x - 1) / CHUNK.SIZE);
+    const c1x = Math.floor((x + 1) / CHUNK.SIZE);
+    const c0z = Math.floor((z - 1) / CHUNK.SIZE);
+    const c1z = Math.floor((z + 1) / CHUNK.SIZE);
+    for (let cx = c0x; cx <= c1x; cx++) {
+      for (let cz = c0z; cz <= c1z; cz++) {
+        if (!world.getChunkIfLoaded(cx, cz)) return false;
+      }
+    }
+    return true;
+  }
+
   // Any edit can start or stop a flow at the cell or a face neighbour —
   // schedule whichever of those cells actually holds lava (a placed source
   // schedules itself; a block broken under a lake schedules the lava above).
@@ -96,7 +119,9 @@ export function createFluids({ world }) {
     if (!isLavaSource(id)) {
       const want = supportedState(x, y, z);
       if (want !== id) {
-        world.setBlock(x, y, z, want);
+        // Fluid writes are DERIVED state (markModified false): the chunk
+        // stays unloadable and the settle scan re-derives flows on return.
+        world.setBlock(x, y, z, want, false);
         if (want === BLOCK.AIR) return;
         id = want;
       }
@@ -108,7 +133,7 @@ export function createFluids({ world }) {
     const below = world.getBlock(x, y - 1, z);
     if (below === BLOCK.AIR) {
       if (y - 1 >= MIN_Y) {
-        world.setBlock(x, y - 1, z, BLOCK.LAVA_FALL);
+        world.setBlock(x, y - 1, z, BLOCK.LAVA_FALL, false);
         return;
       }
       return; // resting on the world floor guard — nothing to pour into
@@ -121,7 +146,7 @@ export function createFluids({ world }) {
     const next = FLOW_BY_LEVEL[f + 1];
     for (const [dx, dz] of H4) {
       if (world.getBlock(x + dx, y, z + dz) === BLOCK.AIR) {
-        world.setBlock(x + dx, y, z + dz, next);
+        world.setBlock(x + dx, y, z + dz, next, false);
       }
     }
   }
@@ -183,6 +208,7 @@ export function createFluids({ world }) {
         continue;
       }
       const [x, y, z] = k.split(',').map(Number);
+      if (!cellChunksLoaded(x, z)) continue; // dropped — rescan on return
       processCell(x, y, z);
     }
   }

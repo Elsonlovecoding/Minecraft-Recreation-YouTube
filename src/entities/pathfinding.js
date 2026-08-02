@@ -97,7 +97,7 @@ export function findPath(getBlock, start, goal, options = {}) {
 
   const key = (x, y, z) => `${x},${y},${z}`;
   const heuristic = (x, y, z) =>
-    Math.hypot(x - gx, z - gz) + Math.abs(y - gy) * 0.5;
+    Math.hypot(x - gx, z - gz) + Math.abs(y - gy) * MOBS.PATH.HEURISTIC_Y_WEIGHT;
 
   const startKey = key(sx, sy, sz);
   const gScore = new Map([[startKey, 0]]);
@@ -151,7 +151,7 @@ export function findPath(getBlock, start, goal, options = {}) {
         passable(getBlock, c.x, c.y + clearance, c.z) &&
         standableAt(getBlock, nx, c.y + 1, nz, clearance)
       ) {
-        tryNeighbor(currentKey, c, nx, c.y + 1, nz, 1.5);
+        tryNeighbor(currentKey, c, nx, c.y + 1, nz, MOBS.PATH.STEP_UP_COST);
       }
       // Level walk.
       if (standableAt(getBlock, nx, c.y, nz, clearance)) {
@@ -167,7 +167,7 @@ export function findPath(getBlock, start, goal, options = {}) {
       for (let drop = 1; drop <= maxDrop; drop++) {
         const ny = c.y - drop;
         if (standableAt(getBlock, nx, ny, nz, clearance)) {
-          tryNeighbor(currentKey, c, nx, ny, nz, 1 + drop * 0.5);
+          tryNeighbor(currentKey, c, nx, ny, nz, 1 + drop * MOBS.PATH.DROP_COST_PER_BLOCK);
           break;
         }
         if (!passable(getBlock, nx, ny, nz)) break; // lava/solid: not a landing

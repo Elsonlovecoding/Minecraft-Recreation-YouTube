@@ -671,7 +671,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
 }
 
 // Removes a chunk's meshes from the scene and frees their GPU buffers.
-// Materials are shared and stay alive.
+// Materials are shared and stay alive. (The fluid settle flag is NOT
+// cleared here — remeshing goes through this too, and a rescan per remesh
+// would re-enqueue every settled lava surface forever; world.js clears the
+// flag only on the unload paths.)
 export function disposeChunkMesh(chunk) {
   if (!chunk.mesh) return;
   chunk.mesh.group.removeFromParent();

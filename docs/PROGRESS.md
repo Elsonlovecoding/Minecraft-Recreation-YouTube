@@ -1317,6 +1317,55 @@ mirrored left limbs) walking, and the night scene where the mob reads
 near-black in darkness (brightness 0.09) and warm-lit next to a placed
 torch (0.63).
 
+Phase 12's adversarial review (5 independent lenses — fluid simulation,
+entities/pathfinding/spawning, Phase 11 regressions, rendering/meshing,
+session-requirement fidelity — each probing the real modules with its own
+node repros and browser sessions over the full diff) came back clean on
+regressions, on the A* internals (the live-fScore heap mutation is real but
+provably self-healing: 1,195 instrumented searches matched a reference
+Dijkstra exactly), on the models.js UV math (94/94 numeric checks against
+the ground-truth zombie sheet) and on the automaton's convergence (drain/
+fuzz/ring probes all quiesce with sources intact and water never invaded).
+Seven confirmed findings were fixed and re-verified:
+- Flow TOPS animated upstream — the downhill-gradient sign was inverted, so
+  surfaces streamed back toward their source while sides scrolled down
+  correctly. Air and lower-lava neighbours now accumulate the true
+  downstream direction (probe: top-face UVs put +v on the air/downhill
+  edge).
+- The flow bottom face over a transparent solid (glass, canopy) was exactly
+  coplanar with the support's top face (z-fight); lifted by the side inset.
+- Stale fluid-queue entries surviving a chunk unload resurrected the
+  dropped chunks: the next tick's getBlock regenerated them synchronously
+  mid-frame and marched the spread away from the player forever. Cells now
+  process only while every chunk they can touch holds data; dropped
+  updates heal because _unloadFar clears the settle flag, so a returning
+  chunk re-scans and resumes an interrupted spread. (First attempt hooked
+  the flag reset into disposeChunkMesh — but remeshing goes through that
+  too, and the rescan-per-remesh fed the queue its own writes forever,
+  starving distant regions; the reset lives only on the unload paths.)
+- Settle-scan flow writes marked chunks `modified` — the keep-forever flag
+  — so merely exploring lava terrain pinned most visited chunks' data in
+  memory (186 of 256 in the probe). Fluid writes are DERIVED state now:
+  setBlock grew a markModified flag, fluid chunks stay unloadable, and the
+  probe retains zero chunks after leaving. MAX_UPDATES_PER_TICK raised
+  above the initial settle wave (soak: pending 1919 -> 428 and draining).
+- Mob melee bit through a 1-block wall (range 1.8 > the 1.6 minimum
+  through-wall centre distance); MELEE_RANGE is the vanilla ~1.4 reach,
+  which geometrically cannot cross a wall.
+- A solid block ending up in a mob's head cell (player placement, falling
+  sand) pinned it forever against the sweep's no-shove clamp; mobs now
+  take vanilla suffocation damage and die instead.
+- Spawn attempts landing outside streamed data generated whole chunks
+  synchronously (up to ~143ms per cycle after a respawn teleport) only for
+  the light gate to reject them; cold chunks are rejected before the
+  column scan.
+Plus the ARCHITECTURE config rule applied to the new code: the mob eye
+height, melee vertical gate, tint/turn rates, posed-arm sway and the A*
+cost weights all moved into config MOBS (the head-tracking eye height now
+follows PLAYER.EYE_HEIGHT instead of silently duplicating 1.62). All
+suites re-run green after the fixes (26 node + boot/pause/mob/lava browser
+suites + the reviewers' own probes), zero console errors.
+
 ---
 
 ## Partially built

@@ -474,9 +474,12 @@ export const FLUIDS = {
   FLOW_HEIGHTS: [0.75, 0.5, 0.25],
   FALL_HEIGHT: 1.0,             // falling columns fill their cell
   SCROLL_TILES_PER_SECOND: 0.35, // animated flowing-texture scroll rate
-  MAX_UPDATES_PER_TICK: 400,    // fluid cells processed per spread tick (the
+  MAX_UPDATES_PER_TICK: 1200,   // fluid cells processed per spread tick (the
                                 // remainder carries — a lake edge can't stall
-                                // a frame)
+                                // a frame). Sized above the initial settle
+                                // wave around spawn (~1400 falls to ~0 within
+                                // a few ticks); most updates are cheap no-op
+                                // revalidations — only real changes remesh
   SCAN_CHUNKS_PER_FRAME: 1,     // newly meshed chunks settled per frame
                                 // (finds generated lava with air below/beside)
 };
@@ -587,10 +590,19 @@ export const MOBS = {
   DEATH_SECONDS: 0.45,            // fall-over animation before removal
   ATTACK_REACH: 3,                // player melee reach against mobs (vanilla)
   ATTACK_COOLDOWN_SECONDS: 0.5,   // between player melee swings that can hit
-  MELEE_RANGE: 1.8,               // mob-to-player centre distance that can bite
+  MELEE_RANGE: 1.4,               // mob-to-player centre distance that can bite
+                                  // (vanilla zombie reach ~1.43 — and, unlike
+                                  // 1.8, geometrically unable to cross a
+                                  // 1-block wall: 0.3 + 1 + 0.3 = 1.6 minimum)
+  MELEE_VERTICAL_RANGE: 2,        // bite only when roughly level with the player
   MELEE_COOLDOWN_SECONDS: 1.0,    // between a mob's own attacks
   BURN_DAMAGE_TICK_SECONDS: 0.5,  // lava contact damage cadence for mobs
   LAVA_CONTACT_DAMAGE: 4,         // per tick while a mob touches lava
+  SUFFOCATION_DAMAGE: 1,          // per tick with a solid block in the head cell
+  SUFFOCATION_TICK_SECONDS: 0.5,  // (vanilla: sand falling onto a mob, or a
+                                  // block placed into it, kills rather than
+                                  // pinning it forever against the no-shove
+                                  // sweep clamp)
 
   // --- AI (the pursue state; more states come with the real mobs)
   AGGRO_RADIUS: 32,               // pursue when the player is within this
@@ -602,11 +614,17 @@ export const MOBS = {
   LIMB_SWING_CYCLES_PER_BLOCK: 0.55, // stride cycles per block walked
   LIMB_SWING_MAX: 0.9,            // radians of limb swing at full stride
   LIMB_SWING_FADE_RATE: 8,        // 1/s swing amplitude ease in/out
+  POSED_ARM_SWAY: 0.15,           // walk counter-sway factor for posed arms
+                                  // (the zombie's stay raised, swaying a little)
   HEAD_TRACK_RANGE: 8,            // the head follows a player within this
   HEAD_YAW_LIMIT: 1.1,            // radians the head turns from the body
   HEAD_PITCH_LIMIT: 0.7,
   HEAD_TURN_RATE: 10,             // 1/s head easing
+  HEAD_HEIGHT_FRACTION: 0.9,      // eye height on the mob body, for head pitch
   BODY_TURN_RATE: 8,              // 1/s body yaw easing toward the move direction
+  BODY_TURN_MIN_SPEED: 0.2,       // blocks/s below which the body stops turning
+  LIGHT_TINT_RATE: 8,             // 1/s ease of the baked-light tint (no popping
+                                  // when a mob crosses a light-level border)
 
   // --- pathfinding (entities/pathfinding.js)
   PATH: {
@@ -615,6 +633,10 @@ export const MOBS = {
                                   // returns the closest-approach path instead
     MAX_DROP: 3,                  // never path over drops deeper than this (SPEC)
     MAX_RANGE: 48,                // nodes beyond this from the start stop expanding
+    STEP_UP_COST: 1.5,            // route-shaping: climbing beats detouring only
+                                  // when the detour costs more than this
+    DROP_COST_PER_BLOCK: 0.5,     // extra cost per block of a ledge drop
+    HEURISTIC_Y_WEIGHT: 0.5,      // vertical distance weight in the A* heuristic
   },
 };
 

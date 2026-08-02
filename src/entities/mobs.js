@@ -12,7 +12,7 @@
 // registry entry + an AI state function.
 
 import * as THREE from 'three';
-import { MOBS, OVERWORLD, CHUNK, LIGHTING } from '../config.js';
+import { MOBS, OVERWORLD, CHUNK, LIGHTING, PLAYER } from '../config.js';
 import { BLOCK, blockDef } from '../world/blocks.js';
 import { Entity } from './entity.js';
 import { findPath, standableAt } from './pathfinding.js';
@@ -128,6 +128,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
       repathTimer: 0,
       meleeTimer: 0,
       burnTimer: 0,
+      suffocateTimer: 0,
     };
     applyPose(mob);
     mobs.push(mob);
@@ -196,6 +197,14 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
       Math.random() * (MOBS.SPAWN_MAX_DISTANCE - MOBS.SPAWN_MIN_DISTANCE);
     const x = Math.floor(p.x + Math.cos(angle) * dist);
     const z = Math.floor(p.z + Math.sin(angle) * dist);
+    // Cold chunks never spawn — the column scan's getBlock would otherwise
+    // generate a whole chunk synchronously (multi-ms, outside the streaming
+    // budget) only for the light gate to reject the attempt anyway.
+    if (!world.getChunkIfLoaded(
+      Math.floor(x / CHUNK.SIZE), Math.floor(z / CHUNK.SIZE),
+    )) {
+      return false;
+    }
     const yBase = clamp(
       Math.floor(p.y) + Math.round((Math.random() * 2 - 1) * MOBS.SPAWN_Y_RANGE),
       OVERWORLD.MIN_Y + 1,
@@ -306,7 +315,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
     mob.meleeTimer = Math.max(0, mob.meleeTimer - dt);
     if (
       mob.meleeTimer === 0 && horiz < MOBS.MELEE_RANGE &&
-      Math.abs(t.y - p.y) < 2 && !stats.dead && player.mode !== 'fly'
+      Math.abs(t.y - p.y) < MOBS.MELEE_VERTICAL_RANGE &&
+      !stats.dead && player.mode !== 'fly'
     ) {
       mob.meleeTimer = MOBS.MELEE_COOLDOWN_SECONDS;
       stats.applyKnockback(dx, dz);
@@ -322,7 +332,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
 
     // Body yaw eases toward the move direction (forward = -sin/-cos yaw).
     const v = e.velocity;
-    if (Math.hypot(v.x, v.z) > 0.2 && !e.dead) {
+    if (Math.hypot(v.x, v.z) > MOBS.BODY_TURN_MIN_SPEED && !e.dead) {
       mob.yaw = easeAngle(mob.yaw, Math.atan2(-v.x, -v.z), MOBS.BODY_TURN_RATE, dt);
     }
 
@@ -340,7 +350,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
     // Arms counter-swing on top of their pose (the zombie's stay raised,
     // swaying a little).
     const armBase = { right: pose.rightArm?.x ?? 0, left: pose.leftArm?.x ?? 0 };
-    const armSwing = swing * (pose.rightArm ? 0.15 : 1);
+    const armSwing = swing * (pose.rightArm ? MOBS.POSED_ARM_SWAY : 1);
     if (mob.parts.rightArm) mob.parts.rightArm.rotation.x = armBase.right - armSwing;
     if (mob.parts.leftArm) mob.parts.leftArm.rotation.x = armBase.left + armSwing;
 
@@ -358,7 +368,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
         wrapAngle(Math.atan2(-dx, -dz) - mob.yaw),
         -MOBS.HEAD_YAW_LIMIT, MOBS.HEAD_YAW_LIMIT,
       );
-      const eyeDy = (t.y + 1.62) - (p.y + e.def.height * 0.9);
+      const eyeDy = (t.y + PLAYER.EYE_HEIGHT) -
+        (p.y + e.def.height * MOBS.HEAD_HEIGHT_FRACTION);
       wantPitch = clamp(
         Math.atan2(eyeDy, Math.hypot(dx, dz)),
         -MOBS.HEAD_PITCH_LIMIT, MOBS.HEAD_PITCH_LIMIT,
@@ -389,7 +400,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
         LIGHTING.LIGHT_FALLOFF ** (15 - light.block),
       );
     }
-    mob.brightness += (target - mob.brightness) * (1 - Math.exp(-8 * dt));
+    mob.brightness += (target - mob.brightness) *
+      (1 - Math.exp(-MOBS.LIGHT_TINT_RATE * dt));
     const b = mob.brightness;
     const hurt = e.hurtTimer > 0;
     mob.material.color.setRGB(b, hurt ? b * 0.35 : b, hurt ? b * 0.35 : b);
@@ -447,6 +459,26 @@ export function createMobs({ world, scene, player, stats, items, dayNight }) {
         }
       } else if (!e.inLava) {
         mob.burnTimer = 0;
+      }
+
+      // Suffocation (vanilla): a solid block ending up in the head cell —
+      // placed by the player, or falling sand settling there — damages the
+      // mob until it dies. Without this a head-embedded body would be
+      // pinned forever by the sweep's no-shove clamp.
+      const ep = e.position;
+      const headSolid = !e.dead && blockDef(world.getBlock(
+        Math.floor(ep.x),
+        Math.floor(ep.y + e.def.height - 0.1),
+        Math.floor(ep.z),
+      )).solid;
+      if (headSolid) {
+        mob.suffocateTimer -= dt;
+        if (mob.suffocateTimer <= 0) {
+          mob.suffocateTimer = MOBS.SUFFOCATION_TICK_SECONDS;
+          e.damage(MOBS.SUFFOCATION_DAMAGE);
+        }
+      } else {
+        mob.suffocateTimer = 0;
       }
 
       e.updateLifecycle(dt, playerPos);
