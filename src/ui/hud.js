@@ -72,8 +72,10 @@ export function initHud(inventory) {
     #hud-crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
     #hud-crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
     #hud-breath {
+      /* right-aligned over the hotbar's right half, mirroring the hearts on
+         the left (vanilla layout) — the two rows can never overlap */
       position: fixed; left: 50%; bottom: ${breathBottom}px;
-      transform: translateX(-50%);
+      transform: translateX(calc(${Math.round((UI.HOTBAR_SLOT_PX * INVENTORY.HOTBAR_SIZE + 8) / 2)}px - 100%));
       display: none; pointer-events: none; z-index: 5;
     }
     #hud-breath .bubble {

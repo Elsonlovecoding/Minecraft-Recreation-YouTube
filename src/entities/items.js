@@ -164,8 +164,11 @@ function buildExtrudedGeometry(img) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0);
   const data = ctx.getImageData(0, 0, w, h).data;
+  // Same cutoff as the slab material's alphaTest, so edge quads are built
+  // for exactly the pixels the shader keeps.
+  const alphaCut = RENDER.CUTOUT_ALPHA_TEST * 255;
   const opaque = (px, py) =>
-    px >= 0 && px < w && py >= 0 && py < h && data[(py * w + px) * 4 + 3] >= 128;
+    px >= 0 && px < w && py >= 0 && py < h && data[(py * w + px) * 4 + 3] >= alphaCut;
 
   const t2 = EXTRUDE_DEPTH / 2;
   const pos = [];
@@ -242,13 +245,17 @@ function buildExtrudedGeometry(img) {
 
 // Extruded mesh for an item sprite. Returns a group immediately; the slab
 // mesh appears once the texture image is loaded (cached after the first
-// build). Falls back to the flat sprite if the image can't load.
-export function createExtrudedItemMesh(name, size) {
+// build). Falls back to the flat sprite if the image can't load. `onReady`
+// (optional) fires when the group actually has content — synchronously on
+// a cache hit, after the image load otherwise (the hand keeps the arm
+// visible until then, so it is never empty).
+export function createExtrudedItemMesh(name, size, onReady) {
   const group = new THREE.Group();
   group.scale.setScalar(size);
   const cached = extrudedCache.get(name);
   if (cached) {
     group.add(new THREE.Mesh(cached.geometry, cached.material));
+    onReady?.();
     return group;
   }
   const img = new Image();
@@ -259,10 +266,12 @@ export function createExtrudedItemMesh(name, size) {
       extrudedCache.set(name, built);
     }
     group.add(new THREE.Mesh(built.geometry, built.material));
+    onReady?.();
   };
   img.onerror = () => {
     console.warn(`[items] missing texture assets/items/${name}.png`);
     group.add(createSpriteMesh(name, 1));
+    onReady?.();
   };
   img.src = `assets/items/${name}.png`;
   return group;

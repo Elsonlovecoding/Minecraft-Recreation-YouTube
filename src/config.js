@@ -347,6 +347,8 @@ export const STATS = {
   CONTACT_INSET: 0.05,          // body AABB shrink for contact sampling
   DAMAGE_FLASH_SECONDS: 0.35,   // red screen flash on damage
   DEATH_DROP_SCATTER: 2.0,      // horizontal scatter speed of dropped inventory
+  DEATH_DROP_POP: 2.5,          // upward pop speed of dropped inventory
+  DEATH_DROP_Y_OFFSET: 1,       // drops spawn this far above the feet
   HEART_PX: 18,                 // HUD heart icon size
 };
 

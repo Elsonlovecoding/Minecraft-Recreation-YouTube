@@ -53,10 +53,10 @@ export function createStats({ world, player, inventory, items }) {
       const angle = Math.random() * Math.PI * 2;
       items.spawn(
         stack.name, stack.count,
-        { x: p.x, y: p.y + 1, z: p.z },
+        { x: p.x, y: p.y + STATS.DEATH_DROP_Y_OFFSET, z: p.z },
         {
           x: Math.cos(angle) * STATS.DEATH_DROP_SCATTER * Math.random(),
-          y: 2.5,
+          y: STATS.DEATH_DROP_POP,
           z: Math.sin(angle) * STATS.DEATH_DROP_SCATTER * Math.random(),
         },
         stack.durability ?? undefined,
