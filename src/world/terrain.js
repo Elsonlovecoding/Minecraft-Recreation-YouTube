@@ -143,6 +143,7 @@ const SALT_TRUNK = 0x7a11;
 const SALT_CACTUS = 0xcac7;
 const SALT_DITHER = 0xd17e;
 const SALT_BEDROCK = 0xbedd;
+const SALT_LEAF = 0x1eaf;
 
 export class TerrainGenerator {
   constructor(seed = TERRAIN.SEED) {
@@ -441,16 +442,23 @@ export class TerrainGenerator {
 
   placeTree(chunk, ax, az, surfY, trunkH) {
     const topY = surfY + trunkH;
+    const T = TERRAIN.TREES;
 
     // Grass under a trunk becomes dirt (only when the anchor is in-chunk).
     this.setIfInside(chunk, ax, surfY, az, BLOCK.DIRT, false);
 
     // Canopy first, trunk second, so logs win where they overlap.
-    // Two wide layers (corners clipped), one 3x3, one plus-shaped cap.
-    for (let y = topY - 1; y <= topY; y++) {
+    // WIDE_LAYERS 5x5 layers (each corner kept with CORNER_CHANCE — vanilla
+    // clips corners randomly), one 3x3, one plus-shaped cap. Phase 11 made
+    // the canopy a layer deeper so the middle of a tree reads as a dense
+    // mass instead of a see-through shell.
+    for (let y = topY - (T.WIDE_LAYERS - 1); y <= topY; y++) {
       for (let dz = -2; dz <= 2; dz++) {
         for (let dx = -2; dx <= 2; dx++) {
-          if (Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+          if (Math.abs(dx) === 2 && Math.abs(dz) === 2 &&
+              hash3_01(this.seed ^ SALT_LEAF, ax + dx, y, az + dz) >= T.CORNER_CHANCE) {
+            continue;
+          }
           this.setIfInside(chunk, ax + dx, y, az + dz, BLOCK.OAK_LEAVES, true);
         }
       }

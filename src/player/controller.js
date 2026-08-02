@@ -53,6 +53,9 @@ export class PlayerBody {
     this.breath = this.maxBreath;
     this.fallDistance = 0;        // blocks fallen so far while airborne
     this.lastLanding = 0;         // fall distance of a landing this step (for stats)
+    this.lastJumped = false;      // a real jump started this step (one-frame,
+                                  // for stats' jump exhaustion — knockback
+                                  // pops and fluid exit hops don't count)
     this.lastStepUp = 0;          // height auto-stepped this step (camera smoothing)
     this.horizontalSpeed = 0;     // actual blocks/s moved this step (view bob)
     this._fallStartY = spawn.y;
@@ -69,6 +72,7 @@ export class PlayerBody {
     const v = this.velocity;
     const c = PLAYER;
     this.lastLanding = 0;
+    this.lastJumped = false;
     this.lastStepUp = 0;
     this._jumpTimer += dt;
 
@@ -192,6 +196,7 @@ export class PlayerBody {
       if (canJump) {
         v.y = c.JUMP_VELOCITY;
         this._jumpTimer = 0;
+        this.lastJumped = true;
         if (this.sprinting) {
           // Vanilla sprint-jump boost, along the facing direction
           v.x += -sin * c.SPRINT_JUMP_BOOST;
@@ -245,7 +250,12 @@ export class PlayerBody {
     // Fall tracking (fall damage itself is applied by the stats phase);
     // both fluids break a fall — landing INTO either reports no drop
     // (otherwise a 1-deep lava puddle would add full fall damage on top of
-    // contact damage at some framerates and not others).
+    // contact damage at some framerates and not others). Re-sense fluids at
+    // the POST-move position first: a single fast step (terminal velocity,
+    // or a clamped 0.1s hitch frame) can carry the feet from above a pool
+    // all the way to its floor, and the start-of-step sense would still say
+    // "dry" on that landing frame — full fall damage into a pond.
+    this._senseWater();
     if (this.touchingWater || this.touchingLava || this.onGround) {
       if (this.onGround && !this.touchingWater && !this.touchingLava &&
           this.fallDistance > 0) {

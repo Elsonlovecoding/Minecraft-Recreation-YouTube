@@ -105,6 +105,13 @@ export const BLOCK = {
   FURNACE_LIT_N: 54,
   FURNACE_LIT_E: 55,
   FURNACE_LIT_W: 56,
+  // Phase 11: wall torch variants (the base TORCH id 22 stays the floor
+  // torch). Placement against a wall face picks the variant leaning out of
+  // that wall ('S' leans toward +z); all variants drop 'torch'.
+  TORCH_WALL_S: 57,
+  TORCH_WALL_N: 58,
+  TORCH_WALL_E: 59,
+  TORCH_WALL_W: 60,
 };
 
 export const BLOCKS = [];
@@ -292,10 +299,25 @@ register(BLOCK.CHEST, 'chest', 'Chest', {
   faces: null, hardness: 2.5, tool: 'axe', special: 'chest',
   transparent: true, opacity: 0,
 });
+// Torches render as a small box model in the mesher (2px-wide, 10px-tall
+// post; wall variants tilt out of their wall), not as cube faces — tiles
+// stay null so the generic face emitter skips them and world/chunks.js
+// special-cases `special: 'torch'` ids instead. Item visuals (icon, drop,
+// hand) use the flat TORCH atlas tile as a sprite, like vanilla.
 register(BLOCK.TORCH, 'torch', 'Torch', {
-  faces: { all: TILE.TORCH }, hardness: 0, solid: false, transparent: true,
+  faces: null, hardness: 0, solid: false, transparent: true,
   light: 14, special: 'torch',
 });
+function registerWallTorch(id, name) {
+  register(id, name, 'Torch', {
+    faces: null, hardness: 0, solid: false, transparent: true,
+    light: 14, special: 'torch', drops: [{ item: 'torch', count: 1 }],
+  });
+}
+registerWallTorch(BLOCK.TORCH_WALL_S, 'torch_wall_s');
+registerWallTorch(BLOCK.TORCH_WALL_N, 'torch_wall_n');
+registerWallTorch(BLOCK.TORCH_WALL_E, 'torch_wall_e');
+registerWallTorch(BLOCK.TORCH_WALL_W, 'torch_wall_w');
 register(BLOCK.CACTUS, 'cactus', 'Cactus', {
   faces: { top: TILE.CACTUS_TOP, bottom: TILE.CACTUS_TOP, side: TILE.CACTUS_SIDE },
   hardness: 0.4, transparent: true, damagesOnContact: true, special: 'cactus',
@@ -496,12 +518,56 @@ export function facingToward(cell, pos) {
   return dz > 0 ? 'S' : 'N';
 }
 
+// ---------------------------------------------------------------------------
+// Torch family (Phase 11)
+// ---------------------------------------------------------------------------
+
+// Per-torch-id lean direction: floor torches [0, 0], wall torches the unit
+// horizontal direction they lean (out of the wall they attach to). The
+// mesher builds the box model from this; undefined = not a torch.
+export const TORCH_LEAN = {
+  [BLOCK.TORCH]: [0, 0],
+  [BLOCK.TORCH_WALL_S]: [0, 1],
+  [BLOCK.TORCH_WALL_N]: [0, -1],
+  [BLOCK.TORCH_WALL_E]: [1, 0],
+  [BLOCK.TORCH_WALL_W]: [-1, 0],
+};
+const TORCH_WALL_BY_FACE = {
+  '0,1': BLOCK.TORCH_WALL_S,
+  '0,-1': BLOCK.TORCH_WALL_N,
+  '1,0': BLOCK.TORCH_WALL_E,
+  '-1,0': BLOCK.TORCH_WALL_W,
+};
+
+export function isTorch(id) {
+  return TORCH_LEAN[id] !== undefined;
+}
+
+// The cell a torch needs solid support in: below a floor torch, behind a
+// wall torch. Returns { x, y, z } or null for non-torch ids.
+export function torchSupportCell(id, x, y, z) {
+  const lean = TORCH_LEAN[id];
+  if (!lean) return null;
+  if (lean[0] === 0 && lean[1] === 0) return { x, y: y - 1, z };
+  return { x: x - lean[0], y, z: z - lean[1] };
+}
+
 // The id actually placed for a selected block item: oriented blocks
-// (furnace) turn their front toward the player; everything else places
-// as-is. `cell` is the target cell, `pos` the player's feet position.
-export function placementVariant(id, cell, pos) {
+// (furnace) turn their front toward the player; torches become the wall
+// variant leaning out of the clicked face (null = this face can't hold the
+// block — torches never hang from ceilings); everything else places as-is.
+// `cell` is the target cell, `pos` the player's feet position, `face` the
+// clicked face normal [fx, fy, fz] (optional — callers that can't know it
+// get the floor/default variant).
+export function placementVariant(id, cell, pos, face) {
   if (id === BLOCK.FURNACE) {
     return FURNACE_BY_FACING[facingToward(cell, pos)].unlit;
+  }
+  if (id === BLOCK.TORCH && face) {
+    const [fx, fy, fz] = face;
+    if (fy === 1) return BLOCK.TORCH;
+    if (fy === -1) return null; // no torches on ceilings
+    return TORCH_WALL_BY_FACE[`${fx},${fz}`] ?? BLOCK.TORCH;
   }
   return id;
 }

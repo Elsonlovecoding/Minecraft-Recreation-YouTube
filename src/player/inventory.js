@@ -56,6 +56,38 @@ export function itemMaxStack(name) {
 }
 
 // ---------------------------------------------------------------------------
+// Food registry (Phase 11) — hunger points restored and the hidden saturation
+// buffer filled by eating (both vanilla values; cooked meat restores far more
+// than raw). `container` is the item left behind after eating (stew -> bowl).
+// Item ids follow the texture names in assets/items/.
+// ---------------------------------------------------------------------------
+
+const FOODS = {
+  apple:           { hunger: 4, saturation: 2.4 },
+  golden_apple:    { hunger: 4, saturation: 9.6 },
+  bread:           { hunger: 5, saturation: 6.0 },
+  beef:            { hunger: 3, saturation: 1.8 },
+  cooked_beef:     { hunger: 8, saturation: 12.8 },
+  porkchop:        { hunger: 3, saturation: 1.8 },
+  cooked_porkchop: { hunger: 8, saturation: 12.8 },
+  chicken:         { hunger: 2, saturation: 1.2 },
+  cooked_chicken:  { hunger: 6, saturation: 7.2 },
+  mutton:          { hunger: 2, saturation: 1.2 },
+  cooked_mutton:   { hunger: 6, saturation: 9.6 },
+  carrot:          { hunger: 3, saturation: 3.6 },
+  potato:          { hunger: 1, saturation: 0.6 },
+  baked_potato:    { hunger: 5, saturation: 6.0 },
+  melon_slice:     { hunger: 2, saturation: 1.2 },
+  rotten_flesh:    { hunger: 4, saturation: 0.8 },
+  mushroom_stew:   { hunger: 6, saturation: 7.2, container: 'bowl' },
+};
+
+// { hunger, saturation, container? } for an edible item name, else null.
+export function foodValue(name) {
+  return FOODS[name] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // The inventory
 // ---------------------------------------------------------------------------
 
@@ -175,6 +207,13 @@ export class Inventory {
     return this.slots.some(
       (s) => s.name === name && s.durability == null && s.count < cap,
     );
+  }
+
+  // Replace the selected stack outright (bucket fill/empty: the held bucket
+  // becomes a water/lava bucket and back — all stack-1 items).
+  replaceSelected(name, count = 1) {
+    this.slots[this.selected] = { name, count };
+    this._emit();
   }
 
   // Consume n from the selected stack (placing blocks). False if it can't.
