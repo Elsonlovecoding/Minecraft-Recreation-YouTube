@@ -564,6 +564,10 @@ export function createInteraction({
     // let it eat the stack count.
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
     if (!isReplaceable(world.getBlock(x, y, z))) return;
+    // Torches can't stand in a fluid (vanilla) — the generic rule lets
+    // blocks displace fluid cells, but a torch would burn underwater and
+    // silently delete the source.
+    if (id === BLOCK.TORCH && world.getBlock(x, y, z) !== BLOCK.AIR) return;
     if (placementBlockedByPlayer(x, y, z, player.body.position)) return;
     // Oriented blocks place their variant: furnaces face the player, torches
     // become the wall variant leaning out of the clicked face; null = the
@@ -607,11 +611,13 @@ export function createInteraction({
     return true;
   }
 
-  // The bucket action for the currently held item, or false when the held
-  // item isn't a bucket at all (the press falls through to eating/placing).
-  function tryBucketAction() {
+  // Full-bucket placement for the currently held item, or false when the
+  // held item isn't a filled bucket (the press falls through to eating/
+  // placing). Empty-bucket scooping resolves EARLIER than the use-block
+  // check (see update()) because a nearer fluid must win over a usable
+  // block behind it.
+  function tryBucketPlace() {
     const name = inventory.selectedName;
-    if (name === 'bucket') return tryScoopFluid();
     if (name === 'water_bucket') return tryPlaceFluid(BLOCK.WATER);
     if (name === 'lava_bucket') return tryPlaceFluid(BLOCK.LAVA);
     return false;
@@ -673,29 +679,38 @@ export function createInteraction({
       outline.visible = false;
     }
 
-    // Right-click use: the targeted block (crafting table...) takes
-    // precedence over placing, unless sneaking (vanilla). A handled use
-    // consumes the press entirely — no place, no hold-to-place repeat.
-    // Buckets resolve next, also one action per press — the held item
-    // changes underneath (bucket <-> filled bucket), so a hold-repeat would
-    // immediately undo itself.
+    // Right-click resolution, one action per press: with an empty bucket a
+    // NEARER fluid on the ray wins first (vanilla — the scoop must not be
+    // eaten by a crafting table behind the pool; tryScoopFluid's ray stops
+    // at the first solid, so a scoop implies the fluid was nearest). Then
+    // the targeted usable block (crafting table...), unless sneaking. Then
+    // full-bucket placement. Bucket actions never hold-repeat — the held
+    // item changes underneath, so a repeat would immediately undo itself.
     if (useCheckPending) {
       useCheckPending = false;
-      if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
+      if (inventory.selectedName === 'bucket' && tryScoopFluid()) {
         mouseRight = false;
         startSwing();
-      } else if (tryBucketAction()) {
+      } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
+        mouseRight = false;
+        startSwing();
+      } else if (tryBucketPlace()) {
         mouseRight = false;
         startSwing();
       }
     }
 
     // Eating: hold right click with food selected while hunger is missing.
-    // Switching the selection or releasing the button restarts from zero.
+    // Releasing the button or switching the selection — including to
+    // another slot holding the SAME food — restarts from zero (vanilla
+    // resets item use on any slot change).
     const heldFood = stats ? foodValue(inventory.selectedName) : null;
     if (mouseRight && heldFood && stats.canEat) {
-      if (!eating || eating.name !== inventory.selectedName) {
-        eating = { name: inventory.selectedName, t: 0 };
+      if (
+        !eating || eating.name !== inventory.selectedName ||
+        eating.slot !== inventory.selected
+      ) {
+        eating = { name: inventory.selectedName, slot: inventory.selected, t: 0 };
       }
       eating.t += dt;
       if (eating.t >= STATS.EAT_SECONDS) {
@@ -713,7 +728,10 @@ export function createInteraction({
       eating = null;
     }
 
-    updateBreaking(dt);
+    // Using an item blocks attacking (vanilla): while eating, mining stops
+    // and its progress resets; placing pauses too.
+    if (eating) resetBreak();
+    else updateBreaking(dt);
     if (!eating) updatePlacing(dt);
 
     // Crack overlay over the block being broken. A destroy-stage texture

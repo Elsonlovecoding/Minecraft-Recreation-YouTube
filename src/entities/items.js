@@ -197,11 +197,11 @@ export function createSpriteMesh(name, size) {
 }
 
 // ---------------------------------------------------------------------------
-// Extruded item model (the vanilla held-item look): the sprite as a thin
-// slab — full front and back quads plus one edge quad per opaque/transparent
-// pixel boundary, each edge sampling its pixel's centre so the rim takes the
-// art's colours. Used by the first-person hand for tools (interaction.js);
-// dropped items stay flat sprites.
+// Extruded item model (the vanilla item look): the sprite as a thin slab —
+// full front and back quads plus one edge quad per opaque/transparent pixel
+// boundary, each edge sampling its pixel's centre so the rim takes the
+// art's colours. Used by the first-person hand for tools (interaction.js)
+// AND by dropped sprite items (Phase 11 — visible depth from the side).
 // ---------------------------------------------------------------------------
 
 const extrudedCache = new Map(); // name -> { geometry, material } once built

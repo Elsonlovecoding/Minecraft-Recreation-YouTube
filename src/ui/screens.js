@@ -551,7 +551,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     camera.getWorldDirection(throwDir);
     items.spawn(
       name, count,
-      { x: throwFrom.x, y: throwFrom.y - 0.3, z: throwFrom.z },
+      { x: throwFrom.x, y: throwFrom.y - ITEMS.THROW_EYE_DROP, z: throwFrom.z },
       {
         x: throwDir.x * ITEMS.THROW_SPEED,
         y: throwDir.y * ITEMS.THROW_SPEED + ITEMS.THROW_UP,

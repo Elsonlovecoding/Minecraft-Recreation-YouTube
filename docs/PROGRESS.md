@@ -1115,9 +1115,48 @@ pickaxe with visible thickness, true-proportion block icons in hotbar +
 inventory, dense dark-interior canopies from below and a hole-free canopy
 from above, hunger drumsticks right-aligned with hearts, the death screen.
 An adversarial multi-agent review (5 lenses — stats logic, interaction
-flow, UI/DOM, meshing/world-gen, SPEC/integration — every finding
-independently re-verified by a dedicated skeptic) ran over the full diff;
-confirmed findings were fixed and re-verified (see the session log).
+flow, UI/DOM, meshing/world-gen, SPEC/integration — each probing the real
+modules with its own node repros and browser sessions) ran over the full
+diff. UI/DOM (51 probes: icon routing for every reachable item id, throw
+conservation incl. durability, death overlay input isolation, hunger fill
+at odd values, row layout) and meshing/world-gen (torch UV math traced to
+the actual atlas texels, wall pivots measured from mesh vertices for all
+four facings, border light indexing, culling around torches, canopy
+determinism over shuffled generation orders, three coastal ocean-shield
+censuses with zero water-air contacts, sand-onto-wall-torch pops) came
+back clean. Ten findings elsewhere were confirmed with repros and fixed +
+regression-checked:
+- Fall damage could apply through water when one fast physics step
+  (terminal velocity, or a clamped 0.1s hitch frame) crossed the whole
+  pool — the landing suppression read the START-of-step fluid sense; the
+  controller now re-senses fluids at the post-move position before fall
+  tracking (was 15/50 terminal pond falls dying; now 0/50, dry-land falls
+  unchanged).
+- stats.update now guards dt <= 0 — body.step early-returns on zero-delta
+  frames without resetting lastLanding, so a coarse-timestamp frame
+  re-applied the same landing damage.
+- A lethal cactus tick knocked back the corpse after die() zeroed the
+  velocity (knockback now applies before damage).
+- Knockback pops and fluid exit hops were billed as jump exhaustion — the
+  controller now sets a one-frame `lastJumped` only on real jumps and
+  stats reads that instead of a ground-to-air heuristic.
+- An empty bucket right-clicked at a fluid with a usable block behind it
+  opened the block instead of scooping — a nearer fluid now resolves
+  before the use-block check (a dry click on a table still opens it).
+- Switching to another hotbar slot holding the SAME food kept the eat
+  timer — eating now keys on slot + name and restarts on any change.
+- Mining continued while eating — using an item now blocks attacking
+  (break progress resets while an eat is in progress), vanilla-style.
+- A torch could be placed INTO a water/lava source cell (burning
+  underwater, silently deleting the source) — torch destinations must now
+  be air.
+- Two config-hygiene fixes: the torch-pop drop height and throw eye-drop
+  offset moved to config (ITEMS.DROP_SPAWN_Y_OFFSET reused,
+  THROW_EYE_DROP added), the exhaustion teleport guard to
+  STATS.EXHAUST_MAX_STEP_BLOCKS; plus a stale items.js header comment
+  ("dropped items stay flat sprites") corrected.
+All 74 automated checks re-run green after the fixes (44 node + 22
+browser gameplay + 8 fix regressions), zero console errors.
 
 ---
 

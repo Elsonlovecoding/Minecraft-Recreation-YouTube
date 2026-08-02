@@ -434,6 +434,8 @@ export const STATS = {
   EXHAUST_JUMP: 0.05,
   EXHAUST_SPRINT_JUMP: 0.2,
   EXHAUST_DAMAGE: 0.1,          // taking any damage costs a little food
+  EXHAUST_MAX_STEP_BLOCKS: 2,   // per-frame moves beyond this are teleports
+                                // (respawn), not travel — no exhaustion
   RESPAWN_SATURATION: 5,        // saturation after (re)spawn (vanilla)
 
   // Knockback (cactus contact now; the combat phase reuses applyKnockback)
@@ -554,6 +556,7 @@ export const ITEMS = {
                                   // outside the inventory panel with a cursor
                                   // stack throws it into the world)
   THROW_UP: 1.5,                  // small upward lift added to a throw
+  THROW_EYE_DROP: 0.3,            // throws spawn this far below the eye
   BLOCK_SCALE: 0.25,              // edge length of a dropped mini-block
   SPRITE_SCALE: 0.35,             // edge length of a dropped flat item sprite
   REST_CLEARANCE: 0.02,           // items rest this far above the ground plane

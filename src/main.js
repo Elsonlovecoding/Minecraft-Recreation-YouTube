@@ -2,7 +2,7 @@
 // the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
-import { DEBUG, SKY, LAVA_VIEW } from './config.js';
+import { DEBUG, SKY, LAVA_VIEW, ITEMS } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
@@ -87,7 +87,9 @@ async function init() {
       const s = torchSupportCell(id, tx, ty, tz);
       if (s && !isSolid(world.getBlock(s.x, s.y, s.z))) {
         world.setBlock(tx, ty, tz, BLOCK.AIR);
-        items.spawn('torch', 1, { x: tx + 0.5, y: ty + 0.25, z: tz + 0.5 });
+        items.spawn('torch', 1, {
+          x: tx + 0.5, y: ty + ITEMS.DROP_SPAWN_Y_OFFSET, z: tz + 0.5,
+        });
       }
     }
   });

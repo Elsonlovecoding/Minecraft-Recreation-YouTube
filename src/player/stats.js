@@ -161,7 +161,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     const p = body.position;
     if (prevX !== null) {
       const dist = Math.hypot(p.x - prevX, p.z - prevZ);
-      if (dist > 0 && dist < 2) { // teleports (respawn) don't count
+      if (dist > 0 && dist < STATS.EXHAUST_MAX_STEP_BLOCKS) {
         if (body.sprinting) exhaustion += dist * STATS.EXHAUST_SPRINT_PER_BLOCK;
         else if (body.swimming) exhaustion += dist * STATS.EXHAUST_SWIM_PER_BLOCK;
       }
