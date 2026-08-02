@@ -43,7 +43,6 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   let drownTimer = STATS.DROWN_TICK_SECONDS;
   let regenTimer = STATS.REGEN_INTERVAL_SECONDS;
   let starveTimer = STATS.STARVE_TICK_SECONDS;
-  let prevOnGround = true;
   let prevX = null;      // last-frame position for movement exhaustion
   let prevZ = null;
   // Computed eagerly: at boot the spawn chunks are already loaded (the
@@ -169,11 +168,12 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     }
     prevX = p.x;
     prevZ = p.z;
-    // A jump is the ground->air transition with real upward velocity.
-    if (prevOnGround && !body.onGround && body.velocity.y > 1) {
+    // Only REAL jumps cost (the controller's one-frame signal) — a
+    // ground->air heuristic would also bill knockback pops and fluid exit
+    // hops as jumps.
+    if (body.lastJumped) {
       exhaustion += body.sprinting ? STATS.EXHAUST_SPRINT_JUMP : STATS.EXHAUST_JUMP;
     }
-    prevOnGround = body.onGround;
   }
 
   // Spend accumulated exhaustion: saturation buffers hunger (vanilla).
@@ -186,10 +186,13 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   }
 
   function update(dt) {
+    // Zero-delta frames must be inert: body.step early-returns on dt <= 0
+    // WITHOUT resetting its one-frame lastLanding signal, so consuming it
+    // here again would duplicate fall damage.
+    if (dt <= 0) return;
     flash = Math.max(0, flash - dt);
     if (dead || player.mode === 'fly') {
       prevX = null; // no movement exhaustion across a fly-mode traversal
-      prevOnGround = true;
       return;
     }
     const body = player.body;
@@ -215,12 +218,15 @@ export function createStats({ world, player, inventory, items, onDeath }) {
       } else {
         const cactus = touchesCactus();
         if (cactus) {
-          damage(STATS.CACTUS_DAMAGE);
-          contactTimer = STATS.DAMAGE_TICK_SECONDS;
+          // Knockback BEFORE damage: a lethal tick's die() zeroes the
+          // velocity so the corpse holds still — knocking back afterwards
+          // would launch the dead body under the death screen.
           applyKnockback(
             body.position.x - (cactus.x + 0.5),
             body.position.z - (cactus.z + 0.5),
           );
+          damage(STATS.CACTUS_DAMAGE);
+          contactTimer = STATS.DAMAGE_TICK_SECONDS;
         }
       }
     }
