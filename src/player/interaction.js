@@ -254,17 +254,21 @@ export function createInteraction({
 
   // --- crack overlay
   const crackTextures = loadCrackTextures(RENDER.BREAK_STAGES);
+  // A unit cube EXACTLY on the block faces: the crack texels align with the
+  // block's own texel grid from every angle (an inflated cube parallaxes the
+  // overlay off the face at grazing views — the Phase 12 one-pixel-offset
+  // fix). polygonOffset pulls the crack's depth in front of the coplanar
+  // face without moving any fragment on screen.
   const crackMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(
-      1 + INTERACTION.CRACK_INFLATE,
-      1 + INTERACTION.CRACK_INFLATE,
-      1 + INTERACTION.CRACK_INFLATE,
-    ),
+    new THREE.BoxGeometry(1, 1, 1),
     new THREE.MeshBasicMaterial({
       map: crackTextures[0],
       transparent: true,
       depthWrite: false,
       toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: INTERACTION.CRACK_POLYGON_OFFSET_FACTOR,
+      polygonOffsetUnits: INTERACTION.CRACK_POLYGON_OFFSET_UNITS,
       // The destroy-stage background texels are WHITE at alpha 1/255 — they
       // must be discarded, not blended (blended they'd double the face
       // brightness: dst * (1 + 1 - 1/255)). What survives the alphaTest has
@@ -589,7 +593,9 @@ export function createInteraction({
 
   function tryScoopFluid() {
     const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
-    if (!hit || !blockDef(hit.id).fluid) return false;
+    // Only SOURCE blocks fill a bucket (vanilla) — flowing lava is not a
+    // bucketful, so a flow cell on the ray consumes nothing.
+    if (!hit || (hit.id !== BLOCK.WATER && hit.id !== BLOCK.LAVA)) return false;
     world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
     inventory.replaceSelected(hit.id === BLOCK.LAVA ? 'lava_bucket' : 'water_bucket');
     return true;

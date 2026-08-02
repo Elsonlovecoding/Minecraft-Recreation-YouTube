@@ -293,7 +293,8 @@ export const PLAYER = {
   MAX_HEALTH: 20,
   MAX_HUNGER: 20,
   REGEN_HUNGER_THRESHOLD: 18,   // health regenerates at/above this hunger
-  STARVE_FLOOR_HEALTH: 2,       // starvation stops at 1 heart in the overworld
+  STARVE_FLOOR_HEALTH: 10,      // starvation stops at 5 hearts — Minecraft's
+                                // Easy difficulty (Phase 12; was 1 heart)
   REACH: 5,                     // block interaction distance
 
   // Body (AABB) and first-person camera
@@ -380,7 +381,10 @@ export const PLAYER = {
 
   // Falling (damage itself is applied by the stats phase)
   FALL_DAMAGE_THRESHOLD: 3,     // safe fall height in blocks
-  FALL_DAMAGE_PER_BLOCK: 2,     // 1 heart per block beyond the threshold
+  FALL_DAMAGE_PER_BLOCK: 1,     // half a heart per block beyond the threshold
+                                // (real Minecraft: 4 blocks = 0.5 hearts,
+                                // 10 blocks = 3.5, 23+ kills from full health;
+                                // Phase 12 fixed the doubled value)
 
   // Safe spawn: nearest dry, clear surface column to this point
   SPAWN: { X: 8, Z: 8, SEARCH_RADIUS: 48 },
@@ -454,6 +458,27 @@ export const STATS = {
 export const FALLING = {
   GRAVITY: 24,                  // blocks/s² on a detached falling block
   MAX_FALL_SPEED: 40,
+};
+
+// ---------------------------------------------------------------------------
+// Flowing fluids (world/fluids.js) — Phase 12: lava spreads from sources,
+// falls when unsupported, and recedes when its feed is cut. Water stays
+// static (its lakes are generation-sealed; water flow is a later phase).
+// ---------------------------------------------------------------------------
+
+export const FLUIDS = {
+  LAVA_SPREAD_SECONDS: 1.5,     // one spread step (vanilla overworld lava tick)
+  LAVA_RANGE: 3,                // horizontal spread distance from a source (SPEC)
+  // Rendered surface height per horizontal flow level, as a fraction of the
+  // cell — each step visibly lower than the last. Sources render full cubes.
+  FLOW_HEIGHTS: [0.75, 0.5, 0.25],
+  FALL_HEIGHT: 1.0,             // falling columns fill their cell
+  SCROLL_TILES_PER_SECOND: 0.35, // animated flowing-texture scroll rate
+  MAX_UPDATES_PER_TICK: 400,    // fluid cells processed per spread tick (the
+                                // remainder carries — a lake edge can't stall
+                                // a frame)
+  SCAN_CHUNKS_PER_FRAME: 1,     // newly meshed chunks settled per frame
+                                // (finds generated lava with air below/beside)
 };
 
 // ---------------------------------------------------------------------------
@@ -613,7 +638,12 @@ export const INTERACTION = {
   OUTLINE_COLOR: 0x000000,        // targeted face outline
   OUTLINE_OPACITY: 0.75,
   OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)
-  CRACK_INFLATE: 0.008,           // crack overlay cube inflation over the block
+  // The crack overlay sits EXACTLY on the block faces (Phase 12 — the old
+  // inflated cube parallaxed the crack texture up to a pixel off the face at
+  // grazing view angles). polygonOffset wins the depth test against the
+  // coplanar face without moving a single fragment on screen.
+  CRACK_POLYGON_OFFSET_FACTOR: -1,
+  CRACK_POLYGON_OFFSET_UNITS: -2,
   DESTROY_STAGE_PATH: 'assets/destroy/destroy_stage_', // real Minecraft crack
                                   // textures, `${PATH}${stage}.png`, 10 stages
   HAND: {

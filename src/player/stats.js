@@ -8,7 +8,7 @@
 //            drives the hold-right-click flow, calling eat()) restores both.
 //   Regen    +1 health per REGEN_INTERVAL_SECONDS while hunger >= 18.
 //   Starving at 0 hunger: STARVE_DAMAGE per tick down to STARVE_FLOOR_HEALTH
-//            (1 heart) — hunger alone never kills (SPEC).
+//            (5 hearts, Easy difficulty) — hunger alone never kills (SPEC).
 //   Damage   lava contact (+ sets the body on fire — water extinguishes),
 //            fire ticks after leaving lava, cactus contact (with knockback
 //            away from the block), fall damage beyond PLAYER.
@@ -27,7 +27,7 @@
 // one (the 1/16-inset cactus box hurts on touch, including standing on top).
 
 import { PLAYER, STATS } from '../config.js';
-import { BLOCK } from '../world/blocks.js';
+import { BLOCK, isLava } from '../world/blocks.js';
 import { findSpawnPosition } from './controller.js';
 
 export function createStats({ world, player, inventory, items, onDeath }) {
@@ -51,7 +51,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   // (long-unloaded) spawn area inside one frame.
   const spawn = findSpawnPosition(world);
 
-  function bodyTouches(blockId, grow) {
+  function bodyTouches(matches, grow) {
     const p = player.body.position;
     const hw = PLAYER.WIDTH / 2 + grow;
     const y0 = Math.floor(p.y - grow);
@@ -61,15 +61,17 @@ export function createStats({ world, player, inventory, items, onDeath }) {
         for (const dz of [-hw, hw]) {
           const x = Math.floor(p.x + dx);
           const z = Math.floor(p.z + dz);
-          if (world.getBlock(x, y, z) === blockId) return { x, y, z };
+          if (matches(world.getBlock(x, y, z))) return { x, y, z };
         }
       }
     }
     return null;
   }
 
-  const touchesLava = () => bodyTouches(BLOCK.LAVA, -STATS.CONTACT_INSET);
-  const touchesCactus = () => bodyTouches(BLOCK.CACTUS, STATS.CACTUS_CONTACT_EXPAND);
+  // Flowing lava cells burn exactly like the source (Phase 12).
+  const touchesLava = () => bodyTouches(isLava, -STATS.CONTACT_INSET);
+  const isCactus = (id) => id === BLOCK.CACTUS;
+  const touchesCactus = () => bodyTouches(isCactus, STATS.CACTUS_CONTACT_EXPAND);
 
   // Knockback away from (dirX, dirZ) — normalised here; the vertical pop
   // never cancels an existing upward velocity. Mob hits (combat phase)
@@ -197,7 +199,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     }
     const body = player.body;
 
-    // --- fall damage: 1 heart per block beyond the safe height (SPEC).
+    // --- fall damage: half a heart per block beyond the safe height (SPEC).
     // body.lastLanding is this frame's landing signal (player.update ran
     // earlier in the frame); fluids already suppress it in the controller.
     if (body.lastLanding > PLAYER.FALL_DAMAGE_THRESHOLD) {

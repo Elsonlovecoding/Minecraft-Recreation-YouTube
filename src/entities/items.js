@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK, ATLAS } from '../config.js';
-import { BLOCK, blockIdByName, faceTiles, isSolid } from '../world/blocks.js';
+import { BLOCK, blockIdByName, faceTiles, isSolid, isLava } from '../world/blocks.js';
 import { getUV, getAtlasTexture, TILE } from '../render/atlas.js';
 import { createChestMesh } from '../world/chests.js';
 
@@ -539,11 +539,11 @@ export function createItemManager({ world, scene }) {
         continue;
       }
       // Lava burns dropped items (vanilla), checked at the item's midpoint.
-      if (world.getBlock(
+      if (isLava(world.getBlock(
         Math.floor(e.pos.x),
         Math.floor(e.pos.y + e.halfHeight),
         Math.floor(e.pos.z),
-      ) === BLOCK.LAVA) {
+      ))) {
         remove(i);
         continue;
       }

@@ -14,6 +14,7 @@ import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
 import { BLOCK, isFurnace, isTorch, torchSupportCell, isSolid } from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
+import { createFluids } from './world/fluids.js';
 import { createChests } from './world/chests.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
@@ -49,7 +50,10 @@ async function init() {
   // Phase 3: the world renders as streamed chunk meshes. A small area builds
   // synchronously before the first frame; the rest arrives budgeted per frame.
   const world = new World();
-  world.bindScene(scene, createChunkMaterials(atlasTexture));
+  // Phase 12: kept in a named binding — the loop drives the animated
+  // flowing-lava texture through chunkMaterials.scrollLava.
+  const chunkMaterials = createChunkMaterials(atlasTexture);
+  world.bindScene(scene, chunkMaterials);
 
   // Phase 5: the player — spawned safely on the surface, camera at eye
   // height. The old fly camera lives behind DEBUG.FLY_TOGGLE_CODE.
@@ -68,6 +72,10 @@ async function init() {
   // checks, furnace teardown and chest lifecycle all subscribe.
   const falling = createFallingBlocks({ world, scene, items });
   world.addBlockListener(falling.onBlockChanged);
+  // Phase 12: flowing lava — sources pour and spread, flows recede when
+  // their feed is cut; newly meshed chunks settle their generated lava once.
+  const fluids = createFluids({ world });
+  world.addBlockListener(fluids.onBlockChanged);
   // Phase 10: furnaces tick whether or not a screen is open; chests are
   // entity-textured box models with persistent contents.
   const smelting = createSmeltingSystem({ world, items });
@@ -148,6 +156,7 @@ async function init() {
   window.__interaction = interaction;
   window.__inventory = inventory;
   window.__falling = falling;
+  window.__fluids = fluids;
   window.__stats = stats;
   window.__smelting = smelting;
   window.__chests = chests;
@@ -184,20 +193,54 @@ async function init() {
     if (!stillThere) screens.closeScreen();
   });
 
+  // Phase 12: the pause state. Whenever the pointer is unlocked with no
+  // screen open (Esc from gameplay, or before the very first click), the
+  // game freezes completely: physics and momentum, entities, day/night,
+  // block break progress, furnaces — nothing advances until play resumes.
+  // Input needs no extra gating: every gameplay input path (movement keys,
+  // E, number keys, wheel, mouse) already requires pointer lock, and screens
+  // can only open while locked. Only a click (or Esc, below) resumes.
+  // The harness override (`debugForceInput`) keeps headless tests running
+  // without real pointer lock.
+  let everLocked = false;
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === canvas) everLocked = true;
+  });
+  const isPaused = () =>
+    document.pointerLockElement !== canvas &&
+    !screens.isOpen && !screens.isDeathShown && !player.inputOverridden;
+  // Esc while paused resumes, like vanilla. The lock request can reject
+  // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
+  // up and a click resumes instead (same swallow as the click path).
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' || !isPaused()) return;
+    const req = canvas.requestPointerLock();
+    if (req && typeof req.catch === 'function') req.catch(() => {});
+  });
+
   const clock = new THREE.Clock();
   let wasEyeInLava = false;
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
-    player.update(delta);
-    interaction.update(delta);
-    items.update(delta, player.position, onPickup);
-    falling.update(delta);
-    smelting.update(delta); // furnaces run with the UI closed, independently
-    chests.update(delta);   // lid animation + chunk-visibility follow
-    stats.update(delta);
-    screens.update(delta);  // furnace flame/arrow indicators
-    world.updateStreaming(camera.position);
-    dayNight.update(delta, camera.position); // also recentres the sky dome
+    const paused = isPaused();
+    // The "Game paused" title only reads right once play has begun; the
+    // first-boot freeze keeps the plain "Click to play" hint.
+    document.body.classList.toggle('mc-paused', paused && everLocked);
+    if (!paused) {
+      player.update(delta);
+      interaction.update(delta);
+      items.update(delta, player.position, onPickup);
+      falling.update(delta);
+      smelting.update(delta); // furnaces run with the UI closed, independently
+      chests.update(delta);   // lid animation + chunk-visibility follow
+      stats.update(delta);
+      screens.update(delta);  // furnace flame/arrow indicators
+      fluids.update(delta);   // lava spread steps + new-chunk settling
+      chunkMaterials.scrollLava(delta); // animated flowing-lava texture
+    }
+    world.updateStreaming(camera.position); // terrain loads even while paused
+    // delta 0 while paused: the palette still applies, time doesn't advance.
+    dayNight.update(paused ? 0 : delta, camera.position);
     // Submerged in lava: near-blind orange view — the fog collapses to
     // arm's reach (the HUD overlay in ui/hud.js does the rest). dayNight
     // rewrites the fog colour every frame, so leaving lava restores itself;

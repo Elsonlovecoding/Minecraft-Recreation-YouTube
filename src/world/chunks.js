@@ -10,8 +10,8 @@
 // materials combine with the time-of-day uniforms.
 
 import * as THREE from 'three';
-import { CHUNK, OVERWORLD, LIGHTING, RENDER, SHAPES } from '../config.js';
-import { BLOCK, BLOCKS, TORCH_LEAN } from './blocks.js';
+import { CHUNK, OVERWORLD, LIGHTING, RENDER, SHAPES, ATLAS, FLUIDS } from '../config.js';
+import { BLOCK, BLOCKS, TORCH_LEAN, LAVA_LEVEL_OF } from './blocks.js';
 import { getUV, TILE } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
 
@@ -94,6 +94,30 @@ for (let id = 0; id < NUM_IDS; id++) {
 // torches mesh as a small box model, not cube faces). null = not a torch.
 const TORCH_LEAN_OF = new Array(NUM_IDS).fill(null);
 for (const [id, lean] of Object.entries(TORCH_LEAN)) TORCH_LEAN_OF[id] = lean;
+
+// Lava family tables (Phase 12): flowing/falling cells render through their
+// own partial-height emitter in the PASS_LAVA bucket; the SOURCE keeps its
+// normal full-cube path (lakes look exactly as before). Heights per id come
+// from FLUIDS config — each horizontal step visibly lower.
+const PASS_LAVA = 4;
+const IS_LAVA_CELL = new Uint8Array(NUM_IDS);   // source, flows and falls
+const IS_LAVA_FLOW = new Uint8Array(NUM_IDS);   // flows and falls only
+const LAVA_HEIGHT = new Float32Array(NUM_IDS);  // rendered surface height
+for (let id = 0; id < NUM_IDS; id++) {
+  const level = LAVA_LEVEL_OF[id];
+  if (level < 0) continue;
+  IS_LAVA_CELL[id] = 1;
+  if (id === BLOCK.LAVA) {
+    LAVA_HEIGHT[id] = 1;
+  } else {
+    IS_LAVA_FLOW[id] = 1;
+    LAVA_HEIGHT[id] =
+      id === BLOCK.LAVA_FALL ? FLUIDS.FALL_HEIGHT : FLUIDS.FLOW_HEIGHTS[level - 1];
+  }
+}
+// Flow side faces sit a hair inside their cell so they can never z-fight a
+// transparent neighbour's face on the shared boundary plane (glass, water).
+const LAVA_SIDE_INSET = 0.001;
 
 // ---------------------------------------------------------------------------
 // Torch box model (Phase 11) — a WIDTH x HEIGHT x WIDTH post: floor torches
@@ -194,10 +218,51 @@ export function createChunkMaterials(atlasTexture) {
     depthWrite: false,
     side: THREE.DoubleSide,
   });
+  // Phase 12: flowing lava scrolls its texture, so it samples its own
+  // repeating copy of the still-lava tile — the shared atlas is clamped and
+  // must not scroll under every other block. The mesher's flow emitter
+  // writes UVs in tile units with v running downstream, so one shared
+  // offset.y slides every flow face along its own local flow direction.
+  const P = ATLAS.TILE_PIXELS;
+  const lavaCanvas = document.createElement('canvas');
+  lavaCanvas.width = P;
+  lavaCanvas.height = P;
+  if (atlasTexture?.image) {
+    const tile = TILE.LAVA_STILL;
+    const col = tile % ATLAS.TILES_PER_ROW;
+    const row = Math.floor(tile / ATLAS.TILES_PER_ROW);
+    lavaCanvas.getContext('2d')
+      .drawImage(atlasTexture.image, col * P, row * P, P, P, 0, 0, P, P);
+  }
+  const lavaTexture = new THREE.CanvasTexture(lavaCanvas);
+  lavaTexture.magFilter = THREE.NearestFilter;
+  lavaTexture.minFilter = THREE.NearestFilter;
+  lavaTexture.generateMipmaps = false;
+  lavaTexture.wrapS = THREE.RepeatWrapping;
+  lavaTexture.wrapT = THREE.RepeatWrapping;
+  lavaTexture.colorSpace = THREE.SRGBColorSpace;
+  const lava = new THREE.MeshBasicMaterial({
+    map: lavaTexture,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+  });
   patchChunkMaterial(opaque);
   patchChunkMaterial(cutout);
   patchChunkMaterial(water);
-  return { opaque, cutout, water };
+  patchChunkMaterial(lava);
+  return {
+    opaque,
+    cutout,
+    water,
+    lava,
+    // main.js calls this once per un-paused frame: the animated flow.
+    // offset.y decreasing slides the pattern toward +v — downstream on flow
+    // tops, downward on flow sides and falling columns.
+    scrollLava(dt) {
+      lavaTexture.offset.y =
+        (((lavaTexture.offset.y - FLUIDS.SCROLL_TILES_PER_SECOND * dt) % 1) + 1) % 1;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +305,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   const wIds = light.blocks;
   const W = SIZE * 3;
 
-  const buckets = [null, newBucket(), newBucket(), newBucket()];
+  const buckets = [null, newBucket(), newBucket(), newBucket(), newBucket()];
   const aoStrength = LIGHTING.AO_STRENGTH;
   const waterSink = RENDER.WATER_SURFACE_SINK;
   const blocks = chunk.blocks;
@@ -297,6 +362,99 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     }
   };
 
+  // Flowing/falling lava (Phase 12): a partial-height cell in the PASS_LAVA
+  // bucket, lit flat by its own cell (it IS an emitter, like the torch).
+  // UVs are in repeating tile units with v running downstream — the shared
+  // material scroll animates every face along its own flow. Top faces sit at
+  // the level's height; sides are pulled a hair into the cell so they can't
+  // z-fight a transparent neighbour's face on the boundary plane.
+  const emitLavaFlow = (lx, iy, lz, id) => {
+    const bucket = buckets[PASS_LAVA];
+    const y = iy + MIN_Y;
+    const h = LAVA_HEIGHT[id];
+    const own = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + iy;
+    const sky = wSky[own] * (1 / 15);
+    const blk = wBlk[own] * (1 / 15);
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+
+    const pushQuad = (corners, uvs, b) => {
+      const base = bucket.count;
+      for (let k = 0; k < 4; k++) {
+        bucket.pos.push(corners[k][0], corners[k][1], corners[k][2]);
+        bucket.uv.push(uvs[k][0], uvs[k][1]);
+        bucket.col.push(b, b, b);
+        bucket.lig.push(sky, blk);
+      }
+      bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      bucket.count += 4;
+    };
+
+    // Top face, when not under more lava: flat at the level's height, UV v
+    // axis aligned to the local downstream direction. Downhill is read from
+    // the neighbours — lower lava and open air pull the flow toward them.
+    const above = iy + 1 < HEIGHT ? getId(lx, y + 1, lz) : BLOCK.AIR;
+    if (!IS_LAVA_CELL[above]) {
+      let gx = 0;
+      let gz = 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nid = getId(lx + dx, y, lz + dz);
+        if (nid === BLOCK.AIR) {
+          gx -= dx * h;
+          gz -= dz * h;
+        } else if (IS_LAVA_CELL[nid]) {
+          gx += dx * (LAVA_HEIGHT[nid] - h);
+          gz += dz * (LAVA_HEIGHT[nid] - h);
+        }
+      }
+      // Downstream as a cardinal direction (flows spread cardinally); an
+      // even gradient defaults to +z, which only picks the scroll axis.
+      let dirX = 0;
+      let dirZ = 1;
+      if (Math.abs(gx) > Math.abs(gz)) {
+        dirX = gx > 0 ? 1 : -1;
+        dirZ = 0;
+      } else if (Math.abs(gz) > 0) {
+        dirX = 0;
+        dirZ = gz > 0 ? 1 : -1;
+      }
+      const along = (cx, cz) =>
+        dirX > 0 ? cx : dirX < 0 ? 1 - cx : dirZ > 0 ? cz : 1 - cz;
+      const across = (cx, cz) => (dirX !== 0 ? cz : cx);
+      const cs = [[0, 1], [1, 1], [0, 0], [1, 0]]; // FACES[2] corner order
+      pushQuad(
+        cs.map(([cx, cz]) => [lx + cx, y + h, lz + cz]),
+        cs.map(([cx, cz]) => [across(cx, cz), along(cx, cz)]),
+        FB.top,
+      );
+    }
+
+    // Side faces: hidden by equal-or-taller lava or an opaque neighbour;
+    // otherwise a band from the cell floor to the surface, scrolling down.
+    for (const face of [FACES[0], FACES[1], FACES[4], FACES[5]]) {
+      const d = face.dir;
+      const nid = getId(lx + d[0], y, lz + d[2]);
+      if (IS_LAVA_CELL[nid] && LAVA_HEIGHT[nid] >= h - 1e-4) continue;
+      if (!IS_TRANSPARENT[nid]) continue;
+      const ox = -d[0] * LAVA_SIDE_INSET;
+      const oz = -d[2] * LAVA_SIDE_INSET;
+      pushQuad(
+        face.corners.map((c) => [lx + c[0] + ox, c[1] ? y + h : y, lz + c[2] + oz]),
+        face.corners.map((c) => [c[3], c[1] ? 0 : h]),
+        FB.side,
+      );
+    }
+
+    // Bottom face, over transparent non-lava (a flow crossing a glass roof).
+    const below = iy > 0 ? getId(lx, y - 1, lz) : BLOCK.AIR;
+    if (iy > 0 && IS_TRANSPARENT[below] && !IS_LAVA_CELL[below]) {
+      pushQuad(
+        FACES[3].corners.map((c) => [lx + c[0], y, lz + c[2]]),
+        FACES[3].corners.map((c) => [c[3], c[4]]),
+        FB.bottom,
+      );
+    }
+  };
+
   // One window cell sampled for AO + vertex light, written to the s* outs.
   // Outside the world vertically: air, full sky above, darkness below.
   let sOcc = 0;
@@ -324,6 +482,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         const lean = TORCH_LEAN_OF[id];
         if (lean !== null) {
           emitTorch(lx, iy, lz, lean);
+          continue;
+        }
+        if (IS_LAVA_FLOW[id]) {
+          emitLavaFlow(lx, iy, lz, id);
           continue;
         }
         const pass = PASS[id];
@@ -473,6 +635,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   addMesh(buckets[PASS_OPAQUE], materials.opaque);
   addMesh(buckets[PASS_CUTOUT], materials.cutout);
   addMesh(buckets[PASS_WATER], materials.water);
+  addMesh(buckets[PASS_LAVA], materials.lava);
 
   return { group, geometries };
 }
