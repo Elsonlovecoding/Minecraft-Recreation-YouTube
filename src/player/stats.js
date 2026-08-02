@@ -16,7 +16,11 @@ export function createStats({ world, player, inventory, items }) {
   let health = PLAYER.MAX_HEALTH;
   let contactTimer = 0; // countdown until the next contact damage tick
   let flash = 0;        // damage screen-flash countdown
-  let spawn = null;     // lazily computed, then cached
+  // Computed eagerly: at boot the spawn chunks are already loaded (the
+  // player just spawned there), so this is nearly free — computing it
+  // lazily on death instead would synchronously regenerate the whole
+  // (long-unloaded) spawn area inside one frame.
+  const spawn = findSpawnPosition(world);
 
   function bodyTouchesLava() {
     const p = player.body.position;
@@ -62,7 +66,6 @@ export function createStats({ world, player, inventory, items }) {
         stack.durability ?? undefined,
       );
     }
-    if (!spawn) spawn = findSpawnPosition(world);
     const body = player.body;
     body.position.x = spawn.x;
     body.position.y = spawn.y;
@@ -71,6 +74,7 @@ export function createStats({ world, player, inventory, items }) {
     body.velocity.y = 0;
     body.velocity.z = 0;
     body.fallDistance = 0;
+    body._fallStartY = spawn.y; // no phantom fall carried across the teleport
     body.breath = body.maxBreath;
     health = PLAYER.MAX_HEALTH;
   }

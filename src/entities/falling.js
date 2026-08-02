@@ -2,8 +2,9 @@
 // `falls: true`) detach when the block under them is removed, fall as a
 // full-size mini-block visual, and settle back into the world where they
 // land. Vanilla rules: a block that lands in a cell holding a non-solid,
-// non-fluid block (a torch) breaks and drops as an item; one that settles
-// into lava is destroyed; water is simply replaced.
+// non-fluid block (a torch) breaks and drops as an item; fluids are simply
+// replaced — falling blocks sink through water AND lava and settle on the
+// floor beneath, so lava lakes can be filled with gravel like vanilla.
 //
 // The manager listens to world.onBlockChanged (wired in main.js): any edit
 // queues a support check for the cell above it (mined support) and for the
@@ -42,9 +43,8 @@ export function createFallingBlocks({ world, scene, items }) {
   // The entity settles into `cy` (its below-neighbour is solid) — or breaks.
   function settle(e, cy) {
     const content = world.getBlock(e.x, cy, e.z);
-    if (content === BLOCK.LAVA) {
-      // destroyed by lava, like vanilla falling blocks
-    } else if (content === BLOCK.AIR || blockDef(content).fluid) {
+    if (content === BLOCK.AIR || blockDef(content).fluid) {
+      // Fluids (water and lava alike) are displaced — vanilla lake-filling.
       world.setBlock(e.x, cy, e.z, e.id);
     } else {
       // Landed on a non-solid obstruction (torch): pop off as an item.
@@ -85,10 +85,6 @@ export function createFallingBlocks({ world, scene, items }) {
         }
         if (isSolid(world.getBlock(e.x, cy - 1, e.z)) || cy === OVERWORLD.MIN_Y) {
           settle(e, cy);
-          break;
-        }
-        if (content === BLOCK.LAVA) {
-          settle(e, cy); // sank into lava — destroyed
           break;
         }
       }
