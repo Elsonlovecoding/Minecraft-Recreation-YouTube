@@ -8,7 +8,7 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 8 — crafting (recipes, 2x2 + 3x3 grids, result slot, shift-craft-max, the full wood-to-stone opening) + Phase 7 bug fixes (held-item distortion, real destroy-stage cracks)**
+Phase last completed: **Phase 9 — underground (caves, ravines, ores, stone variants, lava pools + lava damage, falling sand/gravel) + Phase 8 bug fixes (held-tool orientation via extruded item models, held-block scale)**
 
 ---
 
@@ -408,6 +408,87 @@ Phase last completed: **Phase 8 — crafting (recipes, 2x2 + 3x3 grids, result s
   the prone mode — surface swimming can't self-sustain on its own lowered
   eye and drain breath. `toggleFly` clears the flag.
 
+- `src/world/caves.js` — Phase 9 underground generation, all of it a pure
+  function of (seed, x, y, z): (1) **Cave carving**, two noise layers —
+  tunnels carve where two 3D simplex fields' squared sum dips under a radius
+  threshold (the neighbourhood of their zero-surface intersection curve:
+  long winding spaghetti, mostly horizontal, y-squashed), caverns where a
+  low-frequency squashed field exceeds a depth-loosening threshold (open
+  rooms, common deep, absent above y=48). Both live in y -50..60
+  (`CAVES.MIN_Y/MAX_Y`), taper closed at the bottom, and are sampled on a
+  world-aligned lattice every 4 blocks (`LATTICE_STEP`) then trilinearly
+  interpolated per block — fast (~1.5ms of the ~4ms chunk gen) and
+  bit-identical across chunk borders whatever the generation order.
+  (2) **Surface entrances**: above MAX_Y tunnels keep carving only inside
+  sparse entrance regions (low-frequency 2D mask), where they stay wide
+  enough to walk into — a handful of real cave mouths per few-chunk area
+  plus rare 1-block "rabbit holes", never a pockmarked surface. Only dry
+  inland grass/stone columns qualify (no holes in beaches/deserts — sand
+  would float — and none above y=96). (3) **Ravines**: a 2D ridged line
+  field's zero-contours gated by a very-low-frequency rarity mask; V-shaped
+  depth profile (full-depth core, shallowing edges, per-column jitter for
+  rough walls), up to 48 deep, spans 50-180 blocks, roughly one system per
+  ~200x200 — they breach the surface (exposed) and are the second findable
+  way down. (4) **Ocean shield**: no carving within 6 blocks below the
+  surface wherever any column in a 5x5 neighbourhood is at/below sea level —
+  ocean floors stay sealed, no static-water walls against cave air
+  (region-verified: zero contacts). (5) **Lava pools**: every carved cell
+  below y=10 (`OVERWORLD.LAVA_POOL_MAX_Y`) becomes lava instead of air —
+  the classic lava-flood level; deep tunnels become pools, big caverns lava
+  lakes, all lit by lava's light 15 through the Phase 4 flood fill.
+  (6) **Stone variants**: granite/diorite/andesite blobs from two more 3D
+  fields (primary picks granite/diorite at ±threshold, secondary picks
+  andesite where the primary is quiet) — ~3% of stone each, seamless across
+  chunks. (7) **Gravel pockets** in stone (the underground flint source).
+  (8) **Ore veins** per config `ORES` (exact SPEC Y ranges): compact
+  random-walk veins from a per-chunk seeded PRNG, replacing stone-family
+  blocks only, clipped at chunk borders (deterministic); coal/iron 4-12 per
+  vein, gold/redstone 4-8, diamond 1-4 with a strong bottom bias (min of
+  three uniforms — 83% of diamond sits below y=-30). Census per chunk:
+  ~59 coal, ~72 iron, ~22 gold, ~33 redstone, ~12 diamond.
+  `surfaceOpenAt(col, colAt)` is the pure decoration guard terrain.js uses
+  so trees/cacti never anchor on a carved-away surface — margin anchors get
+  the same answer the owning chunk computes (float-exact: the query and the
+  carve share lerp arithmetic and f64 lattices; region-verified zero
+  mismatches).
+- `src/world/terrain.js` Phase 9 integration: the carver runs after the
+  base column fill and before decorations; tree and cactus placement skip
+  anchors whose surface the caves carved (same overall structure —
+  everything still a pure function of (seed, x, z)).
+- `src/entities/falling.js` — falling sand/gravel: any `world.setBlock`
+  fires `world.onBlockChanged` (new hook, wired in main.js), which queues
+  support checks for the cell above the edit and the edited cell itself; a
+  `falls` block with nothing solid under it detaches into a full-size
+  mini-block entity, falls with a cell-sweep (no tunnelling), and settles
+  back into the world where it lands. Vanilla rules: lands on a torch ->
+  breaks into an item (torch survives); sinks into lava -> destroyed;
+  water -> replaced. Cascades chain naturally (each vacated cell re-queues
+  the cell above), entities freeze in unloaded chunks like dropped items.
+- `src/player/stats.js` — the Phase 9 slice of stats: health
+  (`PLAYER.MAX_HEALTH` 20), lava contact damage (body-AABB corner sampling,
+  `STATS.LAVA_DAMAGE` 4 per `DAMAGE_TICK_SECONDS` 0.5 — fly mode exempt),
+  death per SPEC (drop the whole inventory as item entities via the new
+  `Inventory.drainAll()`, durability preserved) and immediate respawn at
+  the spawn point with restored health/breath. `damage(amount)` is the
+  entry point later phases (falls, drowning, mobs, cactus) will call.
+  Dropped items now also burn in lava (items.js midpoint check) — dying in
+  lava burns what you dropped, like vanilla.
+- `src/ui/hud.js` Phase 9: hearts row (10 pixel-art hearts, full/half/empty
+  generated once as data URLs) above the hotbar's left half, red damage
+  screen flash driven by `stats.flashFraction`. Hunger bar remains for the
+  full stats phase.
+- `src/entities/items.js` — `createExtrudedItemMesh(name, size)`: the
+  vanilla held-item model — the sprite as a one-pixel-thick slab (full
+  front/back quads plus one edge quad per opaque/transparent pixel
+  boundary, edges sampling their pixel's centre colour, per-face
+  brightness), built async from the item PNG and cached per name. Used by
+  the hand for tools; dropped items stay flat sprites.
+- `src/player/interaction.js` Phase 9 fixes: held tools use the extruded
+  slab model angled like vanilla — handle toward the bottom-right corner,
+  head raised up and forward on a ~45° diagonal (screenshot-tuned
+  `HAND.SPRITE_TILT`); held blocks scaled up modestly
+  (`HAND.BLOCK_SCALE` 0.17 -> 0.19).
+
 Phase 2 verification (still holds): Node checks against the real modules —
 chunk-order determinism (byte-identical chunks regardless of generation
 order), solid bedrock layer + jagged band percentages (80/60/40/20), water
@@ -642,14 +723,60 @@ sneaking refuses the rim instead of walking off the collision box). All
 re-verified: 114 automated checks (69 node + 45 browser), all passing,
 zero console errors.
 
+Phase 9 verification: 21 node checks against the real modules — chunk bytes
+identical regardless of generation order (caves included); lava exists
+underground and never at/above y=10; the bedrock floor intact under all
+caves; ocean floors sealed (zero carved cells within the shield depth over
+a 176x176 region) and zero carved-air cells touching still water anywhere;
+no trunk/cactus floating over a carved surface; every ore present and
+strictly inside its SPEC Y range; diamond clusters 1-4 (>90% of clusters
+<=4, rare adjacent-vein merges allowed), coal and iron vein medians in
+4-12; granite/diorite/andesite all present in quantity; surface mouths
+exist and flood-fill from them descends into the cave band (y<=30) with
+on-demand generation following the tunnels; ravines present with 30+ deep
+sections; `surfaceOpenAt` agrees with the actual carve at every surface
+column of the region (zero float mismatches). **Diamond findability
+(SPEC requirement) measured by simulation**: 40 independent trials of
+branch mining at y=-54 (2-high tunnels, branches every 3 blocks, ~700
+blocks mined ≈ 10 minutes with an iron pickaxe), 39/40 trials found >=1
+diamond, averaging 4.9 ore per session. In headless Chromium: boot with
+zero console errors; screenshots verify the look (dark cave mouth in a
+hillside, torch-lit cave interior with granite and redstone in the walls,
+a long narrow ravine cutting the surface, hearts row + red flash); 10
+gameplay checks — crosshair targets and iron-pickaxe-mines a real coal
+ore with the drop collected; removing support detaches sand which falls
+and restacks on the ground (cascade of 2); sand falling onto a torch pops
+off as an item and the torch survives; standing in a lava pool ticks
+damage, kills, drops the full inventory (which burns in the lava,
+vanilla-style) and respawns at the spawn point with full health.
+
 ---
 
 ## Partially built
 
 - The rest of `src/` exists as empty stub modules with responsibility headers
-  (world/caves.js, player/stats.js, entities/entity.js, entities/mobs.js,
-  entities/pathfinding.js, entities/dragon.js, systems/, dimensions/).
-- `ui/hud.js` still lacks hearts and hunger (stats phase).
+  (entities/entity.js, entities/mobs.js, entities/pathfinding.js,
+  entities/dragon.js, systems/smelting.js, systems/brewing.js,
+  systems/combat.js, dimensions/).
+- `ui/hud.js` has hearts (Phase 9) but still lacks hunger (stats phase).
+- `player/stats.js` is the Phase 9 slice only: health + lava damage + death/
+  respawn. Still missing: hunger, regeneration, fall damage (consume
+  `body.lastLanding`), drowning (`body.breath === 0`), cactus contact
+  (inset-aware), armour reduction, starvation, death screen (respawn is
+  currently immediate).
+- Phase 9 deliberate slices:
+  - Lava is not swimmable (physically it's air that hurts) and has no
+    fire/burning damage-over-time after leaving it; falling into a deep
+    lava lake is usually fatal, which is vanilla-accurate in outcome.
+  - No flowing fluids: carved caves never breach water (ocean shield), so
+    nothing needs to flow; lava pools are still lakes.
+  - Rivers (SPEC overworld row) remain unbuilt — the only SPEC world
+    feature not yet placed; needs a fluid-aware carver pass of its own.
+  - Sand/gravel floating at generation time (e.g. a tunnel roof under a
+    desert) stays put until a neighbouring edit disturbs it — vanilla-like;
+    only player-triggered block changes queue support checks.
+  - Falling blocks don't push/suffocate entities standing in the landing
+    cell; the block simply places (the player can walk/dig out).
 - `ui/screens.js` has the inventory + crafting screens; furnace/death/
   victory screens are later phases (the panel/slot/cursor structure is
   ready to extend).
@@ -678,8 +805,7 @@ zero console errors.
   - Dropped items and the hand are not lit by world light (unlit atlas
     material, correct per-face brightness only) — a `getLight` sample can
     tint them when the mob phase adds it.
-  - `sand`/`gravel` have `falls: true` in the registry, but there is no
-    falling-block entity yet; mined support just leaves them floating.
+  - ~~`sand`/`gravel` falling~~ — done in Phase 9 (entities/falling.js).
   - No break/place/footstep sounds yet (SPEC "feel" row; no audio system).
   - `oak_sapling` and `glowstone_dust` drops have no shipped item texture;
     items.js renders stand-ins (leaves mini-block / blaze powder sprite)
@@ -694,22 +820,22 @@ zero console errors.
     deliberately inline in interaction.js — they are the art itself, not
     gameplay tunables; everything gameplay-facing (offsets, timings, sizes,
     swing shape fractions) lives in config.js.
-- The controller exposes but does not consume damage inputs — stats.js later
-  wires `body.lastLanding` (fall damage), `body.breath === 0` (drowning),
-  and `damagesOnContact` blocks (cactus/lava contact does nothing yet;
-  cactus now collides as its 15/16 box, so "touching a cactus" checks can
-  use the same inset).
-- Lava is fully wired into lighting (emits 15, blocks light) but nothing
-  places it until the caves phase; a fullbright/emissive treatment for lava
-  and glowstone faces themselves is later polish (they currently render lit
-  by their own neighbouring light, which reads fine).
+- The controller exposes but does not consume damage inputs — stats.js
+  (Phase 9) consumes lava contact; still to wire: `body.lastLanding` (fall
+  damage), `body.breath === 0` (drowning), and cactus contact (cactus
+  collides as its 15/16 box, so "touching a cactus" checks can use the
+  same inset).
+- Lava is placed by the caves phase and lights its surroundings (emits 15);
+  a fullbright/emissive treatment for lava and glowstone faces themselves is
+  later polish (they currently render lit by their own neighbouring light,
+  which reads fine).
 - Directional sun + hemisphere ambient remain in the scene for later entity
   phases (mobs will be Lambert-lit); terrain itself is unlit baked light.
   Shadow maps are configured but currently have no casters/receivers —
   vanilla Minecraft has no dynamic shadows, so this is the intended look,
   not a regression.
-- Rivers, caves, ravines, ores and lava pools are later phases (caves.js);
-  `world/terrain.js` deliberately does not carve anything.
+- Rivers are the one remaining SPEC world feature (see Phase 9 slices);
+  caves, ravines, ores and lava pools are done (world/caves.js).
 - `blocks.js`: chest uses oak-planks tiles as a cube fallback (its real
   texture is an entity texture); nether/end portal blocks have `faces: null`
   plus a `special` tag — the mesher skips `tiles === null` (their custom
@@ -740,13 +866,30 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- Likely Phase 9 is caves/ores (fill in `world/caves.js` — carved caves get
-  correct darkness and torch light for free from the Phase 4 flood fill,
-  breaking ore already drops the right items, and crafting/tiers are ready
-  to consume them) or smelting (systems/smelting.js + a furnace screen —
+- Likely Phase 10 is smelting (systems/smelting.js + a furnace screen —
   the screens.js craft-area/slot machinery extends; furnace right-click
   should route through main.js `onUseBlock` exactly like the crafting
-  table does).
+  table does; raw_iron/raw_gold now drop from real ores) or the full
+  stats phase (hunger + regen + fall damage/drowning/cactus — stats.js
+  `damage()` is the entry point, hud.js hearts extend with hunger) or
+  mobs (hostile spawning wants a `getLight(x,y,z)` helper on World).
+- Phase 9 APIs for later phases: `world.onBlockChanged` is a single-slot
+  hook (main.js assigns falling.onBlockChanged) — if another system needs
+  block-change events later, turn it into a listener list, don't chain
+  functions ad hoc. `stats.damage(amount)` for any damage source;
+  `stats.health/maxHealth/flashFraction` for UI. `inventory.drainAll()`
+  empties and returns stacks. `createExtrudedItemMesh(name, size)`
+  (entities/items.js) for any held/shown item slab (async texture build,
+  cached per name). The caves carver is `world.generator.caves`
+  (`ravineDepthAt`, `surfaceOpenAt` are pure and cheap; the mining-sim
+  and cave-census harnesses in the session scratchpad show how to drive
+  it for tests).
+- Lava physics: lava is air-like (no buoyancy/drag) + contact damage —
+  if a later phase makes it swimmable, extend PlayerBody's water handling
+  behind a fluid-kind flag rather than duplicating the swim code, and keep
+  the standing-eye disengage rule.
+- Mining note for balance: diamond concentrates hard toward y=-60..-40
+  (bottom-biased); "the right depth" to tell players is y≈-54.
 - Phase 8 APIs for later phases: `craftResult(slots, width)` is the only
   matcher; add recipes via the `shaped`/`shapeless` helpers at the top of
   systems/crafting.js (append — order matters only if two patterns could
@@ -874,3 +1017,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 6 | Block interaction (interaction.js): voxel DDA raycast (5 reach), black targeted-face outline, hold-to-break timed by hardness × tool class/tier with wrong-tier very-slow-no-drops, 10-stage generated crack overlay (multiply-blended, night-correct), right-click place onto the targeted face (air/fluid cells only, never inside the player or outside the world, hold-repeat, no stale-face placement), registry-table drops; dropped item entities (items.js): mini-block/sprite visuals, bob + rotate, midpoint collision both ways (no ceiling tunnelling), water float, wall-blocked 1.5-block magnetise, pickup, despawn, unloaded-chunk freeze; first-person depth-free hand (pixel arm or held mini-block) swinging on click/place/mining; proto-inventory scaffolding; Phase 5 fixes: step height 0.6 (jump for full blocks), space-in-any-water swims up slowly (no pool-edge levitation), submerged sprint = vanilla swim mechanic (fast, pitch-driven, prone eye, standing-eye surface disengage); INTERACTION/ITEMS config blocks; adversarially reviewed (4 lenses, all confirmed findings fixed) + 109 automated checks | Inventory/hotbar replacing the proto-inventory, tool durability, item stack merging, falling sand/gravel entities, item/hand world-light tinting, sounds, caves/ores (caves.js), non-cube special shapes |
 | 7 | Inventory (inventory.js): 36 slots / 9 hotbar, stacking to 64 with per-item registry (tools + armour stack 1, carry durability; pearls/eggs 16), pickups existing-stack-first then first-empty, vanilla click/right-click/shift-click semantics; hotbar HUD (hud.js) with real item icons (icons.js — assets/items sprites verbatim, isometric atlas cubes for blocks), counts, durability bars, selection highlight; 1-9 keys + delta-accumulating scroll wheel; inventory screen on E (screens.js) with click and press-drag-release moves, cursor ghost, close-returns-cursor (overflow drops at the feet, durability preserved through the drop); held item switches visibly (block cube / item sprite / bare arm); mining wears tools, broken tools vanish; partial pickups with retry when full. Bug fixes: held item vanilla-sized in the corner, leaves render interior faces + occlude AO (dense dark canopies), cactus sides inset 1/16 with 15/16 collision (sweep + sneak guard inset-aware), sprint-jump retuned to ~7.1 b/s. Adversarially reviewed (20 agents, 5 lenses, 8 unique confirmed findings all fixed) + 114 automated checks | Armour equip slots + damage reduction (stats/combat), crafting grid in the screen, Q-drop / click-outside-drop, dropped-entity stack merging, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
 | 8 | Crafting (systems/crafting.js): every SPEC critical-path recipe (shaped with bounding-box position independence + vanilla horizontal mirroring, shapeless as multisets), 2x2 craft area on the inventory screen + 3x3 crafting-table screen (screens.js) sharing the Phase 7 slot/cursor machinery, live result preview, click-crafts-one / shift-crafts-max (capacity-guarded, stops if the matched recipe changes), grids drain back on close; right-click on a placed crafting table opens the 3x3 via main.js `onUseBlock` (resolved in update() against the fresh raycast; sneak bypasses to place, vanilla-style); tools craft at full durability, tier gates verified live end to end (punch wood -> planks -> table -> sticks -> wooden pickaxe -> stone -> stone pickaxe; wooden pickaxe can't harvest iron ore, stone can); gravel drops flint 10% (new fallback drop semantic) so flint_and_steel/arrows are reachable. Bug fixes: held item renders in a dedicated fixed-FOV hand pass (undistorted self-occluding cube; arm re-tuned with per-face shading), cracks are the real assets/destroy/destroy_stage_0..9.png advancing with progress (alphaTested — their background is white at alpha 1/255, not transparent-black). Adversarially reviewed (5 lenses, 7 confirmed findings all fixed) + 180 automated checks (127 node + 53 browser incl. real-pointer-lock use-path tests) | Furnace/smelting (furnace right-click routes like the table), chest UI, drag-to-distribute crafting gesture, Q-drop, armour equip, hearts/hunger HUD, caves/ores (caves.js), non-cube special shapes, sounds |
+| 9 | Underground (world/caves.js): two-layer cave carving (winding tunnel pair-intersection + deep caverns, world-aligned interpolation lattice, y -50..60), rare long/deep/narrow V-profile ravines, walkable surface entrances gated to sparse entrance regions (plus rare 1-block rabbit holes), ocean-sealed floors, lava filling all carved space below y=10, granite/diorite/andesite blobs, gravel pockets, ore veins per SPEC ranges (coal/iron 4-12, gold/redstone 4-8, diamond 1-4 bottom-biased — 39/40 simulated 10-min branch-mining trials find diamond, avg 4.9 ore); trees/cacti refuse carved surfaces; falling sand/gravel entities (entities/falling.js + world.onBlockChanged) with torch-break/lava-destroy/cascade rules; stats.js slice — health, lava contact damage, death drops inventory + respawn — with hearts HUD + damage flash; dropped items burn in lava; held-tool fix (extruded 1px-slab item models, vanilla lower-right diagonal) and held-block scale-up. 21 node + 10 browser gameplay checks + screenshot suite, zero console errors | Rivers; hunger/fall/drowning/cactus damage + death screen (stats.js continues); swimmable lava; gen-time floating sand settles only on disturbance; smelting; mobs |
