@@ -33,14 +33,20 @@ src/
   player/
     controller.js        movement, physics, collision, camera
     interaction.js       raycast, break, place, block outline
-    inventory.js         slots, hotbar, stacking, item data
+    hand.js              first-person hand: its own render pass, arm and
+                         held-item meshes, swing/eat/draw poses (Phase 13
+                         split out of interaction.js per the size cap)
+    inventory.js         slots, hotbar, stacking, item data, armour slots
     stats.js             health, hunger, damage, respawn
 
   entities/
     entity.js            base entity, physics, despawn
     pathfinding.js       A* over world blocks
     models.js            mob models from textured boxes: standard entity
-                         unwrap, animation rigs (Phase 12 addition)
+                         unwrap, animation rigs (Phase 12 addition); the
+                         per-mob box-geometry tables converted from the
+                         real vanilla models (Phase 13 — stats stay in
+                         mobs.js, geometry lives here)
     mobs.js              mob definitions, spawn rules, AI
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup
@@ -50,7 +56,12 @@ src/
     crafting.js          recipes, grid matching
     smelting.js          furnace logic, fuel
     brewing.js           brewing stand
-    combat.js            damage, knockback, armour
+    combat.js            damage, knockback, armour (Phase 13): player
+                         melee with weapon cooldowns and crits, the
+                         armour damage pipeline, bow + arrow projectiles,
+                         explosions, the procedural hiss/boom synth.
+                         Mob managers receive it injected via main.js
+                         (combat never imports the mob manager)
 
   dimensions/
     portals.js           portal detection, lighting, travel
@@ -85,9 +96,11 @@ not wherever is convenient.
 **No file over ~800 lines.** If one is growing past that, split it and note the split
 in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
-`player/interaction.js` sits just past the cap (~810) as of Phase 12 — the next
-session that grows it should split the first-person hand rendering into its own
-`player/hand.js` and note it here.
+`player/interaction.js` got its mandated split in Phase 13 (the first-person
+hand lives in `player/hand.js` now; interaction is back to ~650);
+`entities/mobs.js` sits right at the cap (~810) as of Phase 13 — the next
+session that grows it should split the spawning framework into its own
+`entities/spawning.js` and note it here.
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.

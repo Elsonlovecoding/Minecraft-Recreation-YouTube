@@ -24,13 +24,11 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  OVERWORLD, CHUNK, LIGHTING, STATS, MOBS,
+  OVERWORLD, CHUNK, STATS, MOBS,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
 import { foodValue } from './inventory.js';
-import {
-  createBlockMesh, createExtrudedItemMesh, createModelMesh, itemVisualInfo,
-} from '../entities/items.js';
+import { createHand } from './hand.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 
@@ -130,19 +128,8 @@ export function placementBlockedByPlayer(x, y, z, feet) {
 }
 
 // ---------------------------------------------------------------------------
-// Overlay art: the real destroy-stage textures, and the generated arm skin
+// Overlay art: the real destroy-stage textures
 // ---------------------------------------------------------------------------
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 // The 10 break-progress crack stages are the genuine Minecraft
 // destroy_stage_0..9.png textures (assets/destroy/), used directly. Their
@@ -163,34 +150,6 @@ function loadCrackTextures(stages) {
     textures.push(texture);
   }
   return textures;
-}
-
-// Pixel-art skin for the first-person arm: classic skin tones with per-pixel
-// variation (deterministic, so the arm looks the same every run).
-function createArmTexture() {
-  const size = 16;
-  const rand = mulberry32(0x5709);
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(size, size);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4;
-      const v = (rand() - 0.5) * 26;
-      img.data[i] = 197 + v;
-      img.data[i + 1] = 148 + v;
-      img.data[i + 2] = 112 + v;
-      img.data[i + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  return texture;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,8 +173,6 @@ function createArmTexture() {
 export function createInteraction({
   world, camera, scene, canvas, player, items, inventory, stats, onUseBlock, combat,
 }) {
-  const H = INTERACTION.HAND;
-
   // --- targeting state
   let target = null;
   const rayOrigin = new THREE.Vector3();
@@ -235,7 +192,6 @@ export function createInteraction({
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
   let eating = null;        // { name, t } while holding right click with food
-  let eatBlend = 0;         // eased 0..1 into the eating hand pose
 
   // --- targeted face outline
   const outline = new THREE.LineLoop(
@@ -291,125 +247,11 @@ export function createInteraction({
   crackMesh.visible = false;
   scene.add(crackMesh);
 
-  // --- first-person hand, drawn in its own pass over the finished frame
-  // (main.js calls renderHand after the world render). Its camera has a
-  // fixed, modest FOV: the world camera's wide FOV would perspective-skew
-  // anything sitting in a screen corner, and the sprint FOV kick would
-  // stretch it — the held block must read as a clean, undistorted cube.
-  // Depth is cleared before the pass, so the hand draws over point-blank
-  // walls like vanilla while still self-occluding correctly (its own back
-  // faces hidden — depth-free materials scrambled the cube's faces before).
-  const handScene = new THREE.Scene();
-  const handCamera = new THREE.PerspectiveCamera(
-    H.FOV, window.innerWidth / window.innerHeight, H.NEAR, H.FAR,
-  );
-  window.addEventListener('resize', () => {
-    handCamera.aspect = window.innerWidth / window.innerHeight;
-    handCamera.updateProjectionMatrix();
-  });
-  const hand = new THREE.Group();
-  // Per-face brightness (top/side/bottom like blocks) so the arm box reads
-  // as a 3D limb instead of a flat plane whichever face dominates.
-  const armGeometry = new THREE.BoxGeometry(...H.ARM_SIZE);
-  {
-    const normals = armGeometry.getAttribute('normal');
-    const colors = new Float32Array(normals.count * 3);
-    const FB = LIGHTING.FACE_BRIGHTNESS;
-    for (let i = 0; i < normals.count; i++) {
-      const ny = normals.getY(i);
-      const b = ny > 0.5 ? FB.top : ny < -0.5 ? FB.bottom : FB.side;
-      colors[i * 3] = b;
-      colors[i * 3 + 1] = b;
-      colors[i * 3 + 2] = b;
-    }
-    armGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  }
-  const arm = new THREE.Mesh(
-    armGeometry,
-    new THREE.MeshBasicMaterial({
-      map: createArmTexture(),
-      vertexColors: true,
-      toneMapped: false,
-    }),
-  );
-  // The arm reaches forward from the bottom-right screen corner
-  arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
-  hand.add(arm);
-  let heldMesh = null; // mini-block or sprite of the current selection
-  let shownItem = false; // item name the hand currently shows (false = never set)
-  const handBase = new THREE.Vector3(...H.POSITION);
-  const handTilt = new THREE.Euler(...H.ARM_TILT);
-  hand.position.copy(handBase);
-  hand.rotation.copy(handTilt);
-  handScene.add(hand);
-  let swingT = 1; // 0..1, animation finished at >= 1
-
-  function renderHand(renderer) {
-    renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(handScene, handCamera);
-    renderer.autoClear = true;
-  }
-
-  function startSwing() {
-    swingT = 0;
-  }
-
-  // The hand shows the selected hotbar item: block items as a small angled
-  // mini-cube in the lower-right corner (vanilla placement), other items as
-  // their sprite, an empty slot as the bare arm.
-  function refreshHeldMesh() {
-    const name = inventory.selectedName;
-    if (name === shownItem) return;
-    shownItem = name;
-    if (heldMesh) {
-      hand.remove(heldMesh);
-      heldMesh = null;
-    }
-    if (name) {
-      // The shared item-visual meshes/materials are used as-is — the hand
-      // pass clears depth itself, so no depth-free clones are needed and
-      // the mini-cube self-occludes like a real block.
-      const info = itemVisualInfo(name);
-      if (info.model) {
-        // Entity-model items (chest): the same centred model the drops use,
-        // held like a block.
-        heldMesh = createModelMesh(info.model, H.BLOCK_SCALE);
-        heldMesh.position.set(...H.BLOCK_OFFSET);
-        heldMesh.rotation.set(...H.BLOCK_TILT);
-        arm.visible = false;
-      } else if (info.blockId !== undefined) {
-        heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
-        heldMesh.position.set(...H.BLOCK_OFFSET);
-        heldMesh.rotation.set(...H.BLOCK_TILT);
-        arm.visible = false;
-      } else {
-        // Tools and materials: the extruded slab model (flat sprite with
-        // one-pixel depth), angled diagonally across the lower-right like a
-        // vanilla held tool — never a cube. The slab may arrive async (the
-        // first selection of each item builds it from its texture) — keep
-        // the arm until it does, so the hand is never empty.
-        // `mesh` is declared before the call: on a CACHE HIT the factory
-        // fires onReady synchronously, and a `const` here would still be in
-        // its temporal dead zone — re-selecting a previously held tool
-        // crashed. The sync call safely no-ops (heldMesh can't equal
-        // undefined) and the visibility line below covers that case.
-        let mesh;
-        mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
-          if (heldMesh === mesh) arm.visible = false;
-        });
-        mesh.position.set(...H.SPRITE_OFFSET);
-        mesh.rotation.set(...H.SPRITE_TILT);
-        heldMesh = mesh;
-        arm.visible = mesh.children.length === 0;
-      }
-      hand.add(heldMesh);
-    } else {
-      arm.visible = true;
-    }
-  }
-  inventory.subscribe(refreshHeldMesh);
-  refreshHeldMesh();
+  // --- first-person hand (player/hand.js — split out in Phase 13): its own
+  // fixed-FOV render pass, the arm/held meshes, swing/eat/draw poses.
+  const hand = createHand({ inventory, combat });
+  const startSwing = hand.startSwing;
+  const renderHand = hand.renderHand;
 
   // --- input
   const locked = () => document.pointerLockElement === canvas;
@@ -442,6 +284,8 @@ export function createInteraction({
       mouseRight = false;
       useCheckPending = false;
       attackPending = false;
+      // Losing the pointer mid-draw cancels the shot (never auto-fires).
+      combat?.cancelDraw?.();
     }
   });
 
@@ -524,6 +368,7 @@ export function createInteraction({
     if (def.hardness > 0 && parseHeldTool(inventory.selectedName)) {
       inventory.damageSelected(1);
     }
+    if (def.hardness > 0) stats?.exhaust(STATS.EXHAUST_BREAK_BLOCK);
     breakCooldown = INTERACTION.BREAK_COOLDOWN_SECONDS;
     resetBreak();
     // The targeted block no longer exists; drop the stale target so a place
@@ -548,7 +393,7 @@ export function createInteraction({
       breakProgress = 0;
       breakPlan = miningPlan(blockDef(target.id), inventory.selectedName);
     }
-    if (swingT >= 1) startSwing(); // keep swinging while mining
+    if (!hand.swinging) startSwing(); // keep swinging while mining
     if (breakPlan.time <= 0) {
       finishBreak();
       return;
@@ -647,28 +492,6 @@ export function createInteraction({
 
   // --- per-frame update
 
-  function updateHand(dt) {
-    if (swingT < 1) swingT = Math.min(1, swingT + dt / H.SWING_SECONDS);
-    const s = Math.sin(Math.PI * Math.min(swingT, 1));
-    // Eating pose: the hand eases toward the mouth and nibbles (a quick
-    // up-down bob) until the food is finished.
-    const blendTarget = eating ? 1 : 0;
-    eatBlend += (blendTarget - eatBlend) * (1 - Math.exp(-H.EAT_ENGAGE_RATE * dt));
-    const nibble = eating
-      ? Math.abs(Math.sin(eating.t * Math.PI * 2 * H.EAT_NIBBLE_HZ)) * H.EAT_NIBBLE_AMP
-      : 0;
-    hand.position.set(
-      handBase.x - H.SWING_SIDE * H.SWING_DIP * s + H.EAT_OFFSET[0] * eatBlend,
-      handBase.y - H.SWING_DIP * s + (H.EAT_OFFSET[1] + nibble) * eatBlend,
-      handBase.z - H.SWING_FORWARD * H.SWING_DIP * s + H.EAT_OFFSET[2] * eatBlend,
-    );
-    hand.rotation.set(
-      handTilt.x - H.SWING_ROTATION * s + H.EAT_TIP * eatBlend,
-      handTilt.y + H.SWING_YAW * H.SWING_ROTATION * s,
-      handTilt.z,
-    );
-  }
-
   function update(dt) {
     // Target under the crosshair (the camera sits at the eye, bob included)
     camera.getWorldPosition(rayOrigin);
@@ -726,6 +549,31 @@ export function createInteraction({
       } else if (tryBucketPlace()) {
         mouseRight = false;
         startSwing();
+      } else if (inventory.equipSelected()) {
+        // Right-clicking held armour equips it directly (Phase 13),
+        // swapping with the worn piece. One action per press.
+        mouseRight = false;
+        startSwing();
+      }
+    }
+
+    // Bow (Phase 13): hold right click with the bow selected to draw;
+    // releasing fires along the crosshair, damage scaling with the charge.
+    // combat owns the draw state (it needs an arrow to start); switching
+    // slots restarts, losing pointer lock cancels (see pointerlockchange).
+    if (combat?.updateDraw) {
+      if (mouseRight && inventory.selectedName === 'bow' && !eating) {
+        combat.updateDraw(dt);
+      } else if (combat.isDrawing) {
+        // Only a real button release fires. Anything else that broke the
+        // draw while the button is still down — switching the hotbar slot
+        // away from the bow — cancels like vanilla, never auto-fires.
+        if (!mouseRight) {
+          combat.releaseDraw(rayOrigin, rayDir);
+          startSwing();
+        } else {
+          combat.cancelDraw();
+        }
       }
     }
 
@@ -757,12 +605,14 @@ export function createInteraction({
       eating = null;
     }
 
-    // Using an item blocks attacking (vanilla): while eating, mining stops
-    // and its progress resets; placing pauses too. A mob in the crosshair
-    // also holds mining (the swing is an attack, not a dig).
-    if (eating || mobHit) resetBreak();
+    // Using an item blocks attacking (vanilla): while eating or drawing a
+    // bow, mining stops and its progress resets; placing pauses too. A mob
+    // in the crosshair also holds mining (the swing is an attack, not a
+    // dig).
+    const usingItem = eating || !!combat?.isDrawing;
+    if (usingItem || mobHit) resetBreak();
     else updateBreaking(dt);
-    if (!eating) updatePlacing(dt);
+    if (!usingItem) updatePlacing(dt);
 
     // Crack overlay over the block being broken. A destroy-stage texture
     // that hasn't finished loading yet would bind as an empty texture and
@@ -779,7 +629,7 @@ export function createInteraction({
       crackMesh.visible = false;
     }
 
-    updateHand(dt);
+    hand.update(dt, eating);
   }
 
   return {
@@ -796,7 +646,7 @@ export function createInteraction({
       return eating;
     },
     debugState() {
-      return { mouseLeft, mouseRight, shownItem, swingT, hand, arm, outline, crackMesh };
+      return { mouseLeft, mouseRight, outline, crackMesh, ...hand.debug };
     },
     // Test scaffolding: drive the mouse without real events.
     debugSetMouse(left, right) {

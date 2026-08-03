@@ -145,9 +145,83 @@ export function createMobModel(def) {
   for (const part of def.model) {
     const pivot = new THREE.Group();
     pivot.position.set(part.pivot[0] * PX, part.pivot[1] * PX, part.pivot[2] * PX);
+    // Yaw before pitch on the part's own axes (vanilla): with the default
+    // XYZ order a yawed head pitching at the player ROLLS sideways instead
+    // of nodding — the Phase 12 zombie's "head angled slightly wrong" bug.
+    pivot.rotation.order = 'YXZ';
     pivot.add(new THREE.Mesh(partGeometry(def, part), material));
     group.add(pivot);
     parts[part.name] = pivot;
   }
   return { group, parts, material };
 }
+
+// ---------------------------------------------------------------------------
+// Model tables (Phase 13) — the real vanilla model geometry, converted to
+// this file's y-up feet-origin format. Conversion from the Java models:
+// pivot_y = 24 - rotationPoint_y (24 is the ground in y-down model space),
+// offset_y = -(boxOffset_y + boxHeight); x/z carry over. Stats live in the
+// entities/mobs.js registry per ARCHITECTURE.md; these are geometry only.
+// ---------------------------------------------------------------------------
+
+// The classic humanoid rig (zombie: a legacy 64x64 sheet whose bottom half
+// is empty — left limbs mirror the right limbs' texture regions).
+export const HUMANOID_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 24, 0], offset: [-4, 0, -4] },
+  { name: 'body', texOffs: [16, 16], size: [8, 12, 4], pivot: [0, 12, 0], offset: [-4, 0, -2] },
+  { name: 'rightArm', texOffs: [40, 16], size: [4, 12, 4], pivot: [6, 22, 0], offset: [-2, -10, -2] },
+  { name: 'leftArm', texOffs: [40, 16], size: [4, 12, 4], pivot: [-6, 22, 0], offset: [-2, -10, -2], mirror: true },
+  { name: 'rightLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [2, 12, 0], offset: [-2, -12, -2] },
+  { name: 'leftLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [-2, 12, 0], offset: [-2, -12, -2], mirror: true },
+];
+
+// Skeleton: the humanoid rig with 2px-thin arms and legs (64x32 sheet).
+export const SKELETON_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 24, 0], offset: [-4, 0, -4] },
+  { name: 'body', texOffs: [16, 16], size: [8, 12, 4], pivot: [0, 12, 0], offset: [-4, 0, -2] },
+  { name: 'rightArm', texOffs: [40, 16], size: [2, 12, 2], pivot: [5, 22, 0], offset: [-1, -10, -1] },
+  { name: 'leftArm', texOffs: [40, 16], size: [2, 12, 2], pivot: [-5, 22, 0], offset: [-1, -10, -1], mirror: true },
+  { name: 'rightLeg', texOffs: [0, 16], size: [2, 12, 2], pivot: [2, 12, 0], offset: [-1, -12, -1] },
+  { name: 'leftLeg', texOffs: [0, 16], size: [2, 12, 2], pivot: [-2, 12, 0], offset: [-1, -12, -1], mirror: true },
+];
+
+// Creeper: head on a tall body over four stubby legs (64x32 sheet). Legs
+// 1/2 sit at the back (+z), 3/4 at the front; walking swings diagonal pairs.
+export const CREEPER_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 18, 0], offset: [-4, 0, -4] },
+  { name: 'body', texOffs: [16, 16], size: [8, 12, 4], pivot: [0, 18, 0], offset: [-4, -12, -2] },
+  { name: 'leg1', texOffs: [0, 16], size: [4, 6, 4], pivot: [-2, 6, 4], offset: [-2, -6, -2] },
+  { name: 'leg2', texOffs: [0, 16], size: [4, 6, 4], pivot: [2, 6, 4], offset: [-2, -6, -2] },
+  { name: 'leg3', texOffs: [0, 16], size: [4, 6, 4], pivot: [-2, 6, -4], offset: [-2, -6, -2] },
+  { name: 'leg4', texOffs: [0, 16], size: [4, 6, 4], pivot: [2, 6, -4], offset: [-2, -6, -2] },
+];
+
+// Spider: head + neck + abdomen and eight 16px legs pivoted at the body
+// sides (64x32 sheet). legL* extend -x, legR* +x; z from rear to front.
+export const SPIDER_MODEL = [
+  { name: 'head', texOffs: [32, 4], size: [8, 8, 8], pivot: [0, 9, -3], offset: [-4, -4, -8] },
+  { name: 'neck', texOffs: [0, 0], size: [6, 6, 6], pivot: [0, 9, 0], offset: [-3, -3, -3] },
+  { name: 'body', texOffs: [0, 12], size: [10, 8, 12], pivot: [0, 9, 9], offset: [-5, -4, -6] },
+  { name: 'legL1', texOffs: [18, 0], size: [16, 2, 2], pivot: [-4, 9, 2], offset: [-15, -1, -1] },
+  { name: 'legR1', texOffs: [18, 0], size: [16, 2, 2], pivot: [4, 9, 2], offset: [-1, -1, -1] },
+  { name: 'legL2', texOffs: [18, 0], size: [16, 2, 2], pivot: [-4, 9, 1], offset: [-15, -1, -1] },
+  { name: 'legR2', texOffs: [18, 0], size: [16, 2, 2], pivot: [4, 9, 1], offset: [-1, -1, -1] },
+  { name: 'legL3', texOffs: [18, 0], size: [16, 2, 2], pivot: [-4, 9, 0], offset: [-15, -1, -1] },
+  { name: 'legR3', texOffs: [18, 0], size: [16, 2, 2], pivot: [4, 9, 0], offset: [-1, -1, -1] },
+  { name: 'legL4', texOffs: [18, 0], size: [16, 2, 2], pivot: [-4, 9, -1], offset: [-15, -1, -1] },
+  { name: 'legR4', texOffs: [18, 0], size: [16, 2, 2], pivot: [4, 9, -1], offset: [-1, -1, -1] },
+];
+
+// Spider leg rest pose (the vanilla splay): per leg-pair { roll, yaw } in
+// radians, written for the LEFT (-x-extending) legs — roll slopes a leg
+// down to the ground, yaw fans rear legs backward and front legs forward;
+// right legs use the negated angles. Pairs run rear (index 0) to front.
+// Animation swings yaw around these.
+const SP_ROLL = Math.PI / 4;
+const SP_YAW = Math.PI / 8;
+export const SPIDER_LEG_POSE = [
+  { roll: SP_ROLL, yaw: SP_YAW * 2 },          // rear pair
+  { roll: SP_ROLL * 0.74, yaw: SP_YAW },       // mid-rear
+  { roll: SP_ROLL * 0.74, yaw: -SP_YAW },      // mid-front
+  { roll: SP_ROLL, yaw: -SP_YAW * 2 },         // front pair
+];

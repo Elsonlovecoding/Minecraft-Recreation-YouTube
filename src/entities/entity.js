@@ -28,6 +28,10 @@ export class Entity {
     this.wishX = 0;             // AI steering: wanted horizontal velocity
     this.wishZ = 0;
     this.onGround = false;
+    this.horizontalCollision = false; // pushed into a wall last step (spiders climb)
+    this.climbing = false;      // AI-set (spider): wall-climbing this step —
+                                // keeps ground-style steering while airborne,
+                                // so the body stays pressed into the wall
     this.inWater = false;
     this.inLava = false;
     this.submersion = 0;        // waterline fraction of body height
@@ -108,6 +112,9 @@ export class Entity {
     if (this.dead) {
       this.wishX = 0;
       this.wishZ = 0;
+      this.climbing = false; // a corpse falls — the AI stops writing the
+                             // flag on death, so clear it here or a spider
+                             // killed mid-climb would rise gravity-free
     }
 
     // Horizontal control: exponential approach to the wish on the ground
@@ -116,7 +123,7 @@ export class Entity {
     const inFluid = this.inWater || this.inLava;
     const speedScale = this.inLava ? MOBS.LAVA_SPEED_FACTOR
       : this.inWater ? MOBS.WATER_SPEED_FACTOR : 1;
-    if (this.onGround || inFluid) {
+    if (this.onGround || inFluid || this.climbing) {
       const k = 1 - Math.exp(-MOBS.GROUND_RESPONSE * dt);
       v.x += (this.wishX * speedScale - v.x) * k;
       v.z += (this.wishZ * speedScale - v.z) * k;
@@ -128,15 +135,21 @@ export class Entity {
 
     // Vertical: gravity, or buoyant bobbing in water, or a dense slow sink
     // in lava (mobs burn either way — the manager applies the damage).
+    // Climbing is a velocity state like vanilla ladders — the AI writes the
+    // climb speed and gravity stays out of it (fighting gravity here would
+    // make the climb rate framerate-dependent: at a clamped 0.1s frame,
+    // gravity*dt alone exceeds the climb speed).
     if (this.inWater) {
       v.y += -MOBS.WATER_GRAVITY * (1 - MOBS.WATER_BUOYANCY * this.submersion) * dt;
       v.y *= Math.exp(-MOBS.WATER_DRAG * dt);
-    } else if (this.inLava) {
-      v.y += -MOBS.LAVA_GRAVITY * dt;
-      v.y *= Math.exp(-MOBS.LAVA_DRAG * dt);
-    } else {
-      v.y -= MOBS.GRAVITY * dt;
-      if (v.y < -MOBS.TERMINAL_VELOCITY) v.y = -MOBS.TERMINAL_VELOCITY;
+    } else if (!this.climbing) {
+      if (this.inLava) {
+        v.y += -MOBS.LAVA_GRAVITY * dt;
+        v.y *= Math.exp(-MOBS.LAVA_DRAG * dt);
+      } else {
+        v.y -= MOBS.GRAVITY * dt;
+        if (v.y < -MOBS.TERMINAL_VELOCITY) v.y = -MOBS.TERMINAL_VELOCITY;
+      }
     }
 
     // Integrate and collide: Y first, then the horizontal axes with the
@@ -153,6 +166,7 @@ export class Entity {
     const hit = this._moveHorizontal(v.x * dt, v.z * dt);
     if (hit.x) v.x = 0;
     if (hit.z) v.z = 0;
+    this.horizontalCollision = hit.x || hit.z;
 
     // Pushing into a bank while in a fluid: hop, so mobs climb out of ponds
     // the way the player does.

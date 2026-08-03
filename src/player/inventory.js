@@ -14,7 +14,7 @@
 // on items that wear out (tools, armour, bows...), and such stacks always
 // have count 1 and never merge.
 
-import { INVENTORY, TOOL_TIERS } from '../config.js';
+import { INVENTORY, TOOL_TIERS, COMBAT } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Item registry — stack caps and durability (per-item data lives here, like
@@ -31,6 +31,15 @@ const TOOL_TIER_NAME = { wooden: 'wood', stone: 'stone', iron: 'iron', diamond: 
 const ARMOR_RE = /^(leather|iron|diamond|golden)_(helmet|chestplate|leggings|boots)$/;
 const ARMOR_MATERIAL_FACTOR = { leather: 5, iron: 15, golden: 7, diamond: 33 };
 const ARMOR_PIECE_FACTOR = { helmet: 11, chestplate: 16, leggings: 15, boots: 13 };
+
+// The four equip slots, top to bottom (Phase 13). armourSlotIndex maps an
+// item name to the slot it belongs in, or null for non-armour.
+export const ARMOR_PIECES = ['helmet', 'chestplate', 'leggings', 'boots'];
+
+export function armourSlotIndex(name) {
+  const m = ARMOR_RE.exec(name ?? '');
+  return m ? ARMOR_PIECES.indexOf(m[2]) : null;
+}
 
 // Everything else that doesn't stack to 64 (vanilla values).
 const SPECIAL_DURABILITY = { bow: 384, flint_and_steel: 64, shears: 238 };
@@ -96,6 +105,10 @@ export class Inventory {
     this.slots = new Array(INVENTORY.SIZE).fill(null);
     this.selected = 0; // hotbar slot index 0..HOTBAR_SIZE-1
     this._listeners = [];
+    // Phase 13: the four armour equip slots (helmet/chestplate/leggings/
+    // boots), a gated SlotContainer of their own — the inventory screen
+    // renders them beside the craft grid, combat reads the points.
+    this.armour = new ArmourContainer();
   }
 
   subscribe(fn) {
@@ -184,8 +197,9 @@ export class Inventory {
     return this._insert(stack.name, stack.count, stack.durability ?? null);
   }
 
-  // Empties every slot and returns the removed stacks (durability intact) —
-  // death drops (player/stats.js).
+  // Empties every slot — worn armour included (SPEC: armour drops on death
+  // with the rest of the inventory) — and returns the removed stacks with
+  // durability intact. Death drops (player/stats.js).
   drainAll() {
     const stacks = [];
     for (let i = 0; i < this.slots.length; i++) {
@@ -194,8 +208,54 @@ export class Inventory {
         this.slots[i] = null;
       }
     }
+    if (this.armour) stacks.push(...this.armour.drainAll());
     if (stacks.length) this._emit();
     return stacks;
+  }
+
+  // Right-click equip (Phase 13): the selected armour piece moves into its
+  // slot, swapping with whatever was worn there. False for non-armour.
+  equipSelected() {
+    const s = this.slots[this.selected];
+    const idx = s ? armourSlotIndex(s.name) : null;
+    if (idx === null) return false;
+    this.slots[this.selected] = this.armour.slots[idx] ?? null;
+    this.armour.slots[idx] = s;
+    this._emit();
+    this.armour._emit();
+    return true;
+  }
+
+  // Total worn protection points (config COMBAT.ARMOR_POINTS — 4% damage
+  // reduction each; drives the HUD armour bar and combat's reduction).
+  get armourPoints() {
+    let points = 0;
+    for (const s of this.armour.slots) {
+      const m = s ? ARMOR_RE.exec(s.name) : null;
+      if (m) points += COMBAT.ARMOR_POINTS[m[1]]?.[m[2]] ?? 0;
+    }
+    return points;
+  }
+
+  // Consume n of an item by name across stacks (bow shots eat arrows).
+  // All-or-nothing: false (and nothing consumed) when short.
+  consumeItem(name, n = 1) {
+    let have = 0;
+    for (const s of this.slots) {
+      if (s && s.name === name && s.durability == null) have += s.count;
+    }
+    if (have < n) return false;
+    let left = n;
+    for (let i = 0; i < this.slots.length && left > 0; i++) {
+      const s = this.slots[i];
+      if (!s || s.name !== name || s.durability != null) continue;
+      const take = Math.min(s.count, left);
+      s.count -= take;
+      left -= take;
+      if (s.count <= 0) this.slots[i] = null;
+    }
+    this._emit();
+    return true;
   }
 
   // Could add() accept at least one of this item right now? Gates the item
@@ -415,3 +475,57 @@ SlotContainer.prototype.addStack = Inventory.prototype.addStack;
 // Inventory slots gain the same cross-container move (shift-click from the
 // inventory into an open chest/furnace).
 Inventory.prototype.moveSlotTo = SlotContainer.prototype.moveSlotTo;
+
+// ---------------------------------------------------------------------------
+// ArmourContainer — the four equip slots (Phase 13). A SlotContainer whose
+// slots each accept exactly one piece kind (the furnace's gating pattern):
+// a disallowed placement is inert, shift-click routing (addStack) sends a
+// piece to its own slot only when that slot is empty. Worn pieces wear
+// together on every armour-reduced hit (systems/combat.js calls damageAll)
+// and break at zero durability.
+// ---------------------------------------------------------------------------
+
+export class ArmourContainer extends SlotContainer {
+  constructor() {
+    super(ARMOR_PIECES.length);
+  }
+
+  accepts(i, name) {
+    return armourSlotIndex(name) === i;
+  }
+
+  clickSlot(i, cursor) {
+    if (cursor && !this.accepts(i, cursor.name)) return cursor; // inert
+    return super.clickSlot(i, cursor);
+  }
+
+  rightClickSlot(i, cursor) {
+    if (cursor && !this.accepts(i, cursor.name)) return cursor;
+    return super.rightClickSlot(i, cursor);
+  }
+
+  // Shift-click equip (inventory.moveSlotTo target): armour stacks are
+  // always count 1; the piece goes to its own slot if that slot is free.
+  addStack(stack) {
+    const i = armourSlotIndex(stack.name);
+    if (i === null || i < 0 || this.slots[i]) return stack.count;
+    this.slots[i] = { ...stack };
+    this._emit();
+    return 0;
+  }
+
+  // Wear every equipped piece (combat: max(1, floor(damage/4)) per hit).
+  // A piece reaching zero durability breaks — the slot clears.
+  damageAll(wear) {
+    let changed = false;
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if (!s) continue;
+      const d = (s.durability ?? itemMaxDurability(s.name)) - wear;
+      if (d <= 0) this.slots[i] = null;
+      else s.durability = d;
+      changed = true;
+    }
+    if (changed) this._emit();
+  }
+}

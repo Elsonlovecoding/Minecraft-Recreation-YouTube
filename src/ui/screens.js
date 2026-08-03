@@ -163,6 +163,25 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       display: flex; align-items: center; justify-content: center;
       gap: 12px; margin-bottom: 14px;
     }
+    /* Armour column beside the 2x2 craft area (inventory mode, Phase 13) */
+    .screen-equip {
+      display: flex; align-items: center; justify-content: center;
+      gap: 40px;
+    }
+    .screen-armour { display: grid; grid-template-columns: ${UI.SCREEN_SLOT_PX}px; }
+    .armour-slot::before {
+      content: ''; position: absolute; inset: 0; margin: auto;
+      width: ${Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE)}px;
+      height: ${Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE)}px;
+      background-size: contain; background-repeat: no-repeat;
+      background-position: center; image-rendering: pixelated;
+      opacity: 0.25; filter: grayscale(1); pointer-events: none;
+    }
+    .armour-slot.filled::before { display: none; }
+    .armour-slot-0::before { background-image: url('assets/items/iron_helmet.png'); }
+    .armour-slot-1::before { background-image: url('assets/items/iron_chestplate.png'); }
+    .armour-slot-2::before { background-image: url('assets/items/iron_leggings.png'); }
+    .armour-slot-3::before { background-image: url('assets/items/iron_boots.png'); }
     .screen-craft-cells { display: grid; }
     .screen-craft-arrow {
       color: #6f6f6f; font: bold 30px/1 monospace;
@@ -282,9 +301,18 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   // Otherwise the Phase 7/8 semantics: hotbar <-> main, craft grid -> out.
   function shiftMove(container, i) {
     const external = activeExternal();
+    if (container === inventory.armour) {
+      container.moveSlotTo(i, inventory); // unequip back to the inventory
+      return;
+    }
     if (container === inventory) {
       const s = inventory.get(i);
       if (!external || !s) {
+        // On the inventory screen an armour piece shift-equips into its
+        // empty slot (vanilla); everything else hops hotbar <-> main.
+        if (s && mode === 'inventory' && inventory.moveSlotTo(i, inventory.armour)) {
+          return;
+        }
         if (s) inventory.shiftClick(i);
         return;
       }
@@ -350,6 +378,26 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     makeCraftSection(invGrid),
     makeCraftSection(tableGrid),
   ];
+
+  // Armour column (Phase 13): four gated slots beside the inventory-mode
+  // 2x2 craft area. Empty slots show a faint piece silhouette (the
+  // .armour-slot-N ::before ghosts; `filled` hides them). The equip row
+  // wraps the armour column and the 2x2 section side by side.
+  const equipRow = document.createElement('div');
+  equipRow.className = 'screen-equip';
+  const armourCol = document.createElement('div');
+  armourCol.className = 'screen-armour';
+  const armourEls = [];
+  for (let i = 0; i < inventory.armour.slots.length; i++) {
+    const el = document.createElement('div');
+    el.className = `screen-slot armour-slot armour-slot-${i}`;
+    attachSlotEvents(el, () => inventory.armour, i);
+    armourCol.appendChild(el);
+    armourEls.push(el);
+  }
+  equipRow.appendChild(armourCol);
+  equipRow.appendChild(craftSections[0].section);
+  panel.insertBefore(equipRow, craftSections[1].section);
 
   // Chest section: a 9-wide grid of CHEST rows, rebound to whichever chest
   // is open.
@@ -490,6 +538,12 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     for (let i = 0; i < INVENTORY.SIZE; i++) {
       renderSlotContent(slotEls[i], inventory.get(i), iconPx);
     }
+    equipRow.style.display = mode === 'inventory' ? 'flex' : 'none';
+    for (let i = 0; i < armourEls.length; i++) {
+      const stack = inventory.armour.get(i);
+      renderSlotContent(armourEls[i], stack, iconPx);
+      armourEls[i].classList.toggle('filled', !!stack);
+    }
     for (const s of craftSections) {
       const active = showsCraft() && s.grid === activeGrid();
       s.section.style.display = active ? 'flex' : 'none';
@@ -519,6 +573,9 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     cursorEl.style.display = cursor ? 'flex' : 'none';
   }
   inventory.subscribe(() => {
+    if (open) refresh();
+  });
+  inventory.armour.subscribe(() => {
     if (open) refresh();
   });
   invGrid.subscribe(() => {
