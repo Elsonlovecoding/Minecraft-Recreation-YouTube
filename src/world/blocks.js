@@ -112,6 +112,14 @@ export const BLOCK = {
   TORCH_WALL_N: 58,
   TORCH_WALL_E: 59,
   TORCH_WALL_W: 60,
+  // Phase 12: flowing lava (world/fluids.js). A lava SOURCE stays id 11;
+  // flowing cells carry their horizontal spread level (1..3 — each renders a
+  // step lower than the last) and falling columns get their own id. All of
+  // them glow, damage and burn like lava, none is targetable or scoopable.
+  LAVA_FLOW_1: 61,
+  LAVA_FLOW_2: 62,
+  LAVA_FLOW_3: 63,
+  LAVA_FALL: 64,
 };
 
 export const BLOCKS = [];
@@ -318,6 +326,22 @@ registerWallTorch(BLOCK.TORCH_WALL_S, 'torch_wall_s');
 registerWallTorch(BLOCK.TORCH_WALL_N, 'torch_wall_n');
 registerWallTorch(BLOCK.TORCH_WALL_E, 'torch_wall_e');
 registerWallTorch(BLOCK.TORCH_WALL_W, 'torch_wall_w');
+// Flowing lava (Phase 12): partial-height animated cells the mesher renders
+// through its own emitter (faces: null keeps the generic cube emitter away).
+// `transparent` so neighbouring blocks still draw their faces behind the
+// partial volume; opacity 15 like the source (lava blocks light — and emits
+// 15 anyway). Never a minable target (hardness null), never drops.
+function registerLavaFlow(id, name) {
+  register(id, name, 'Lava', {
+    faces: null, solid: false, transparent: true, opacity: 15,
+    fluid: true, damagesOnContact: true, light: 15, drops: [],
+    special: 'lava_flow',
+  });
+}
+registerLavaFlow(BLOCK.LAVA_FLOW_1, 'lava_flow_1');
+registerLavaFlow(BLOCK.LAVA_FLOW_2, 'lava_flow_2');
+registerLavaFlow(BLOCK.LAVA_FLOW_3, 'lava_flow_3');
+registerLavaFlow(BLOCK.LAVA_FALL, 'lava_fall');
 register(BLOCK.CACTUS, 'cactus', 'Cactus', {
   faces: { top: TILE.CACTUS_TOP, bottom: TILE.CACTUS_TOP, side: TILE.CACTUS_SIDE },
   hardness: 0.4, transparent: true, damagesOnContact: true, special: 'cactus',
@@ -550,6 +574,40 @@ export function torchSupportCell(id, x, y, z) {
   if (!lean) return null;
   if (lean[0] === 0 && lean[1] === 0) return { x, y: y - 1, z };
   return { x: x - lean[0], y, z: z - lean[1] };
+}
+
+// ---------------------------------------------------------------------------
+// Lava family (Phase 12 — flowing lava, world/fluids.js)
+// ---------------------------------------------------------------------------
+
+// Flow level per lava id: 0 for the source and the falling column (both
+// spread at full strength), 1..3 for horizontal flow cells. -1 = not lava.
+// Kept as a flat array for the physics/mesher hot loops.
+export const LAVA_LEVEL_OF = (() => {
+  const table = new Int8Array(BLOCKS.length).fill(-1);
+  table[BLOCK.LAVA] = 0;
+  table[BLOCK.LAVA_FLOW_1] = 1;
+  table[BLOCK.LAVA_FLOW_2] = 2;
+  table[BLOCK.LAVA_FLOW_3] = 3;
+  table[BLOCK.LAVA_FALL] = 0;
+  return table;
+})();
+
+// Any lava cell — source, flow or fall (contact damage, fluid physics,
+// pathfinding avoidance, item burning all key off this).
+export function isLava(id) {
+  return LAVA_LEVEL_OF[id] !== undefined && LAVA_LEVEL_OF[id] >= 0;
+}
+
+export function isLavaSource(id) {
+  return id === BLOCK.LAVA;
+}
+
+// Horizontal flow level (1..3) of a flowing cell, or null for anything else
+// (including the source and the falling column).
+export function lavaFlowLevel(id) {
+  const level = LAVA_LEVEL_OF[id];
+  return level >= 1 ? level : null;
 }
 
 // The id actually placed for a selected block item: oriented blocks

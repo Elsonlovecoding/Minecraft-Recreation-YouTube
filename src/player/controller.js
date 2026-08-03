@@ -12,7 +12,11 @@
 
 import * as THREE from 'three';
 import { PLAYER, DEBUG, OVERWORLD } from '../config.js';
-import { BLOCK, blockDef, isSolid } from '../world/blocks.js';
+import { BLOCK, blockDef, isSolid, isLava } from '../world/blocks.js';
+
+// Fluid-cell predicates (Phase 12: flowing lava cells count as lava for
+// every physics and damage sense; water still has only its source id).
+const isWaterCell = (id) => id === BLOCK.WATER;
 
 const HALF_WIDTH = PLAYER.WIDTH / 2;
 const AXIS = ['x', 'y', 'z'];
@@ -275,8 +279,8 @@ export class PlayerBody {
       : this.sneaking ? c.SNEAK_EYE_HEIGHT : c.EYE_HEIGHT);
     const eyeBlock =
       this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z));
-    this.eyeInWater = eyeBlock === BLOCK.WATER;
-    this.eyeInLava = eyeBlock === BLOCK.LAVA;
+    this.eyeInWater = isWaterCell(eyeBlock);
+    this.eyeInLava = isLava(eyeBlock);
     // Sensed at the full standing eye regardless of pose — the swim-sprint
     // gate above reads this next step.
     this._standingEyeInWater =
@@ -460,8 +464,8 @@ export class PlayerBody {
       p.x - HALF_WIDTH, p.y, p.z - HALF_WIDTH,
       p.x + HALF_WIDTH, p.y + PLAYER.HEIGHT, p.z + HALF_WIDTH,
       (id) => {
-        if (id === BLOCK.WATER) water = true;
-        else if (id === BLOCK.LAVA) lava = true;
+        if (isWaterCell(id)) water = true;
+        else if (isLava(id)) lava = true;
         return water && lava; // early-out only when both are known
       },
     );
@@ -473,23 +477,23 @@ export class PlayerBody {
     // lava wall leak with air beneath) only counts its overlapped band —
     // otherwise a single leak block at head height read as submersion ~1,
     // zeroing gravity and hanging the player mid-air under it.
-    const lineOf = (blockId) => {
+    const lineOf = (isFluidCell) => {
       const cx = Math.floor(p.x);
       const cz = Math.floor(p.z);
       const top = Math.floor(p.y + PLAYER.HEIGHT - EPS);
       const bottom = Math.floor(p.y + EPS);
       for (let y = top; y >= bottom; y--) {
-        if (this.world.getBlock(cx, y, cz) === blockId) {
+        if (isFluidCell(this.world.getBlock(cx, y, cz))) {
           let lo = y;
-          while (lo - 1 >= bottom && this.world.getBlock(cx, lo - 1, cz) === blockId) lo--;
+          while (lo - 1 >= bottom && isFluidCell(this.world.getBlock(cx, lo - 1, cz))) lo--;
           if (lo <= bottom) return Math.min(1, (y + 1 - p.y) / PLAYER.HEIGHT);
           return Math.min(1, (y + 1 - Math.max(p.y, lo)) / PLAYER.HEIGHT);
         }
       }
       return 0;
     };
-    this.submersion = water ? lineOf(BLOCK.WATER) : 0;
-    this.lavaSubmersion = lava ? lineOf(BLOCK.LAVA) : 0;
+    this.submersion = water ? lineOf(isWaterCell) : 0;
+    this.lavaSubmersion = lava ? lineOf(isLava) : 0;
     this.swimming = this.submersion >= PLAYER.SWIM_MIN_SUBMERSION;
   }
 
@@ -763,6 +767,11 @@ export function createPlayerController({ world, camera, canvas }) {
     },
     debugForceInput(on) {
       inputOverride = !!on;
+    },
+    // main.js's pause check must not freeze a harness that drives input
+    // without pointer lock (headless Chromium freezes rAF under real lock).
+    get inputOverridden() {
+      return inputOverride;
     },
   };
 }

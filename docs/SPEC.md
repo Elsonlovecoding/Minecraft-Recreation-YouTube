@@ -214,9 +214,13 @@ Fuel: coal (8 items), planks (1.5), sticks (0.5), lava bucket (100).
 ## Player
 
 - Health 20 (10 hearts), regenerates when hunger >= 18
-- Hunger 20 (10 drumsticks), depletes with activity
-- Starve at 0 hunger: damage down to 1 heart (Overworld), no death from hunger
-- Fall damage: 1 heart per block above 3
+- Hunger 20 (10 drumsticks), depletes with activity (real Minecraft
+  exhaustion values: sprinting/jumping drain, walking barely, standing still
+  not at all)
+- Starve at 0 hunger: damage down to 5 hearts (Easy difficulty), no death
+  from hunger
+- Fall damage: half a heart per block above 3 (4 blocks = 0.5 hearts,
+  10 blocks = 3.5, 23 or more kills from full health)
 - Drowning, lava, fire, cactus damage
 - Death: drop inventory, respawn at spawn point or bed
 - Movement: walk, sprint, sneak, jump, swim

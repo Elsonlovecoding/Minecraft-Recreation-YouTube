@@ -70,8 +70,12 @@ export class World {
   }
 
   // Sets a block and marks the chunk (and bordering neighbours, if already
-  // loaded) dirty so Phase 3 remeshes them.
-  setBlock(x, y, z, id) {
+  // loaded) dirty so Phase 3 remeshes them. `markModified` false is for
+  // DERIVED writes (the fluid simulation): the chunk stays eligible for
+  // data unload — flows re-derive from the settle scan when the chunk
+  // returns — so merely exploring lava terrain can't pin chunk data in
+  // memory forever. Everything player-driven keeps the default.
+  setBlock(x, y, z, id, markModified = true) {
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
     x = Math.floor(x);
     y = Math.floor(y);
@@ -83,7 +87,7 @@ export class World {
     const chunk = this.getChunk(cx, cz);
     chunk.set(lx, y, lz, id);
     chunk.dirty = true;
-    chunk.modified = true; // player edits — this chunk's data is never dropped
+    if (markModified) chunk.modified = true; // player edits — never dropped
 
     const markDirty = (ncx, ncz) => {
       const n = this.getChunkIfLoaded(ncx, ncz);
@@ -113,6 +117,25 @@ export class World {
   // throw — an exception would stop later listeners from seeing the edit.
   addBlockListener(fn) {
     this._blockListeners.push(fn);
+  }
+
+  // Sky/block light at a cell as { sky, block } (0-15), read from the light
+  // computed when the containing chunk last meshed, or null when the chunk
+  // has never meshed (far away). Mob spawning reads this — never rebuild
+  // light windows per query (see docs/PROGRESS.md lighting invariants).
+  getLight(x, y, z) {
+    if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return null;
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
+    const cx = Math.floor(x / SIZE);
+    const cz = Math.floor(z / SIZE);
+    const chunk = this.getChunkIfLoaded(cx, cz);
+    if (!chunk || !chunk.lightData) return null;
+    const packed = chunk.lightData[
+      ((z - cz * SIZE) * SIZE + (x - cx * SIZE)) * CHUNK.HEIGHT + (y - OVERWORLD.MIN_Y)
+    ];
+    return { sky: packed >> 4, block: packed & 15 };
   }
 
   // Terrain height (surface block y) from the generator — pre-decoration,
@@ -269,10 +292,17 @@ export class World {
           disposeChunkMesh(chunk);
           this.meshedCount--;
         }
+        // Leaving the area ends the chunk's fluid simulation (queue entries
+        // drop rather than resurrect unloaded neighbours); clearing the
+        // settle flag makes a RETURNING chunk re-scan so an interrupted
+        // spread resumes. Only unload clears it — remeshing must not, or
+        // every remesh would re-enqueue the chunk's whole lava surface.
+        chunk._fluidScanned = false;
         if (!chunk.modified) this.chunks.delete(key);
       } else if (chunk.mesh && dx * dx + dz * dz > meshKeepR2) {
         disposeChunkMesh(chunk);
         this.meshedCount--;
+        chunk._fluidScanned = false;
       }
     }
   }

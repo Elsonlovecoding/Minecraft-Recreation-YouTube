@@ -293,7 +293,8 @@ export const PLAYER = {
   MAX_HEALTH: 20,
   MAX_HUNGER: 20,
   REGEN_HUNGER_THRESHOLD: 18,   // health regenerates at/above this hunger
-  STARVE_FLOOR_HEALTH: 2,       // starvation stops at 1 heart in the overworld
+  STARVE_FLOOR_HEALTH: 10,      // starvation stops at 5 hearts — Minecraft's
+                                // Easy difficulty (Phase 12; was 1 heart)
   REACH: 5,                     // block interaction distance
 
   // Body (AABB) and first-person camera
@@ -380,7 +381,10 @@ export const PLAYER = {
 
   // Falling (damage itself is applied by the stats phase)
   FALL_DAMAGE_THRESHOLD: 3,     // safe fall height in blocks
-  FALL_DAMAGE_PER_BLOCK: 2,     // 1 heart per block beyond the threshold
+  FALL_DAMAGE_PER_BLOCK: 1,     // half a heart per block beyond the threshold
+                                // (real Minecraft: 4 blocks = 0.5 hearts,
+                                // 10 blocks = 3.5, 23+ kills from full health;
+                                // Phase 12 fixed the doubled value)
 
   // Safe spawn: nearest dry, clear surface column to this point
   SPAWN: { X: 8, Z: 8, SEARCH_RADIUS: 48 },
@@ -457,6 +461,30 @@ export const FALLING = {
 };
 
 // ---------------------------------------------------------------------------
+// Flowing fluids (world/fluids.js) — Phase 12: lava spreads from sources,
+// falls when unsupported, and recedes when its feed is cut. Water stays
+// static (its lakes are generation-sealed; water flow is a later phase).
+// ---------------------------------------------------------------------------
+
+export const FLUIDS = {
+  LAVA_SPREAD_SECONDS: 1.5,     // one spread step (vanilla overworld lava tick)
+  LAVA_RANGE: 3,                // horizontal spread distance from a source (SPEC)
+  // Rendered surface height per horizontal flow level, as a fraction of the
+  // cell — each step visibly lower than the last. Sources render full cubes.
+  FLOW_HEIGHTS: [0.75, 0.5, 0.25],
+  FALL_HEIGHT: 1.0,             // falling columns fill their cell
+  SCROLL_TILES_PER_SECOND: 0.35, // animated flowing-texture scroll rate
+  MAX_UPDATES_PER_TICK: 1200,   // fluid cells processed per spread tick (the
+                                // remainder carries — a lake edge can't stall
+                                // a frame). Sized above the initial settle
+                                // wave around spawn (~1400 falls to ~0 within
+                                // a few ticks); most updates are cheap no-op
+                                // revalidations — only real changes remesh
+  SCAN_CHUNKS_PER_FRAME: 1,     // newly meshed chunks settled per frame
+                                // (finds generated lava with air below/beside)
+};
+
+// ---------------------------------------------------------------------------
 // Tools, weapons, armour (SPEC.md tables)
 // ---------------------------------------------------------------------------
 
@@ -528,6 +556,88 @@ export const MOBS = {
   DESPAWN_DISTANCE: 128,
   HOSTILE_CAP: 32,                // total cap to protect framerate
   PASSIVE_CAP: 16,
+
+  // --- Phase 12: the spawning framework (per-mob stats live in the
+  // entities/mobs.js registry, per ARCHITECTURE.md)
+  SPAWN_INTERVAL_SECONDS: 1.0,    // one spawn cycle this often
+  SPAWN_ATTEMPTS_PER_CYCLE: 8,    // random positions tried per cycle
+  SPAWN_MAX_DISTANCE: 96,         // spawn ring outer edge (inside despawn range)
+  SPAWN_Y_RANGE: 40,              // vertical search span around the player
+  SPAWN_COLUMN_SCAN: 12,          // blocks walked down a column to find ground
+  PASSIVE_SPAWN_LIGHT_MIN: 9,     // passive mobs need at least this much light
+  VOID_DESPAWN_Y: -80,            // mobs below this are removed (16 under
+                                  // the world floor, like dropped items)
+
+  // --- entity physics (entities/entity.js)
+  GRAVITY: 32,                    // blocks/s² (same world physics as the player)
+  TERMINAL_VELOCITY: 78,
+  STEP_HEIGHT: 1.0,               // mobs walk up full blocks without jumping
+  GROUND_RESPONSE: 8,             // 1/s approach to the wished velocity
+  AIR_DRAG: 1.9,                  // 1/s airborne damping (knockback arcs carry)
+  WATER_GRAVITY: 8,
+  WATER_BUOYANCY: 1.2,            // mobs bob toward the water surface
+  WATER_DRAG: 4.5,
+  WATER_SPEED_FACTOR: 0.5,        // horizontal crawl factor while in water
+  LAVA_GRAVITY: 9,
+  LAVA_DRAG: 9,                   // dense — mobs sink slowly, never plunge
+  LAVA_SPEED_FACTOR: 0.25,
+  FLUID_EXIT_JUMP: 6,             // bank hop, so mobs climb out of ponds
+
+  // --- combat feel
+  KNOCKBACK_HORIZONTAL: 6.5,      // blocks/s away from a hit
+  KNOCKBACK_VERTICAL: 5.0,        // upward pop on a hit
+  HURT_FLASH_SECONDS: 0.4,        // red tint after taking damage
+  DEATH_SECONDS: 0.45,            // fall-over animation before removal
+  ATTACK_REACH: 3,                // player melee reach against mobs (vanilla)
+  ATTACK_COOLDOWN_SECONDS: 0.5,   // between player melee swings that can hit
+  MELEE_RANGE: 1.4,               // mob-to-player centre distance that can bite
+                                  // (vanilla zombie reach ~1.43 — and, unlike
+                                  // 1.8, geometrically unable to cross a
+                                  // 1-block wall: 0.3 + 1 + 0.3 = 1.6 minimum)
+  MELEE_VERTICAL_RANGE: 2,        // bite only when roughly level with the player
+  MELEE_COOLDOWN_SECONDS: 1.0,    // between a mob's own attacks
+  BURN_DAMAGE_TICK_SECONDS: 0.5,  // lava contact damage cadence for mobs
+  LAVA_CONTACT_DAMAGE: 4,         // per tick while a mob touches lava
+  SUFFOCATION_DAMAGE: 1,          // per tick with a solid block in the head cell
+  SUFFOCATION_TICK_SECONDS: 0.5,  // (vanilla: sand falling onto a mob, or a
+                                  // block placed into it, kills rather than
+                                  // pinning it forever against the no-shove
+                                  // sweep clamp)
+
+  // --- AI (the pursue state; more states come with the real mobs)
+  AGGRO_RADIUS: 32,               // pursue when the player is within this
+  REPATH_SECONDS: 0.5,            // recompute the A* path this often
+  WAYPOINT_RADIUS: 0.35,          // a waypoint counts reached within this
+  CHASE_DIRECT_RANGE: 4,          // this close, skip the path and walk straight
+
+  // --- animation (entities/models.js rigs)
+  LIMB_SWING_CYCLES_PER_BLOCK: 0.55, // stride cycles per block walked
+  LIMB_SWING_MAX: 0.9,            // radians of limb swing at full stride
+  LIMB_SWING_FADE_RATE: 8,        // 1/s swing amplitude ease in/out
+  POSED_ARM_SWAY: 0.15,           // walk counter-sway factor for posed arms
+                                  // (the zombie's stay raised, swaying a little)
+  HEAD_TRACK_RANGE: 8,            // the head follows a player within this
+  HEAD_YAW_LIMIT: 1.1,            // radians the head turns from the body
+  HEAD_PITCH_LIMIT: 0.7,
+  HEAD_TURN_RATE: 10,             // 1/s head easing
+  HEAD_HEIGHT_FRACTION: 0.9,      // eye height on the mob body, for head pitch
+  BODY_TURN_RATE: 8,              // 1/s body yaw easing toward the move direction
+  BODY_TURN_MIN_SPEED: 0.2,       // blocks/s below which the body stops turning
+  LIGHT_TINT_RATE: 8,             // 1/s ease of the baked-light tint (no popping
+                                  // when a mob crosses a light-level border)
+
+  // --- pathfinding (entities/pathfinding.js)
+  PATH: {
+    NODE_BUDGET: 500,             // max A* expansions per search — the search
+                                  // can never stall a frame; budget exhaustion
+                                  // returns the closest-approach path instead
+    MAX_DROP: 3,                  // never path over drops deeper than this (SPEC)
+    MAX_RANGE: 48,                // nodes beyond this from the start stop expanding
+    STEP_UP_COST: 1.5,            // route-shaping: climbing beats detouring only
+                                  // when the detour costs more than this
+    DROP_COST_PER_BLOCK: 0.5,     // extra cost per block of a ledge drop
+    HEURISTIC_Y_WEIGHT: 0.5,      // vertical distance weight in the A* heuristic
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -613,7 +723,12 @@ export const INTERACTION = {
   OUTLINE_COLOR: 0x000000,        // targeted face outline
   OUTLINE_OPACITY: 0.75,
   OUTLINE_OFFSET: 0.004,          // outline floats this far off the face (z-fight)
-  CRACK_INFLATE: 0.008,           // crack overlay cube inflation over the block
+  // The crack overlay sits EXACTLY on the block faces (Phase 12 — the old
+  // inflated cube parallaxed the crack texture up to a pixel off the face at
+  // grazing view angles). polygonOffset wins the depth test against the
+  // coplanar face without moving a single fragment on screen.
+  CRACK_POLYGON_OFFSET_FACTOR: -1,
+  CRACK_POLYGON_OFFSET_UNITS: -2,
   DESTROY_STAGE_PATH: 'assets/destroy/destroy_stage_', // real Minecraft crack
                                   // textures, `${PATH}${stage}.png`, 10 stages
   HAND: {

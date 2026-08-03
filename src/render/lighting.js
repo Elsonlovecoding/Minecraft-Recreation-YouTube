@@ -460,10 +460,16 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
   const lightDir = new THREE.Vector3();
 
   let time = TIME.START_TIME * TIME.DAY_LENGTH_SECONDS;
+  let lastSkyDarken = 0;
 
   return {
     get timeOfDay() {
       return time / TIME.DAY_LENGTH_SECONDS;
+    },
+    // Current skylight darkening (0 day .. 11 deep night) — the hostile
+    // spawner combines it with baked sky light for the effective level.
+    get skyDarken() {
+      return lastSkyDarken;
     },
     // Jump to a day fraction (dev scaffolding: window.__dayNight.setTimeOfDay(0.5))
     setTimeOfDay(t) {
@@ -509,6 +515,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       fog.color.copy(horizon);
 
       // Baked-light uniforms: skylight dims (and cools) toward night.
+      lastSkyDarken = skyDarken;
       CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = skyDarken;
       CHUNK_LIGHT_UNIFORMS.uSkyTint.value
         .lerpColors(white, nightTint, skyDarken / maxDarken);

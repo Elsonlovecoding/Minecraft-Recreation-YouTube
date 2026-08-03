@@ -36,6 +36,15 @@
     #lock-hint.hidden {
       display: none;
     }
+    /* Paused (Esc mid-game): the hint gains a title. Everything is frozen
+       by main.js; this is just the label. */
+    body.mc-paused #lock-hint::before {
+      content: "Game paused";
+      display: block;
+      font-size: 22px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
   </style>
   <script type="importmap">
     {
