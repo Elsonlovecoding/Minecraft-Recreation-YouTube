@@ -1,4 +1,4 @@
-// player/hand.js — the first-person hand, split out of interaction.js
+// player/hand.js — the first-person hands, split out of interaction.js
 // (Phase 13, per the ARCHITECTURE cap note): the dedicated fixed-FOV render
 // pass, the generated pixel-skin arm, the held block/tool/model meshes that
 // follow the hotbar selection, and the swing / eat / bow-draw pose
@@ -6,11 +6,17 @@
 // frame with the eating state); main.js calls renderHand after the world
 // render.
 //
-// The hand renders in its own pass with a fixed-FOV camera (never the world
-// camera — its wide FOV skews anything in a screen corner, and the sprint
-// FOV kick would stretch it). Depth is cleared before the pass, so the hand
-// draws over point-blank walls like vanilla while still self-occluding
-// correctly.
+// Phase 14: TWO hands. The right hand is the Phase 13 hand unchanged; the
+// left mirrors it across the screen centre and shows the OFFHAND item
+// whenever one is held (nothing — not even a bare arm — otherwise, like
+// vanilla). Each hand swings, eats and draws independently; offhand
+// actions (interaction's active-hand fallback) animate the left.
+//
+// The hands render in their own pass with a fixed-FOV camera (never the
+// world camera — its wide FOV skews anything in a screen corner, and the
+// sprint FOV kick would stretch it). Depth is cleared before the pass, so
+// the hands draw over point-blank walls like vanilla while still
+// self-occluding correctly.
 
 import * as THREE from 'three';
 import { INTERACTION, LIGHTING } from '../config.js';
@@ -57,7 +63,25 @@ function createArmTexture() {
   return texture;
 }
 
-// `inventory` drives what the hand holds; `combat` (optional) supplies the
+// The arm box geometry with per-face brightness (top/side/bottom like
+// blocks) so it reads as a 3D limb whichever face dominates.
+function createArmGeometry(H) {
+  const geometry = new THREE.BoxGeometry(...H.ARM_SIZE);
+  const normals = geometry.getAttribute('normal');
+  const colors = new Float32Array(normals.count * 3);
+  const FB = LIGHTING.FACE_BRIGHTNESS;
+  for (let i = 0; i < normals.count; i++) {
+    const ny = normals.getY(i);
+    const b = ny > 0.5 ? FB.top : ny < -0.5 ? FB.bottom : FB.side;
+    colors[i * 3] = b;
+    colors[i * 3 + 1] = b;
+    colors[i * 3 + 2] = b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geometry;
+}
+
+// `inventory` drives what the hands hold; `combat` (optional) supplies the
 // bow-draw state for the pulled-back pose.
 export function createHand({ inventory, combat }) {
   const H = INTERACTION.HAND;
@@ -70,44 +94,60 @@ export function createHand({ inventory, combat }) {
     handCamera.aspect = window.innerWidth / window.innerHeight;
     handCamera.updateProjectionMatrix();
   });
-  const hand = new THREE.Group();
-  // Per-face brightness (top/side/bottom like blocks) so the arm box reads
-  // as a 3D limb instead of a flat plane whichever face dominates.
-  const armGeometry = new THREE.BoxGeometry(...H.ARM_SIZE);
-  {
-    const normals = armGeometry.getAttribute('normal');
-    const colors = new Float32Array(normals.count * 3);
-    const FB = LIGHTING.FACE_BRIGHTNESS;
-    for (let i = 0; i < normals.count; i++) {
-      const ny = normals.getY(i);
-      const b = ny > 0.5 ? FB.top : ny < -0.5 ? FB.bottom : FB.side;
-      colors[i * 3] = b;
-      colors[i * 3 + 1] = b;
-      colors[i * 3 + 2] = b;
-    }
-    armGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const armTexture = createArmTexture();
+  const armGeometry = createArmGeometry(H);
+
+  // One hand rig: the group, the arm, the held mesh following a name
+  // getter, and the swing/eat/draw pose state. `side` config picks the
+  // resting position/tilts; `showBareArm` false hides the empty hand
+  // entirely (the offhand).
+  function makeRig({ base, armTilt, blockTilt, spriteTilt, showBareArm }) {
+    const hand = new THREE.Group();
+    const arm = new THREE.Mesh(
+      armGeometry,
+      new THREE.MeshBasicMaterial({
+        map: armTexture,
+        vertexColors: true,
+        toneMapped: false,
+      }),
+    );
+    // The arm reaches forward from its screen corner
+    arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
+    hand.add(arm);
+    const rig = {
+      hand,
+      arm,
+      heldMesh: null,
+      shownItem: false, // item name currently shown (false = never set)
+      base: new THREE.Vector3(...base),
+      tilt: new THREE.Euler(...armTilt),
+      blockTilt,
+      spriteTilt,
+      showBareArm,
+      swingT: 1,   // 0..1, animation finished at >= 1
+      eatBlend: 0, // eased 0..1 into the eating pose
+      drawBlend: 0, // eased 0..1 into the bow-drawing pose
+    };
+    hand.position.copy(rig.base);
+    hand.rotation.copy(rig.tilt);
+    handScene.add(hand);
+    return rig;
   }
-  const arm = new THREE.Mesh(
-    armGeometry,
-    new THREE.MeshBasicMaterial({
-      map: createArmTexture(),
-      vertexColors: true,
-      toneMapped: false,
-    }),
-  );
-  // The arm reaches forward from the bottom-right screen corner
-  arm.position.set(0, 0, -H.ARM_SIZE[2] * H.ARM_FORWARD);
-  hand.add(arm);
-  let heldMesh = null; // mini-block or sprite of the current selection
-  let shownItem = false; // item name the hand currently shows (false = never set)
-  const handBase = new THREE.Vector3(...H.POSITION);
-  const handTilt = new THREE.Euler(...H.ARM_TILT);
-  hand.position.copy(handBase);
-  hand.rotation.copy(handTilt);
-  handScene.add(hand);
-  let swingT = 1;   // 0..1, animation finished at >= 1
-  let eatBlend = 0; // eased 0..1 into the eating hand pose
-  let drawBlend = 0; // eased 0..1 into the bow-drawing hand pose
+
+  const mainRig = makeRig({
+    base: H.POSITION,
+    armTilt: H.ARM_TILT,
+    blockTilt: H.BLOCK_TILT,
+    spriteTilt: H.SPRITE_TILT,
+    showBareArm: true,
+  });
+  const offRig = makeRig({
+    base: H.OFFHAND_POSITION,
+    armTilt: H.OFFHAND_ARM_TILT,
+    blockTilt: H.OFFHAND_BLOCK_TILT,
+    spriteTilt: H.OFFHAND_SPRITE_TILT,
+    showBareArm: false,
+  });
 
   function renderHand(renderer) {
     renderer.autoClear = false;
@@ -116,20 +156,20 @@ export function createHand({ inventory, combat }) {
     renderer.autoClear = true;
   }
 
-  function startSwing() {
-    swingT = 0;
+  // which: 'main' (default) | 'off'
+  function startSwing(which) {
+    (which === 'off' ? offRig : mainRig).swingT = 0;
   }
 
-  // The hand shows the selected hotbar item: block items as a small angled
-  // mini-cube in the lower-right corner (vanilla placement), other items as
-  // their sprite, an empty slot as the bare arm.
-  function refreshHeldMesh() {
-    const name = inventory.selectedName;
-    if (name === shownItem) return;
-    shownItem = name;
-    if (heldMesh) {
-      hand.remove(heldMesh);
-      heldMesh = null;
+  // A rig shows its item: block items as a small angled mini-cube in its
+  // screen corner (vanilla placement), other items as their sprite slab, an
+  // empty slot as the bare arm (main) or nothing at all (offhand).
+  function refreshRig(rig, name) {
+    if (name === rig.shownItem) return;
+    rig.shownItem = name;
+    if (rig.heldMesh) {
+      rig.hand.remove(rig.heldMesh);
+      rig.heldMesh = null;
     }
     if (name) {
       // The shared item-visual meshes/materials are used as-is — the hand
@@ -139,71 +179,91 @@ export function createHand({ inventory, combat }) {
       if (info.model) {
         // Entity-model items (chest): the same centred model the drops use,
         // held like a block.
-        heldMesh = createModelMesh(info.model, H.BLOCK_SCALE);
-        heldMesh.position.set(...H.BLOCK_OFFSET);
-        heldMesh.rotation.set(...H.BLOCK_TILT);
-        arm.visible = false;
+        rig.heldMesh = createModelMesh(info.model, H.BLOCK_SCALE);
+        rig.heldMesh.position.set(...H.BLOCK_OFFSET);
+        rig.heldMesh.rotation.set(...rig.blockTilt);
+        rig.arm.visible = false;
       } else if (info.blockId !== undefined) {
-        heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
-        heldMesh.position.set(...H.BLOCK_OFFSET);
-        heldMesh.rotation.set(...H.BLOCK_TILT);
-        arm.visible = false;
+        rig.heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
+        rig.heldMesh.position.set(...H.BLOCK_OFFSET);
+        rig.heldMesh.rotation.set(...rig.blockTilt);
+        rig.arm.visible = false;
       } else {
         // Tools and materials: the extruded slab model (flat sprite with
-        // one-pixel depth), angled diagonally across the lower-right like a
-        // vanilla held tool — never a cube. The slab may arrive async (the
-        // first selection of each item builds it from its texture) — keep
-        // the arm until it does, so the hand is never empty.
+        // one-pixel depth), angled diagonally like a vanilla held tool —
+        // never a cube. The slab may arrive async (the first selection of
+        // each item builds it from its texture) — the main hand keeps the
+        // arm until it does, so it is never empty.
         // `mesh` is declared before the call: on a CACHE HIT the factory
         // fires onReady synchronously, and a `const` here would still be in
         // its temporal dead zone — re-selecting a previously held tool
-        // crashed. The sync call safely no-ops (heldMesh can't equal
+        // crashed once. The sync call safely no-ops (heldMesh can't equal
         // undefined) and the visibility line below covers that case.
         let mesh;
         mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
-          if (heldMesh === mesh) arm.visible = false;
+          if (rig.heldMesh === mesh) rig.arm.visible = false;
         });
         mesh.position.set(...H.SPRITE_OFFSET);
-        mesh.rotation.set(...H.SPRITE_TILT);
-        heldMesh = mesh;
-        arm.visible = mesh.children.length === 0;
+        mesh.rotation.set(...rig.spriteTilt);
+        rig.heldMesh = mesh;
+        rig.arm.visible = rig.showBareArm && mesh.children.length === 0;
       }
-      hand.add(heldMesh);
+      rig.hand.add(rig.heldMesh);
+      rig.hand.visible = true;
     } else {
-      arm.visible = true;
+      rig.arm.visible = rig.showBareArm;
+      rig.hand.visible = rig.showBareArm;
     }
   }
-  inventory.subscribe(refreshHeldMesh);
-  refreshHeldMesh();
+  const refreshMain = () => refreshRig(mainRig, inventory.selectedName);
+  const refreshOff = () => refreshRig(offRig, inventory.offhandName);
+  inventory.subscribe(refreshMain);
+  inventory.offhand.subscribe(refreshOff);
+  refreshMain();
+  refreshOff();
 
-  // Per frame (interaction.js): `eating` is its { name, t } state or null.
-  function update(dt, eating) {
-    if (swingT < 1) swingT = Math.min(1, swingT + dt / H.SWING_SECONDS);
-    const s = Math.sin(Math.PI * Math.min(swingT, 1));
+  // One rig's pose for this frame. `eatingHere` is the interaction eating
+  // state when THIS hand eats; `drawingHere` mirrors the combat draw.
+  function updateRig(rig, dt, eatingHere, drawingHere) {
+    if (rig.swingT < 1) rig.swingT = Math.min(1, rig.swingT + dt / H.SWING_SECONDS);
+    const s = Math.sin(Math.PI * Math.min(rig.swingT, 1));
     // Eating pose: the hand eases toward the mouth and nibbles (a quick
     // up-down bob) until the food is finished. Drawing a bow eases toward
     // its own raised pose the same way, pulling back with the charge.
-    const blendTarget = eating ? 1 : 0;
-    eatBlend += (blendTarget - eatBlend) * (1 - Math.exp(-H.EAT_ENGAGE_RATE * dt));
-    const drawTarget = combat?.isDrawing ? 1 : 0;
-    drawBlend += (drawTarget - drawBlend) * (1 - Math.exp(-H.DRAW_ENGAGE_RATE * dt));
-    const drawPull = drawBlend * (combat ? 0.5 + 0.5 * combat.drawCharge : 0);
-    const nibble = eating
-      ? Math.abs(Math.sin(eating.t * Math.PI * 2 * H.EAT_NIBBLE_HZ)) * H.EAT_NIBBLE_AMP
+    const blendTarget = eatingHere ? 1 : 0;
+    rig.eatBlend += (blendTarget - rig.eatBlend) * (1 - Math.exp(-H.EAT_ENGAGE_RATE * dt));
+    const drawTarget = drawingHere ? 1 : 0;
+    rig.drawBlend += (drawTarget - rig.drawBlend) * (1 - Math.exp(-H.DRAW_ENGAGE_RATE * dt));
+    const drawPull = rig.drawBlend * (combat ? 0.5 + 0.5 * combat.drawCharge : 0);
+    const nibble = eatingHere
+      ? Math.abs(Math.sin(eatingHere.t * Math.PI * 2 * H.EAT_NIBBLE_HZ)) * H.EAT_NIBBLE_AMP
       : 0;
-    hand.position.set(
-      handBase.x - H.SWING_SIDE * H.SWING_DIP * s + H.EAT_OFFSET[0] * eatBlend +
-        H.DRAW_OFFSET[0] * drawPull,
-      handBase.y - H.SWING_DIP * s + (H.EAT_OFFSET[1] + nibble) * eatBlend +
+    // The left hand mirrors across x: its sideways swing dip and eat/draw
+    // x-offsets flip sign.
+    const mirror = rig === offRig ? -1 : 1;
+    rig.hand.position.set(
+      rig.base.x - mirror * H.SWING_SIDE * H.SWING_DIP * s +
+        mirror * H.EAT_OFFSET[0] * rig.eatBlend + mirror * H.DRAW_OFFSET[0] * drawPull,
+      rig.base.y - H.SWING_DIP * s + (H.EAT_OFFSET[1] + nibble) * rig.eatBlend +
         H.DRAW_OFFSET[1] * drawPull,
-      handBase.z - H.SWING_FORWARD * H.SWING_DIP * s + H.EAT_OFFSET[2] * eatBlend +
+      rig.base.z - H.SWING_FORWARD * H.SWING_DIP * s + H.EAT_OFFSET[2] * rig.eatBlend +
         H.DRAW_OFFSET[2] * drawPull,
     );
-    hand.rotation.set(
-      handTilt.x - H.SWING_ROTATION * s + H.EAT_TIP * eatBlend + H.DRAW_TIP * drawPull,
-      handTilt.y + H.SWING_YAW * H.SWING_ROTATION * s,
-      handTilt.z,
+    rig.hand.rotation.set(
+      rig.tilt.x - H.SWING_ROTATION * s + H.EAT_TIP * rig.eatBlend + H.DRAW_TIP * drawPull,
+      rig.tilt.y + mirror * H.SWING_YAW * H.SWING_ROTATION * s,
+      rig.tilt.z,
     );
+  }
+
+  // Per frame (interaction.js): `eating` is its { name, t, source } state
+  // or null. The draw pose lands on whichever hand combat says is drawing.
+  function update(dt, eating) {
+    const drawSource = combat?.isDrawing ? (combat.drawSource ?? 'main') : null;
+    updateRig(mainRig, dt, eating && eating.source !== 'off' ? eating : null,
+      drawSource === 'main');
+    updateRig(offRig, dt, eating && eating.source === 'off' ? eating : null,
+      drawSource === 'off');
   }
 
   return {
@@ -212,11 +272,18 @@ export function createHand({ inventory, combat }) {
     update,
     // still swinging? (mining keeps re-triggering only once finished)
     get swinging() {
-      return swingT < 1;
+      return mainRig.swingT < 1;
     },
     // test/debug scaffolding (interaction.debugState passes these through)
     get debug() {
-      return { hand, arm, swingT, shownItem };
+      return {
+        hand: mainRig.hand,
+        arm: mainRig.arm,
+        swingT: mainRig.swingT,
+        shownItem: mainRig.shownItem,
+        offHand: offRig.hand,
+        offShownItem: offRig.shownItem,
+      };
     },
   };
 }

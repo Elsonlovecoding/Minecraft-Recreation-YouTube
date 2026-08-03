@@ -2,11 +2,12 @@
 // the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
-import { DEBUG, SKY, LAVA_VIEW, ITEMS } from './config.js';
+import { DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
+  CHUNK_LIGHT_UNIFORMS,
 } from './render/lighting.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { initHud, updateHud } from './ui/hud.js';
@@ -127,6 +128,9 @@ async function init() {
     // A mob in the crosshair intercepts left clicks (attack, not mine);
     // holding right with the bow draws and releases through combat too.
     combat,
+    // Right-clicking a mob (Phase 14): shears shear a sheep. `mobs` is
+    // assigned below; clicks can only arrive long after init finishes.
+    onUseMob: (mob, itemName) => mobs.useOnMob(mob, itemName),
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -259,6 +263,15 @@ async function init() {
     world.updateStreaming(camera.position); // terrain loads even while paused
     // delta 0 while paused: the palette still applies, time doesn't advance.
     dayNight.update(paused ? 0 : delta, camera.position);
+    // Held-torch dynamic light (Phase 14): a torch in either hand lights the
+    // world around the player. Two uniform writes per frame — the chunk
+    // shader applies the falloff per fragment, so no chunk ever remeshes
+    // for it (entities/mobs.js reads the same uniforms for its tints).
+    CHUNK_LIGHT_UNIFORMS.uHeldLightLevel.value = Math.max(
+      LIGHTING.HELD_LIGHT[inventory.selectedName] ?? 0,
+      LIGHTING.HELD_LIGHT[inventory.offhandName] ?? 0,
+    );
+    CHUNK_LIGHT_UNIFORMS.uHeldLightPos.value.copy(camera.position);
     // Submerged in lava: near-blind orange view — the fog collapses to
     // arm's reach (the HUD overlay in ui/hud.js does the rest). dayNight
     // rewrites the fog colour every frame, so leaving lava restores itself;

@@ -46,8 +46,16 @@ src/
                          unwrap, animation rigs (Phase 12 addition); the
                          per-mob box-geometry tables converted from the
                          real vanilla models (Phase 13 — stats stay in
-                         mobs.js, geometry lives here)
-    mobs.js              mob definitions, spawn rules, AI
+                         mobs.js, geometry lives here); multi-box parts,
+                         overlay models and the passive herd tables
+                         (Phase 14)
+    mobs.js              mob registry (stats/drops), hostile AI, the
+                         manager + animation dispatch
+    spawning.js          the natural-spawning framework (Phase 14 split
+                         out of mobs.js per the Phase 13 cap note)
+    passive.js           passive-herd behaviour: wander/flee AI, sheep
+                         shear + wool regrow, chicken eggs, quadruped/
+                         chicken animation (Phase 14 addition)
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup
     falling.js           falling sand/gravel entities (Phase 9 addition)
@@ -97,10 +105,13 @@ not wherever is convenient.
 in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
-hand lives in `player/hand.js` now; interaction is back to ~650);
-`entities/mobs.js` sits right at the cap (~810) as of Phase 13 — the next
-session that grows it should split the spawning framework into its own
-`entities/spawning.js` and note it here.
+hand lives in `player/hand.js` now; ~740 after the Phase 14 offhand);
+`entities/mobs.js` got the mandated spawning split in Phase 14
+(`entities/spawning.js`, plus passive behaviour in `entities/passive.js`)
+but the herd registry entries put it back at ~880 — the next session that
+grows it should move the MOB_TYPES registry into its own file;
+`ui/screens.js` sits at ~840 as of Phase 14 (preview + offhand slot) — the
+brewing-stand screen should split the container screens out.
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.
