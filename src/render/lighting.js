@@ -152,12 +152,27 @@ export function updateSun(sun, focus, dir) {
 
 // Uniforms shared by every chunk material; the day/night cycle writes them
 // once per frame and the whole world relights without any remeshing.
+// uHeldLight* is the Phase 14 held-torch dynamic light: a point light that
+// follows the player, applied per fragment at render time — the flood fill
+// never sees it, so no chunk ever remeshes because the player moved.
 export const CHUNK_LIGHT_UNIFORMS = {
   uSkyDarken: { value: 0 },                                   // 0 day .. 11 night
   uSkyTint: { value: new THREE.Color(1, 1, 1) },              // white -> moonlight
   uTorchTint: { value: new THREE.Color(LIGHTING.TORCH_TINT) },
   uLightFalloff: { value: LIGHTING.LIGHT_FALLOFF },
+  uHeldLightPos: { value: new THREE.Vector3(0, -1e6, 0) },    // player eye
+  uHeldLightLevel: { value: 0 },                              // 0 = off, torch 14
+  uHeldLightTint: { value: new THREE.Color(LIGHTING.HELD_LIGHT_TINT) },
 };
+
+// The held light's brightness at `dist` blocks from the player — the same
+// level-per-block falloff the shader computes, for JS consumers (the mob
+// tint in entities/mobs.js). Returns 0..1.
+export function heldLightBrightness(level, dist) {
+  if (level <= 0) return 0;
+  const l = Math.max(0, Math.min(15, level - dist));
+  return LIGHTING.LIGHT_FALLOFF ** (15 - l);
+}
 
 // Turns a MeshBasicMaterial into a Minecraft-style lit chunk material. The
 // mesher supplies a per-vertex `light` attribute: vec2(sky, block) light
@@ -173,16 +188,22 @@ export function patchChunkMaterial(material) {
     Object.assign(shader.uniforms, CHUNK_LIGHT_UNIFORMS);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>',
-        'attribute vec2 light;\nvarying vec2 vLight;\n#include <common>')
+        'attribute vec2 light;\nvarying vec2 vLight;\nvarying vec3 vHeldWorldPos;\n#include <common>')
       .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\nvLight = light;');
+        '#include <begin_vertex>\n'
+        + 'vLight = light;\n'
+        + 'vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
         'varying vec2 vLight;\n'
+        + 'varying vec3 vHeldWorldPos;\n'
         + 'uniform float uSkyDarken;\n'
         + 'uniform vec3 uSkyTint;\n'
         + 'uniform vec3 uTorchTint;\n'
         + 'uniform float uLightFalloff;\n'
+        + 'uniform vec3 uHeldLightPos;\n'
+        + 'uniform float uHeldLightLevel;\n'
+        + 'uniform vec3 uHeldLightTint;\n'
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
@@ -190,7 +211,13 @@ export function patchChunkMaterial(material) {
           float blockLevel = vLight.y * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
-          diffuseColor.rgb *= max(skyLum, blockLum);
+          // Held-torch dynamic light (Phase 14): one level lost per block of
+          // euclidean distance from the player — the same falloff curve as
+          // baked light, smooth instead of cell-quantised, and applied here
+          // at render time so it costs zero remeshing as the player moves.
+          float heldLevel = clamp(uHeldLightLevel - distance(vHeldWorldPos, uHeldLightPos), 0.0, 15.0);
+          vec3 heldLum = pow(uLightFalloff, 15.0 - heldLevel) * uHeldLightTint;
+          diffuseColor.rgb *= max(max(skyLum, blockLum), heldLum);
         }`);
   };
 }

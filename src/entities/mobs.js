@@ -1,29 +1,37 @@
-// entities/mobs.js — Phase 13: the hostile roster. The per-mob registry
-// (stats + drops from SPEC.md; box-model geometry lives in
-// entities/models.js), the spawning framework (light/distance/ground gates
-// + caps from config MOBS), the per-mob AI state machines, walk/head
-// animation over the models.js rigs, daylight burning, and the
-// player-attack raycast. Damage TO the player routes through the injected
-// combat system (systems/combat.js) so armour reduction applies; skeleton
-// arrows and creeper explosions are combat's machinery too.
+// entities/mobs.js — the mob manager and registry. Per-mob stats + drops
+// from SPEC.md (box-model geometry lives in entities/models.js), the
+// hostile AI state machines, walk/head animation over the models.js rigs,
+// daylight burning, and the player-attack raycast. Damage TO the player
+// routes through the injected combat system (systems/combat.js) so armour
+// reduction applies; skeleton arrows and creeper explosions are combat's
+// machinery too. Phase 14 splits (ARCHITECTURE cap): natural spawning lives
+// in entities/spawning.js, passive behaviour in entities/passive.js.
 //
-// The roster (SPEC mob table):
+// The roster (SPEC mob tables):
 //   zombie    walks at the player, melee bites, burns in daylight
-//   skeleton  keeps its distance, shoots arrows with lead, burns in daylight
+//   skeleton  keeps its distance; draws its bow visibly, fires on release
+//             (2s cycle), burns in daylight
 //   creeper   approaches, hisses, flashes and swells, explodes after 1.5s
 //   spider    fast, climbs walls, neutral in daylight unless provoked
+//   cow/pig/sheep/chicken  wander on daylight grass, flee when hit, never
+//             despawn; sheep shear, chickens lay eggs and fall slowly
 // (enderman/blaze/ghast arrive with their dimensions.)
 
 import * as THREE from 'three';
-import { MOBS, COMBAT, OVERWORLD, CHUNK, LIGHTING, PLAYER } from '../config.js';
-import { BLOCK, blockDef } from '../world/blocks.js';
+import { MOBS, COMBAT, LIGHTING, PLAYER } from '../config.js';
 import { Entity } from './entity.js';
-import { findPath, standableAt } from './pathfinding.js';
+import { findPath } from './pathfinding.js';
 import {
-  createMobModel, HUMANOID_MODEL, SKELETON_MODEL, CREEPER_MODEL,
-  SPIDER_MODEL, SPIDER_LEG_POSE,
+  createMobModel, attachOverlayModel, HUMANOID_MODEL, SKELETON_MODEL,
+  CREEPER_MODEL, SPIDER_MODEL, SPIDER_LEG_POSE, COW_MODEL, PIG_MODEL,
+  SHEEP_MODEL, SHEEP_WOOL_MODEL, CHICKEN_MODEL,
 } from './models.js';
+import { createSpawner } from './spawning.js';
+import { createPassiveBehaviour } from './passive.js';
 import { rayAABB, lineOfSight } from '../systems/combat.js';
+import { createExtrudedItemMesh } from './items.js';
+import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
+import { blockDef } from '../world/blocks.js';
 
 // ---------------------------------------------------------------------------
 // Mob registry — stats and drops are the SPEC.md hostile table, exactly.
@@ -106,6 +114,103 @@ export const MOB_TYPES = {
     headHeightFraction: 0.6,   // eye sits low on the flat body
     drops: [{ item: 'string', count: [0, 2] }],
   },
+
+  // --- the passive herds (Phase 14). Stats from the SPEC passive table;
+  // meat item ids follow the texture names (beef, porkchop, mutton,
+  // chicken — what the smelting recipes and food registry expect). `speed`
+  // is the panic-flee speed; wandering ambles at a fraction of it
+  // (config MOBS.PASSIVE). Temperate texture variants per the session note.
+  cow: {
+    name: 'cow',
+    ai: 'passive',
+    anim: 'quadruped',
+    hostile: false,
+    spawnWeight: 100,
+    texture: 'assets/entity/cow_temperate_cow.png',
+    textureSize: [64, 64],
+    model: COW_MODEL,
+    width: 0.9,
+    height: 1.4,
+    clearance: 2,
+    maxHealth: 10,             // SPEC
+    speed: 2.0,
+    headHeightFraction: 0.9,
+    drops: [
+      { item: 'beef', count: [1, 3] },     // SPEC raw_beef
+      { item: 'leather', count: [0, 2] },  // SPEC leather
+    ],
+  },
+  pig: {
+    name: 'pig',
+    ai: 'passive',
+    anim: 'quadruped',
+    hostile: false,
+    spawnWeight: 100,
+    texture: 'assets/entity/pig_temperate_pig.png',
+    textureSize: [64, 64],
+    model: PIG_MODEL,
+    width: 0.9,
+    height: 0.9,
+    clearance: 1,
+    maxHealth: 10,             // SPEC
+    speed: 2.0,
+    headHeightFraction: 0.8,
+    drops: [{ item: 'porkchop', count: [1, 3] }], // SPEC raw_porkchop
+  },
+  sheep: {
+    name: 'sheep',
+    ai: 'passive',
+    anim: 'quadruped',
+    hostile: false,
+    spawnWeight: 100,
+    texture: 'assets/entity/sheep_sheep.png',
+    textureSize: [64, 32],
+    model: SHEEP_MODEL,
+    // The wool coat renders as an overlay model on its own sheet, hidden
+    // while sheared (entities/passive.js owns shear/regrow).
+    overlay: {
+      texture: 'assets/entity/sheep_sheep_wool.png',
+      textureSize: [64, 32],
+      model: SHEEP_WOOL_MODEL,
+    },
+    wool: true,
+    width: 0.9,
+    height: 1.3,
+    clearance: 2,
+    maxHealth: 8,              // SPEC
+    speed: 2.0,
+    headHeightFraction: 0.9,
+    // SPEC: wool + raw_mutton — but a sheared sheep has no wool to give.
+    dropsFor: (mob) => [
+      { item: 'mutton', count: [1, 2] },
+      ...(mob.sheared ? [] : [{ item: 'white_wool', count: 1 }]),
+    ],
+    drops: [],                 // superseded by dropsFor (kept for tooling)
+  },
+  chicken: {
+    name: 'chicken',
+    ai: 'passive',
+    anim: 'chicken',
+    hostile: false,
+    spawnWeight: 100,
+    texture: 'assets/entity/chicken_temperate_chicken.png',
+    textureSize: [64, 32],
+    model: CHICKEN_MODEL,
+    laysEggs: true,
+    // The wing-flap slow fall: a per-type fall cap the physics step clamps
+    // (entities/entity.js) — frame-rate exact, unlike an AI-side clamp.
+    maxFallSpeed: MOBS.PASSIVE.CHICKEN.FALL_SPEED,
+    width: 0.4,
+    height: 0.7,
+    clearance: 1,
+    maxHealth: 4,              // SPEC
+    speed: 1.75,
+    headHeightFraction: 0.95,
+    drops: [
+      { item: 'chicken', count: 1 },       // SPEC raw_chicken
+      { item: 'feather', count: [0, 2] },  // SPEC feather
+    ],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -128,10 +233,13 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export function createMobs({ world, scene, player, stats, items, dayNight, combat }) {
   const mobs = [];
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
-  let spawnTimer = 0;
 
   const hostileTypes = Object.values(MOB_TYPES).filter((t) => t.hostile);
   const passiveTypes = Object.values(MOB_TYPES).filter((t) => !t.hostile);
+
+  // Phase 14 splits: natural spawning (entities/spawning.js) and passive
+  // behaviour (entities/passive.js) plug back into this manager.
+  const passive = createPassiveBehaviour({ world, player, items });
 
   function spawnAt(type, x, y, z) {
     const entity = new Entity(world, { x, y, z }, type);
@@ -144,6 +252,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       group,
       parts,
       material,
+      materials: [material], // every material tinted by light/hurt/fire
       yaw: Math.random() * Math.PI * 2,
       headYaw: 0,
       headPitch: 0,
@@ -158,14 +267,35 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       suffocateTimer: 0,
       onFire: false,         // daylight burning (drives the flicker tint)
       provoked: false,       // hit by the player — neutral spiders retaliate
-      // skeleton state
+      // skeleton state (Phase 14: a real draw-and-release cycle)
       aiming: false,
       aimBlend: 0,
-      shootTimer: MOBS.SKELETON.SHOOT_INTERVAL_SECONDS,
+      shootCooldown: MOBS.SKELETON.SHOOT_COOLDOWN_SECONDS,
+      drawTime: 0,
       // creeper state
       ignited: false,
       fuse: 0,
+      // passive state (entities/passive.js attaches lazily)
+      passive: null,
+      sheared: false,
+      woolPivots: null,
     };
+    // The sheep's wool coat: a second sheet's model riding the same rig.
+    if (type.overlay) {
+      const overlay = attachOverlayModel(parts, type.overlay);
+      mob.woolPivots = overlay.pivots;
+      mob.materials.push(overlay.material);
+    }
+    // The skeleton's bow (Phase 14): the extruded item slab in the LEFT
+    // hand — a child of the arm pivot, so the aim pose points it at the
+    // target and the draw animation rides along.
+    if (type.ai === 'skeleton' && parts.leftArm) {
+      const S = MOBS.SKELETON;
+      const bow = createExtrudedItemMesh('bow', S.BOW_SCALE);
+      bow.position.set(...S.BOW_OFFSET);
+      bow.rotation.set(...S.BOW_TILT);
+      parts.leftArm.add(bow);
+    }
     applyPose(mob);
     mobs.push(mob);
     return mob;
@@ -183,13 +313,18 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   function removeMob(index) {
     const mob = mobs[index];
     mob.group.removeFromParent();
-    mob.material.dispose();
+    for (const material of mob.materials) material.dispose();
     mobs.splice(index, 1);
   }
 
+  // Loot rolls the type's drop table — or its dropsFor(mob) when the table
+  // depends on the mob's state (a sheared sheep has no wool). Every
+  // damage-death rolls every entry; a [0, n] range can legitimately roll 0
+  // (vanilla skeletons sometimes leave nothing).
   function dropLoot(mob) {
     const p = mob.entity.position;
-    for (const drop of mob.type.drops ?? []) {
+    const table = mob.type.dropsFor ? mob.type.dropsFor(mob) : (mob.type.drops ?? []);
+    for (const drop of table) {
       if (drop.chance !== undefined && Math.random() >= drop.chance) continue;
       const count = Array.isArray(drop.count)
         ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
@@ -200,111 +335,16 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     }
   }
 
-  // --- spawning framework --------------------------------------------------
+  // --- spawning (entities/spawning.js since the Phase 14 split) ------------
 
-  function countByCategory() {
-    let hostile = 0;
-    let passive = 0;
-    for (const mob of mobs) {
-      if (mob.entity.dead) continue;
-      if (mob.type.hostile) hostile++;
-      else passive++;
-    }
-    return { hostile, passive };
-  }
+  const spawner = createSpawner({
+    world, player, dayNight, hostileTypes, passiveTypes, mobs, spawnAt,
+  });
 
-  // The effective light for spawn gates: block light holds at night, sky
-  // light dims with the day/night cycle exactly like the shading does.
+  // The effective light for the spider's neutrality gate: block light holds
+  // at night, sky light dims with the day/night cycle like the shading does.
   function effectiveLight(light) {
     return Math.max(light.block, light.sky - dayNight.skyDarken);
-  }
-
-  function pickWeighted(pool) {
-    let total = 0;
-    for (const t of pool) total += t.spawnWeight ?? 1;
-    let r = Math.random() * total;
-    for (const t of pool) {
-      r -= t.spawnWeight ?? 1;
-      if (r <= 0) return t;
-    }
-    return pool[pool.length - 1];
-  }
-
-  function trySpawnOne(counts) {
-    const wantHostile = counts.hostile < MOBS.HOSTILE_CAP && hostileTypes.length > 0;
-    const wantPassive = counts.passive < MOBS.PASSIVE_CAP && passiveTypes.length > 0;
-    if (!wantHostile && !wantPassive) return false;
-    const hostile = wantHostile && (!wantPassive || Math.random() < 0.5);
-    const type = pickWeighted(hostile ? hostileTypes : passiveTypes);
-
-    const p = player.body.position;
-    const angle = Math.random() * Math.PI * 2;
-    const dist = MOBS.SPAWN_MIN_DISTANCE +
-      Math.random() * (MOBS.SPAWN_MAX_DISTANCE - MOBS.SPAWN_MIN_DISTANCE);
-    const x = Math.floor(p.x + Math.cos(angle) * dist);
-    const z = Math.floor(p.z + Math.sin(angle) * dist);
-    // Cold chunks never spawn — the column scan's getBlock would otherwise
-    // generate a whole chunk synchronously (multi-ms, outside the streaming
-    // budget) only for the light gate to reject the attempt anyway.
-    if (!world.getChunkIfLoaded(
-      Math.floor(x / CHUNK.SIZE), Math.floor(z / CHUNK.SIZE),
-    )) {
-      return false;
-    }
-    const yBase = clamp(
-      Math.floor(p.y) + Math.round((Math.random() * 2 - 1) * MOBS.SPAWN_Y_RANGE),
-      OVERWORLD.MIN_Y + 1,
-      OVERWORLD.MIN_Y + CHUNK.HEIGHT - 3,
-    );
-
-    // Walk down the column a little to find ground under the picked cell.
-    let y = null;
-    for (let i = 0; i <= MOBS.SPAWN_COLUMN_SCAN; i++) {
-      if (standableAt(getBlock, x, yBase - i, z, type.clearance)) {
-        y = yBase - i;
-        break;
-      }
-    }
-    if (y === null) return false;
-
-    // Solid, opaque, harmless ground (standableAt already rejected cactus);
-    // no spawning submerged.
-    const floor = blockDef(getBlock(x, y - 1, z));
-    if (floor.transparent) return false; // no leaves/chest/glass tops
-    if (getBlock(x, y, z) === BLOCK.WATER || getBlock(x, y + 1, z) === BLOCK.WATER) {
-      return false;
-    }
-    if (!hostile && getBlock(x, y - 1, z) !== BLOCK.GRASS_BLOCK) return false;
-
-    // Distance gate on the real position (never in the player's face,
-    // never outside despawn range).
-    const cx = x + 0.5;
-    const cz = z + 0.5;
-    const d = Math.hypot(cx - p.x, y - p.y, cz - p.z);
-    if (d < MOBS.SPAWN_MIN_DISTANCE || d > MOBS.DESPAWN_DISTANCE) return false;
-
-    // Light gates (SPEC): hostiles need effective light <= 7 — torches
-    // prevent spawns, night surfaces allow them; passives need bright grass.
-    // No light data (unmeshed chunk) = no spawn.
-    const light = world.getLight(x, y, z);
-    if (!light) return false;
-    const level = effectiveLight(light);
-    if (hostile && level > MOBS.HOSTILE_SPAWN_LIGHT_MAX) return false;
-    if (!hostile && level < MOBS.PASSIVE_SPAWN_LIGHT_MIN) return false;
-
-    spawnAt(type, cx, y, cz);
-    return true;
-  }
-
-  function spawnCycle() {
-    const counts = countByCategory();
-    for (let i = 0; i < MOBS.SPAWN_ATTEMPTS_PER_CYCLE; i++) {
-      if (trySpawnOne(counts)) {
-        // Recount so a cycle can't blow past a cap.
-        counts.hostile = countByCategory().hostile;
-        counts.passive = countByCategory().passive;
-      }
-    }
   }
 
   // --- shared AI machinery -------------------------------------------------
@@ -397,11 +437,12 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const e = mob.entity;
     const S = MOBS.SKELETON;
     const dist = playerDistance(mob);
-    mob.shootTimer = Math.max(0, mob.shootTimer - dt);
+    mob.shootCooldown = Math.max(0, mob.shootCooldown - dt);
     if (!playerTargetable() || dist > MOBS.AGGRO_RADIUS) {
       e.wishX = 0;
       e.wishZ = 0;
       mob.aiming = false;
+      mob.drawTime = Math.max(0, mob.drawTime - dt * S.DRAW_DECAY_RATE);
       return;
     }
     const p = e.position;
@@ -411,7 +452,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const los = lineOfSight(getBlock, eye, playerEye);
 
     if (dist < S.RETREAT_RANGE) {
-      // Too close: back straight away, still shooting.
+      // Too close: back straight away, still aiming.
       const dx = p.x - t.x;
       const dz = p.z - t.z;
       const h = Math.hypot(dx, dz) || 1;
@@ -423,15 +464,27 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       steerToward(mob, dt);
       mob.aiming = false;
     } else {
-      // In the sweet spot with a clear shot: stand and fire.
+      // In the sweet spot with a clear shot: stand and aim.
       e.wishX = 0;
       e.wishZ = 0;
       mob.aiming = true;
     }
 
-    if (mob.aiming && mob.shootTimer === 0) {
-      mob.shootTimer = S.SHOOT_INTERVAL_SECONDS;
-      skeletonShoot(mob, eye);
+    // The Phase 14 firing cycle: once the cooldown has passed, an aiming
+    // skeleton DRAWS for S.DRAW_SECONDS (the visible wind-up — the draw
+    // animation reads mob.drawTime) and releases the arrow at full draw,
+    // then cools down for S.SHOOT_COOLDOWN_SECONDS. Losing the aim
+    // mid-draw lets the draw down without firing. Sum: one arrow every
+    // 2 seconds flat out, never a snap shot.
+    if (mob.aiming && mob.shootCooldown === 0) {
+      mob.drawTime += dt;
+      if (mob.drawTime >= S.DRAW_SECONDS) {
+        mob.drawTime = 0;
+        mob.shootCooldown = S.SHOOT_COOLDOWN_SECONDS;
+        skeletonShoot(mob, eye);
+      }
+    } else {
+      mob.drawTime = Math.max(0, mob.drawTime - dt * S.DRAW_DECAY_RATE);
     }
   }
 
@@ -535,7 +588,16 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     skeleton: skeletonAI,
     creeper: creeperAI,
     spider: spiderAI,
+    passive: passive.passiveAI,
   };
+
+  // Right-click on a mob with an item (player/interaction.js routes it
+  // through main.js): shears on an unsheared sheep shear it. Returns true
+  // when the use consumed the click (the caller wears the shears).
+  function useOnMob(mob, itemName) {
+    if (itemName === 'shears' && passive.shear(mob)) return true;
+    return false;
+  }
 
   // --- daylight burning ----------------------------------------------------
 
@@ -569,14 +631,23 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const armSwing = swing * (pose.rightArm ? MOBS.POSED_ARM_SWAY : 1);
     let rightX = (pose.rightArm?.x ?? 0) - armSwing;
     let leftX = (pose.leftArm?.x ?? 0) + armSwing;
+    // The skeleton's draw (Phase 14): while the wind-up runs, the bow arm
+    // (LEFT — it holds the bow) lifts a touch and the string arm folds
+    // back across the chest, releasing forward the instant the arrow goes.
+    const S = MOBS.SKELETON;
+    const drawFrac = mob.type.ai === 'skeleton'
+      ? Math.min(1, mob.drawTime / S.DRAW_SECONDS)
+      : 0;
     if (mob.aimBlend > 0.001) {
       const aimX = Math.PI / 2 + mob.headPitch;
       rightX = rightX * (1 - mob.aimBlend) + aimX * mob.aimBlend;
-      leftX = leftX * (1 - mob.aimBlend) + aimX * mob.aimBlend;
+      leftX = leftX * (1 - mob.aimBlend) +
+        (aimX + S.DRAW_ARM_RAISE * drawFrac) * mob.aimBlend;
     }
     if (mob.parts.rightArm) {
       mob.parts.rightArm.rotation.x = rightX;
-      mob.parts.rightArm.rotation.y = -0.1 * mob.aimBlend;
+      mob.parts.rightArm.rotation.y =
+        (-0.1 - S.DRAW_STRING_PULL * drawFrac) * mob.aimBlend;
     }
     if (mob.parts.leftArm) {
       mob.parts.leftArm.rotation.x = leftX;
@@ -633,6 +704,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const swing = Math.sin(mob.swingPhase) * MOBS.LIMB_SWING_MAX * mob.swingAmp;
     if (type.anim === 'spider') animateSpiderLimbs(mob);
     else if (type.anim === 'creeper') animateCreeperLimbs(mob, swing);
+    else if (type.anim === 'quadruped') passive.animateQuadruped(mob, swing);
+    else if (type.anim === 'chicken') passive.animateChicken(mob, swing);
     else animateBipedLimbs(mob, swing, dt);
 
     // The head tracks the player inside HEAD_TRACK_RANGE, clamped to the
@@ -680,6 +753,9 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     // Tint by local baked light (cave mobs read dark, torch-lit mobs warm),
     // flash red while hurt, flicker orange while on fire, and blink white
     // while a creeper's fuse runs. Same falloff curve as the terrain shader.
+    // Phase 14: the player's held-torch light lifts nearby mobs too — the
+    // uniforms main.js writes for the chunk shader are read back here so
+    // both stay in exact agreement.
     const light = world.getLight(p.x, p.y + e.def.height / 2, p.z);
     let target = 1;
     if (light) {
@@ -689,19 +765,28 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
         LIGHTING.LIGHT_FALLOFF ** (15 - light.block),
       );
     }
+    const heldLevel = CHUNK_LIGHT_UNIFORMS.uHeldLightLevel.value;
+    if (heldLevel > 0) {
+      const hp = CHUNK_LIGHT_UNIFORMS.uHeldLightPos.value;
+      target = Math.max(target, heldLightBrightness(heldLevel, Math.hypot(
+        p.x - hp.x, p.y + e.def.height / 2 - hp.y, p.z - hp.z,
+      )));
+    }
     mob.brightness += (target - mob.brightness) *
       (1 - Math.exp(-MOBS.LIGHT_TINT_RATE * dt));
     const b = mob.brightness;
-    if (e.hurtTimer > 0) {
-      mob.material.color.setRGB(b, b * 0.35, b * 0.35);
-    } else if (fuseFrac > 0 &&
-      Math.sin(mob.fuse * Math.PI * 2 * MOBS.CREEPER.FLASH_HZ) > 0) {
-      mob.material.color.setRGB(1, 1, 1); // the warning blink
-    } else if (mob.onFire || e.inLava) {
-      const flicker = 0.55 + 0.45 * Math.sin(e.age * 21);
-      mob.material.color.setRGB(b, b * (0.35 + 0.25 * flicker), b * 0.15);
-    } else {
-      mob.material.color.setRGB(b, b, b);
+    for (const material of mob.materials) {
+      if (e.hurtTimer > 0) {
+        material.color.setRGB(b, b * 0.35, b * 0.35);
+      } else if (fuseFrac > 0 &&
+        Math.sin(mob.fuse * Math.PI * 2 * MOBS.CREEPER.FLASH_HZ) > 0) {
+        material.color.setRGB(1, 1, 1); // the warning blink
+      } else if (mob.onFire || e.inLava) {
+        const flicker = 0.55 + 0.45 * Math.sin(e.age * 21);
+        material.color.setRGB(b, b * (0.35 + 0.25 * flicker), b * 0.15);
+      } else {
+        material.color.setRGB(b, b, b);
+      }
     }
   }
 
@@ -727,11 +812,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
 
   function update(dt) {
     if (dt <= 0) return;
-    spawnTimer += dt;
-    if (spawnTimer >= MOBS.SPAWN_INTERVAL_SECONDS) {
-      spawnTimer = 0;
-      spawnCycle();
-    }
+    spawner.update(dt);
 
     const playerPos = player.body.position;
     for (let i = mobs.length - 1; i >= 0; i--) {
@@ -788,6 +869,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   return {
     update,
     raycast,
+    useOnMob,  // right-click items on mobs (shears -> sheep)
     spawnAt,   // dev/test scaffolding: __mobs.spawnAt(__mobs.types.zombie, x, y, z)
     types: MOB_TYPES,
     mobs,      // read-only by convention (debug/tests)

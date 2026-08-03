@@ -433,6 +433,13 @@ export const STATS = {
 
   // Exhaustion: activity accumulates it; every EXHAUSTION_PER_HUNGER spent
   // drains 1 saturation (the hidden buffer food also fills), then 1 hunger.
+  // EXHAUSTION_SCALE (Phase 14) multiplies every exhaustion gain: the
+  // vanilla-exact values still drained noticeably fast for this game's
+  // pace ("hunger still depletes too fast" across two sessions), so the
+  // whole system runs at half speed — continuous sprinting now costs its
+  // first hunger point after ~86s instead of ~43s, and a player walking
+  // and exploring normally manages many minutes between meals.
+  EXHAUSTION_SCALE: 0.5,
   EXHAUSTION_PER_HUNGER: 4.0,
   EXHAUST_SPRINT_PER_BLOCK: 0.1,
   EXHAUST_SWIM_PER_BLOCK: 0.01,
@@ -451,6 +458,14 @@ export const STATS = {
 
   // Eating: hold right click with food selected
   EAT_SECONDS: 1.6,
+
+  // Hunger poisoning (Phase 14): rotten flesh applies the vanilla Hunger
+  // effect with 80% probability — for its duration, exhaustion accrues on
+  // its own, draining the food bar faster.
+  HUNGER_POISON: {
+    SECONDS: 30,                  // vanilla Hunger I duration
+    EXHAUSTION_PER_SECOND: 0.1,   // vanilla Hunger I drain rate
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -626,17 +641,24 @@ export const MOBS = {
   HOSTILE_SPAWN_LIGHT_MAX: 7,     // hostiles spawn at light level <= this
   SPAWN_MIN_DISTANCE: 24,         // blocks from the player
   DESPAWN_DISTANCE: 128,
-  HOSTILE_CAP: 32,                // total cap to protect framerate
-  PASSIVE_CAP: 16,
+  // Phase 14 retune (caves felt crowded, not dangerous): the hostile cap
+  // halved and the spawn cycle runs at a quarter of the old attempt rate
+  // (2s interval x 4 attempts, was 1s x 8).
+  HOSTILE_CAP: 14,                // total cap to protect framerate and pacing
+  PASSIVE_CAP: 12,
 
-  // --- Phase 12: the spawning framework (per-mob stats live in the
-  // entities/mobs.js registry, per ARCHITECTURE.md)
-  SPAWN_INTERVAL_SECONDS: 1.0,    // one spawn cycle this often
-  SPAWN_ATTEMPTS_PER_CYCLE: 8,    // random positions tried per cycle
+  // --- Phase 12: the spawning framework (entities/spawning.js since the
+  // Phase 14 split; per-mob stats live in the entities/mobs.js registry,
+  // per ARCHITECTURE.md)
+  SPAWN_INTERVAL_SECONDS: 2.0,    // one spawn cycle this often
+  SPAWN_ATTEMPTS_PER_CYCLE: 4,    // random positions tried per cycle
   SPAWN_MAX_DISTANCE: 96,         // spawn ring outer edge (inside despawn range)
   SPAWN_Y_RANGE: 40,              // vertical search span around the player
   SPAWN_COLUMN_SCAN: 12,          // blocks walked down a column to find ground
-  PASSIVE_SPAWN_LIGHT_MIN: 9,     // passive mobs need at least this much light
+  PASSIVE_SPAWN_LIGHT_MIN: 9,     // passive mobs need at least this much
+                                  // SKYLIGHT (after the time-of-day darken):
+                                  // they spawn on grass in real daylight,
+                                  // never under torches at night
   VOID_DESPAWN_Y: -80,            // mobs below this are removed (16 under
                                   // the world floor, like dropped items)
 
@@ -691,16 +713,31 @@ export const MOBS = {
     DAMAGE: 1,                    // per tick
   },
 
-  // Skeleton (keeps distance, shoots with lead)
+  // Skeleton (keeps distance, shoots with lead). Phase 14: firing is a real
+  // draw-and-release cycle — after the cooldown the skeleton visibly raises
+  // and draws its bow for DRAW_SECONDS (the wind-up; interrupted by losing
+  // line of sight), releases the arrow, then cools down again. One arrow
+  // every COOLDOWN + DRAW = 2 seconds flat out (vanilla Normal), and it can
+  // never fire the instant a target reappears.
   SKELETON: {
     PREFERRED_RANGE: 10,          // approaches until inside this
     RETREAT_RANGE: 5,             // backs away when the player is closer
-    SHOOT_INTERVAL_SECONDS: 2.0,  // one arrow this often while aiming (vanilla)
+    SHOOT_COOLDOWN_SECONDS: 1.0,  // rest between a release and the next draw
+    DRAW_SECONDS: 1.0,            // visible bow wind-up before each shot
+    DRAW_DECAY_RATE: 3,           // draw lost per second when aim breaks
     ARROW_SPEED: 32,              // blocks/s (vanilla ~1.6 blocks/tick)
     ARROW_INACCURACY: 1.2,        // blocks/s of random spread on the shot
     EYE_HEIGHT: 1.6,              // arrows leave from here
     AIM_LEAD_FACTOR: 1.0,         // fraction of the player's velocity led
     AIM_HEIGHT_FRACTION: 0.6,     // aims at this fraction of the player's height
+    // The held bow (extruded assets/items/bow.png slab in the LEFT hand,
+    // riding the arm so the aim pose points it at the target) and the
+    // draw-pose amounts layered on the aim pose.
+    BOW_SCALE: 0.55,              // bow slab edge length (blocks)
+    BOW_OFFSET: [0, -0.68, -0.02], // bow position on the arm (hand end)
+    BOW_TILT: [-0.5, 1.35, -0.5], // bow orientation in the hand at rest
+    DRAW_STRING_PULL: 0.55,       // radians the string arm folds back at full draw
+    DRAW_ARM_RAISE: 0.12,         // extra radians the bow arm lifts at full draw
   },
 
   // Creeper (approaches, hisses, flashes, explodes)
@@ -721,6 +758,39 @@ export const MOBS = {
     CLIMB_SPEED: 2.5,             // blocks/s up a wall it is pushing against
     LEG_SWING: 0.4,               // radians of leg yaw scuttle at full stride
     LEG_LIFT: 0.15,               // radians of leg roll lift while striding
+  },
+
+  // Passive herds (Phase 14 — cow/pig/sheep/chicken, entities/passive.js).
+  // The wander AI idles, ambles a short leg in a random direction, idles
+  // again; taking any hit panics the animal into a sprint away from the
+  // player. Registry `speed` is the panic speed; wandering uses a fraction.
+  PASSIVE: {
+    WANDER_SPEED_FACTOR: 0.45,    // amble speed as a fraction of panic speed
+    WANDER_MIN_SECONDS: 2,        // one wander leg lasts this range
+    WANDER_MAX_SECONDS: 4,
+    IDLE_MIN_SECONDS: 2,          // pause between legs
+    IDLE_MAX_SECONDS: 6,
+    FLEE_SECONDS: 5,              // panic run duration after a hit
+    FLEE_JITTER: 0.6,             // radians of random spread on the flee line
+    PROBE_AHEAD_BLOCKS: 1.5,      // wander looks this far ahead for danger
+    MAX_WANDER_DROP: 3,           // never amble over a ledge deeper than this
+    // Sheep: shearing (right-click with shears) pops 1-3 wool; killing an
+    // unsheared sheep drops 1. Wool grows back like vanilla grass-eating,
+    // on a timer.
+    SHEEP: {
+      SHEAR_WOOL_MIN: 1,
+      SHEAR_WOOL_MAX: 3,
+      REGROW_MIN_SECONDS: 60,     // wool regrows after this range
+      REGROW_MAX_SECONDS: 150,
+    },
+    // Chicken: lays an egg occasionally, falls slowly (wing flapping).
+    CHICKEN: {
+      EGG_MIN_SECONDS: 150,       // vanilla lays every 5-10 min; the low end
+      EGG_MAX_SECONDS: 300,       // suits a 20-minute day
+      FALL_SPEED: 3,              // terminal fall speed (blocks/s) — flapping
+      WING_FLAP_HZ: 6,            // airborne wing-flap rate
+      WING_FLAP_AMP: 1.1,         // radians of flap
+    },
   },
 
   // --- animation (entities/models.js rigs)
@@ -820,6 +890,23 @@ export const UI = {
   ICON_SCALE: 0.8,                // item icon size as a fraction of its slot
   BLOCK_ICON_PX: 64,              // canvas resolution of isometric block icons
   DURABILITY_BAR_PX: 3,           // height of the durability bar in a slot
+
+  // The 3D player model preview on the inventory screen (Phase 14,
+  // ui/player_preview.js): a small live-rendered viewport beside the 2x2
+  // craft grid; the model turns to follow the mouse like vanilla.
+  PLAYER_PREVIEW: {
+    WIDTH_PX: 110,                // viewport size on the panel
+    HEIGHT_PX: 150,
+    FOV: 30,                      // narrow lens like the vanilla inset
+    CAMERA_DISTANCE: 4.6,         // blocks from the model
+    CAMERA_HEIGHT: 1.0,           // camera aim height on the model (blocks)
+    MAX_BODY_YAW: 0.6,            // radians the whole body turns to the mouse
+    HEAD_EXTRA_YAW: 0.5,          // radians the head adds beyond the body
+    MAX_HEAD_PITCH: 0.5,          // radians the head tips up/down
+    TURN_RATE: 10,                // 1/s easing toward the mouse direction
+    ARMOUR_INFLATE_PX: 0.75,      // armour overlay growth per side (pixels)
+    LEGGING_INFLATE_PX: 0.4,      // trousers sit inside the boots/chest layer
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -895,6 +982,13 @@ export const INTERACTION = {
     DRAW_OFFSET: [-0.18, 0.07, 0.06], // hand offset while drawing
     DRAW_TIP: 0.3,                   // extra x-rotation raising the bow
     DRAW_ENGAGE_RATE: 8,             // 1/s ease into/out of the draw pose
+    // Offhand (Phase 14): the left hand mirrors the right across the screen
+    // centre and shows the offhand item whenever one is held. It swings on
+    // offhand actions (eating from the offhand) but never on attacks.
+    OFFHAND_POSITION: [-0.5, -0.4, -0.72], // left-hand resting spot
+    OFFHAND_ARM_TILT: [0.45, -0.55, -0.55], // mirrored resting rotation
+    OFFHAND_BLOCK_TILT: [0.22, -0.785, 0],  // mirrored held-block yaw
+    OFFHAND_SPRITE_TILT: [-0.6, -2.9, -0.67], // mirrored held-tool diagonal
   },
 };
 
@@ -903,7 +997,11 @@ export const INTERACTION = {
 // ---------------------------------------------------------------------------
 
 export const TIME = {
-  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle ~20 minutes
+  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes
+                                  // (Phase 14 — real Minecraft timing; the
+                                  // phase splits live in DAY_NIGHT.KEYFRAMES:
+                                  // day 10 min, sunset 1.5, night 7,
+                                  // sunrise 1.5)
   START_TIME: 0.04,               // day fraction at boot (just after sunrise);
                                   // t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
 };
@@ -920,6 +1018,13 @@ export const LIGHTING = {
   LIGHT_FALLOFF: 0.8,
   TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
   NIGHT_SKY_TINT: 0x8fa8e8,       // cool moonlight tint on skylight at night
+  // Held-item dynamic light (Phase 14, deliberately beyond vanilla): a torch
+  // in the main or off hand lights the world around the player. Applied at
+  // render time as a per-fragment distance term in the chunk shader — NEVER
+  // baked into the flood fill, which would remesh chunks every step. The
+  // light level per holdable item name; anything unlisted emits nothing.
+  HELD_LIGHT: { torch: 14 },
+  HELD_LIGHT_TINT: 0xffd2a0,      // same warm tone as placed torch light
   SUN_INTENSITY: 2.5,             // directional light (entities in later phases)
   SUN_DISTANCE: 300,              // directional light offset from the focus point
   SUN_TILT: 0.25,                 // z-lean of the sun's orbital plane
@@ -953,20 +1058,26 @@ export const SKY = {
 //   SUN_LEVEL   scales the directional sun + hemisphere ambient (entities)
 //   SKY_DARKEN  levels subtracted from baked skylight (0 day .. 11 deep night)
 //   GLOW        strength of the warm horizon glow around the sun's position
+// Phase 14 retiming — the real Minecraft phase lengths over the 20-minute
+// cycle: daytime exactly 10 minutes (t 0.0-0.5, the sun above the horizon:
+// it rises at t=0 and sets at t=0.5 by the orbit maths), sunset 1.5 minutes
+// (0.5-0.575), night 7 minutes (0.575-0.925), sunrise 1.5 minutes
+// (0.925-1.0). The old spread spent ~2 minutes total on each transition and
+// only ~5.6 on night.
 export const DAY_NIGHT = {
   KEYFRAMES: [
-    { T: 0.000, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
-      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
-    { T: 0.050, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+    { T: 0.000, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
-    { T: 0.450, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+    { T: 0.500, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
-    { T: 0.500, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
+    { T: 0.5375, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
-    { T: 0.560, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.575, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
-    { T: 0.940, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.925, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
+    { T: 0.9625, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
+      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
   ],
   GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
 };

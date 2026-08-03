@@ -71,9 +71,12 @@ export function itemMaxStack(name) {
 // Item ids follow the texture names in assets/items/.
 // ---------------------------------------------------------------------------
 
+// Phase 14 flags: `always` — edible even at full hunger (only the golden
+// apple, vanilla); `poisonChance` — probability of the Hunger effect on
+// eating (rotten flesh 80%; the effect itself lives in player/stats.js).
 const FOODS = {
   apple:           { hunger: 4, saturation: 2.4 },
-  golden_apple:    { hunger: 4, saturation: 9.6 },
+  golden_apple:    { hunger: 4, saturation: 9.6, always: true },
   bread:           { hunger: 5, saturation: 6.0 },
   beef:            { hunger: 3, saturation: 1.8 },
   cooked_beef:     { hunger: 8, saturation: 12.8 },
@@ -87,7 +90,7 @@ const FOODS = {
   potato:          { hunger: 1, saturation: 0.6 },
   baked_potato:    { hunger: 5, saturation: 6.0 },
   melon_slice:     { hunger: 2, saturation: 1.2 },
-  rotten_flesh:    { hunger: 4, saturation: 0.8 },
+  rotten_flesh:    { hunger: 4, saturation: 0.8, poisonChance: 0.8 },
   mushroom_stew:   { hunger: 6, saturation: 7.2, container: 'bowl' },
 };
 
@@ -109,6 +112,11 @@ export class Inventory {
     // boots), a gated SlotContainer of their own — the inventory screen
     // renders them beside the craft grid, combat reads the points.
     this.armour = new ArmourContainer();
+    // Phase 14: the offhand — a 1-slot container (full click semantics on
+    // the inventory screen for free). F swaps it with the selected hotbar
+    // slot; the hand renders it in the left arm; right-click actions fall
+    // back to it when the main hand item has none.
+    this.offhand = new SlotContainer(1);
   }
 
   subscribe(fn) {
@@ -131,6 +139,51 @@ export class Inventory {
   // what mining checks, what right-click places.
   get selectedName() {
     return this.slots[this.selected]?.name ?? null;
+  }
+
+  // The offhand stack/name (Phase 14). The slot itself is this.offhand.
+  get offhandStack() {
+    return this.offhand.slots[0] ?? null;
+  }
+
+  get offhandName() {
+    return this.offhand.slots[0]?.name ?? null;
+  }
+
+  // F: swap the selected hotbar stack with the offhand stack.
+  swapOffhand() {
+    const held = this.slots[this.selected] ?? null;
+    this.slots[this.selected] = this.offhand.slots[0] ?? null;
+    this.offhand.slots[0] = held;
+    this._emit();
+    this.offhand._emit();
+  }
+
+  // Consume n from the offhand stack (offhand block placement / eating).
+  consumeOffhand(n = 1) {
+    const s = this.offhand.slots[0];
+    if (!s || s.count < n) return false;
+    s.count -= n;
+    if (s.count <= 0) this.offhand.slots[0] = null;
+    this.offhand._emit();
+    return true;
+  }
+
+  // Replace the offhand stack outright (offhand bucket fill/empty).
+  replaceOffhand(name, count = 1) {
+    this.offhand.slots[0] = { name, count };
+    this.offhand._emit();
+  }
+
+  // Wear the offhand item by n (offhand bow shots), like damageSelected.
+  damageOffhand(n = 1) {
+    const s = this.offhand.slots[0];
+    if (!s || s.durability == null) return 'none';
+    s.durability -= n;
+    const broke = s.durability <= 0;
+    if (broke) this.offhand.slots[0] = null;
+    this.offhand._emit();
+    return broke ? 'broken' : 'damaged';
   }
 
   select(i) {
@@ -197,8 +250,8 @@ export class Inventory {
     return this._insert(stack.name, stack.count, stack.durability ?? null);
   }
 
-  // Empties every slot — worn armour included (SPEC: armour drops on death
-  // with the rest of the inventory) — and returns the removed stacks with
+  // Empties every slot — worn armour and the offhand included (SPEC:
+  // everything drops on death) — and returns the removed stacks with
   // durability intact. Death drops (player/stats.js).
   drainAll() {
     const stacks = [];
@@ -209,6 +262,7 @@ export class Inventory {
       }
     }
     if (this.armour) stacks.push(...this.armour.drainAll());
+    if (this.offhand) stacks.push(...this.offhand.drainAll());
     if (stacks.length) this._emit();
     return stacks;
   }
@@ -222,6 +276,19 @@ export class Inventory {
     this.slots[this.selected] = this.armour.slots[idx] ?? null;
     this.armour.slots[idx] = s;
     this._emit();
+    this.armour._emit();
+    return true;
+  }
+
+  // The same equip from the offhand (Phase 14 — the offhand fallback can
+  // right-click-equip armour held there).
+  equipOffhand() {
+    const s = this.offhand.slots[0];
+    const idx = s ? armourSlotIndex(s.name) : null;
+    if (idx === null) return false;
+    this.offhand.slots[0] = this.armour.slots[idx] ?? null;
+    this.armour.slots[idx] = s;
+    this.offhand._emit();
     this.armour._emit();
     return true;
   }

@@ -27,7 +27,7 @@ import {
   OVERWORLD, CHUNK, STATS, MOBS,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
-import { foodValue } from './inventory.js';
+import { foodValue, armourSlotIndex } from './inventory.js';
 import { createHand } from './hand.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
@@ -170,8 +170,15 @@ function loadCrackTextures(stages) {
 // maxDist) -> mob | null, attack(mob, dir) } — a mob under the crosshair
 // intercepts the left button: clicking attacks it and mining never starts
 // through it, like vanilla.
+// Phase 14: the offhand. F swaps the selected hotbar stack with the
+// offhand; every right-click action resolves an ACTIVE HAND first — the
+// main hand if its item has any right-click use, otherwise the offhand
+// (vanilla's fallback rule) — and consumes from that hand. `onUseMob`
+// (main.js) handles right-clicking a mob under the crosshair (shears on a
+// sheep) before any block use.
 export function createInteraction({
-  world, camera, scene, canvas, player, items, inventory, stats, onUseBlock, combat,
+  world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
+  onUseMob, combat,
 }) {
   // --- targeting state
   let target = null;
@@ -191,7 +198,48 @@ export function createInteraction({
   let breakProgress = 0;    // 0..1
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
-  let eating = null;        // { name, t } while holding right click with food
+  let eating = null;        // { name, slot, t, source } during a hold-to-eat
+
+  // --- the two hands (Phase 14). Right-click actions act through a hand
+  // source: name, consumption, replacement (buckets) and wear all route to
+  // the hotbar selection or the offhand slot uniformly.
+  const mainHand = {
+    key: 'main',
+    get name() { return inventory.selectedName; },
+    get slotKey() { return `m${inventory.selected}`; },
+    consume: (n) => inventory.consumeSelected(n),
+    replace: (name) => inventory.replaceSelected(name),
+    damage: (n) => inventory.damageSelected(n),
+    equip: () => inventory.equipSelected(),
+  };
+  const offHand = {
+    key: 'off',
+    get name() { return inventory.offhandName; },
+    get slotKey() { return 'off'; },
+    consume: (n) => inventory.consumeOffhand(n),
+    replace: (name) => inventory.replaceOffhand(name),
+    damage: (n) => inventory.damageOffhand(n),
+    equip: () => inventory.equipOffhand(),
+  };
+
+  // Does this item have ANY right-click use? Decides which hand acts.
+  function hasRightClickUse(name) {
+    if (!name) return false;
+    if (name === 'bucket' || name === 'water_bucket' || name === 'lava_bucket') return true;
+    if (name === 'bow' || name === 'shears') return true;
+    if (armourSlotIndex(name) !== null) return true;
+    if (foodValue(name)) return true;
+    return blockIdByName(name) !== null; // placeable block
+  }
+
+  // The acting hand for this right click: the main hand if its item has a
+  // use, else the offhand if ITS item does (vanilla's fallback), else the
+  // main hand (a use-less click falls through harmlessly).
+  function activeHand() {
+    if (hasRightClickUse(mainHand.name)) return mainHand;
+    if (hasRightClickUse(offHand.name)) return offHand;
+    return mainHand;
+  }
 
   // --- targeted face outline
   const outline = new THREE.LineLoop(
@@ -299,6 +347,11 @@ export function createInteraction({
       e.preventDefault();
       inventory.select(Number(m[1]) - 1);
     }
+    // F swaps the selected hotbar stack with the offhand (Phase 14).
+    if (e.code === 'KeyF' && !e.repeat) {
+      e.preventDefault();
+      inventory.swapOffhand();
+    }
   });
   let wheelAccum = 0;
   document.addEventListener(
@@ -402,16 +455,17 @@ export function createInteraction({
     if (breakProgress >= 1) finishBreak();
   }
 
-  // --- placing
+  // --- placing (Phase 14: acts through the given hand — the offhand can
+  // place its blocks when the main hand item has no right-click use)
 
-  function tryPlace() {
+  function tryPlace(hand) {
     if (!target) return;
     const [fx, fy, fz] = target.face;
     if (fx === 0 && fy === 0 && fz === 0) return; // ray started inside it
-    const name = inventory.selectedName;
+    const name = hand.name;
     if (!name) return;
     const id = blockIdByName(name);
-    if (id === null) return; // the selection isn't a placeable block
+    if (id === null) return; // the held item isn't a placeable block
     // Torches need solid support (the clicked block IS the support).
     if (id === BLOCK.TORCH && !blockDef(target.id).solid) return;
     const x = target.x + fx;
@@ -432,8 +486,8 @@ export function createInteraction({
     const placed = placementVariant(id, { x, y, z }, player.body.position, target.face);
     if (placed === null) return;
     world.setBlock(x, y, z, placed);
-    inventory.consumeSelected(1); // the hand refreshes via the subscription
-    startSwing();
+    hand.consume(1); // the hand visuals refresh via the subscription
+    startSwing(hand.key);
   }
 
   // --- buckets (Phase 11): an empty bucket scoops the first fluid cell on
@@ -444,17 +498,17 @@ export function createInteraction({
 
   const fluidOrTargetable = (id) => isTargetable(id) || blockDef(id).fluid;
 
-  function tryScoopFluid() {
+  function tryScoopFluid(hand) {
     const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
     // Only SOURCE blocks fill a bucket (vanilla) — flowing lava is not a
     // bucketful, so a flow cell on the ray consumes nothing.
     if (!hit || (hit.id !== BLOCK.WATER && hit.id !== BLOCK.LAVA)) return false;
     world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
-    inventory.replaceSelected(hit.id === BLOCK.LAVA ? 'lava_bucket' : 'water_bucket');
+    hand.replace(hit.id === BLOCK.LAVA ? 'lava_bucket' : 'water_bucket');
     return true;
   }
 
-  function tryPlaceFluid(fluidId) {
+  function tryPlaceFluid(hand, fluidId) {
     if (!target) return false;
     const [fx, fy, fz] = target.face;
     if (fx === 0 && fy === 0 && fz === 0) return false;
@@ -466,19 +520,18 @@ export function createInteraction({
     // Fluids may be placed into the player's own cell (vanilla) — they have
     // no collision box, so no overlap check.
     world.setBlock(x, y, z, fluidId);
-    inventory.replaceSelected('bucket');
+    hand.replace('bucket');
     return true;
   }
 
-  // Full-bucket placement for the currently held item, or false when the
-  // held item isn't a filled bucket (the press falls through to eating/
-  // placing). Empty-bucket scooping resolves EARLIER than the use-block
-  // check (see update()) because a nearer fluid must win over a usable
-  // block behind it.
-  function tryBucketPlace() {
-    const name = inventory.selectedName;
-    if (name === 'water_bucket') return tryPlaceFluid(BLOCK.WATER);
-    if (name === 'lava_bucket') return tryPlaceFluid(BLOCK.LAVA);
+  // Full-bucket placement for the acting hand's item, or false when it
+  // isn't a filled bucket (the press falls through to eating/placing).
+  // Empty-bucket scooping resolves EARLIER than the use-block check (see
+  // update()) because a nearer fluid must win over a usable block behind it.
+  function tryBucketPlace(hand) {
+    const name = hand.name;
+    if (name === 'water_bucket') return tryPlaceFluid(hand, BLOCK.WATER);
+    if (name === 'lava_bucket') return tryPlaceFluid(hand, BLOCK.LAVA);
     return false;
   }
 
@@ -487,7 +540,7 @@ export function createInteraction({
     placeTimer -= dt;
     if (placeTimer > 0) return;
     placeTimer = INTERACTION.PLACE_REPEAT_SECONDS;
-    tryPlace();
+    tryPlace(activeHand());
   }
 
   // --- per-frame update
@@ -531,75 +584,90 @@ export function createInteraction({
       if (mobHit) combat.attack(mobHit, rayDir);
     }
 
-    // Right-click resolution, one action per press: with an empty bucket a
-    // NEARER fluid on the ray wins first (vanilla — the scoop must not be
-    // eaten by a crafting table behind the pool; tryScoopFluid's ray stops
-    // at the first solid, so a scoop implies the fluid was nearest). Then
-    // the targeted usable block (crafting table...), unless sneaking. Then
-    // full-bucket placement. Bucket actions never hold-repeat — the held
-    // item changes underneath, so a repeat would immediately undo itself.
+    // Right-click resolution, one action per press, acting through the
+    // ACTIVE hand (main unless its item has no right-click use — then the
+    // offhand, Phase 14). A mob under the crosshair is offered the click
+    // first (shears shear a sheep). Then, with an empty bucket, a NEARER
+    // fluid on the ray wins (vanilla — the scoop must not be eaten by a
+    // crafting table behind the pool; tryScoopFluid's ray stops at the
+    // first solid, so a scoop implies the fluid was nearest). Then the
+    // targeted usable block (crafting table...), unless sneaking. Then
+    // full-bucket placement, then armour equip. Bucket actions never
+    // hold-repeat — the held item changes underneath, so a repeat would
+    // immediately undo itself.
     if (useCheckPending) {
       useCheckPending = false;
-      if (inventory.selectedName === 'bucket' && tryScoopFluid()) {
+      const hand = activeHand();
+      if (mobHit && onUseMob && onUseMob(mobHit, hand.name)) {
+        if (hand.name === 'shears') hand.damage(1); // shears wear per shear
         mouseRight = false;
-        startSwing();
+        startSwing(hand.key);
+      } else if (hand.name === 'bucket' && tryScoopFluid(hand)) {
+        mouseRight = false;
+        startSwing(hand.key);
       } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
         mouseRight = false;
         startSwing();
-      } else if (tryBucketPlace()) {
+      } else if (tryBucketPlace(hand)) {
         mouseRight = false;
-        startSwing();
-      } else if (inventory.equipSelected()) {
+        startSwing(hand.key);
+      } else if (hand.equip()) {
         // Right-clicking held armour equips it directly (Phase 13),
         // swapping with the worn piece. One action per press.
         mouseRight = false;
-        startSwing();
+        startSwing(hand.key);
       }
     }
 
-    // Bow (Phase 13): hold right click with the bow selected to draw;
-    // releasing fires along the crosshair, damage scaling with the charge.
-    // combat owns the draw state (it needs an arrow to start); switching
-    // slots restarts, losing pointer lock cancels (see pointerlockchange).
+    // Bow (Phase 13): hold right click with the bow held to draw; releasing
+    // fires along the crosshair, damage scaling with the charge. combat
+    // owns the draw state (it needs an arrow to start); switching slots
+    // restarts, losing pointer lock cancels (see pointerlockchange).
+    // Phase 14: the bow can be drawn from the offhand when the main hand
+    // item has no right-click use.
+    const useHand = activeHand();
     if (combat?.updateDraw) {
-      if (mouseRight && inventory.selectedName === 'bow' && !eating) {
-        combat.updateDraw(dt);
+      if (mouseRight && useHand.name === 'bow' && !eating) {
+        combat.updateDraw(dt, useHand.key);
       } else if (combat.isDrawing) {
         // Only a real button release fires. Anything else that broke the
         // draw while the button is still down — switching the hotbar slot
         // away from the bow — cancels like vanilla, never auto-fires.
         if (!mouseRight) {
           combat.releaseDraw(rayOrigin, rayDir);
-          startSwing();
+          startSwing(useHand.key);
         } else {
           combat.cancelDraw();
         }
       }
     }
 
-    // Eating: hold right click with food selected while hunger is missing.
-    // Releasing the button or switching the selection — including to
-    // another slot holding the SAME food — restarts from zero (vanilla
-    // resets item use on any slot change).
-    const heldFood = stats ? foodValue(inventory.selectedName) : null;
-    if (mouseRight && heldFood && stats.canEat) {
+    // Eating: hold right click with food in the acting hand while hunger
+    // is missing (the golden apple's `always` flag bypasses the full gate —
+    // stats.canEatFood). Releasing the button or any change of the acting
+    // slot — including to another slot holding the SAME food — restarts
+    // from zero (vanilla resets item use on any slot change).
+    const heldFood = stats ? foodValue(useHand.name) : null;
+    if (mouseRight && heldFood && stats.canEatFood(heldFood)) {
       if (
-        !eating || eating.name !== inventory.selectedName ||
-        eating.slot !== inventory.selected
+        !eating || eating.name !== useHand.name ||
+        eating.slot !== useHand.slotKey
       ) {
-        eating = { name: inventory.selectedName, slot: inventory.selected, t: 0 };
+        eating = {
+          name: useHand.name, slot: useHand.slotKey, t: 0, source: useHand.key,
+        };
       }
       eating.t += dt;
       if (eating.t >= STATS.EAT_SECONDS) {
         stats.eat(heldFood);
-        inventory.consumeSelected(1);
+        useHand.consume(1);
         // Stew leaves its bowl behind (drops at the feet if nothing fits).
         if (heldFood.container && inventory.add(heldFood.container, 1) > 0) {
           const p = player.body.position;
           items.spawn(heldFood.container, 1, { x: p.x, y: p.y + 1, z: p.z });
         }
         eating = null;
-        startSwing();
+        startSwing(useHand.key);
       }
     } else {
       eating = null;

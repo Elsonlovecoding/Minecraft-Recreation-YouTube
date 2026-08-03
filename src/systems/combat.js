@@ -463,19 +463,22 @@ export function createCombat({
   const hasArrowItem = () => inventory.slots.some((s) => s && s.name === 'arrow');
 
   // Advance the draw while the button is held (interaction calls this every
-  // frame the bow is selected + right held). A draw only starts with an
-  // arrow to fire; switching hotbar slots restarts the charge.
-  function updateDraw(dt) {
+  // frame a held bow + right button coincide). A draw only starts with an
+  // arrow to fire; switching hotbar slots restarts the charge. Phase 14:
+  // `source` is which hand draws — 'main' (the hotbar selection) or 'off'
+  // (the offhand slot); the wear on release lands on that hand's bow.
+  function updateDraw(dt, source = 'main') {
     if (stats.dead) {
       draw = null;
       return;
     }
-    if (!draw || draw.slot !== inventory.selected) {
+    const slot = source === 'off' ? 'off' : inventory.selected;
+    if (!draw || draw.slot !== slot) {
       if (!hasArrowItem()) {
         draw = null;
         return;
       }
-      draw = { t: 0, slot: inventory.selected };
+      draw = { t: 0, slot, source };
       return;
     }
     draw.t += dt;
@@ -486,6 +489,7 @@ export function createCombat({
   function releaseDraw(origin, dir) {
     if (!draw) return;
     const t = draw.t;
+    const source = draw.source;
     draw = null;
     if (t < COMBAT.BOW.MIN_DRAW_SECONDS || stats.dead) return;
     if (!inventory.consumeItem('arrow', 1)) return;
@@ -504,7 +508,11 @@ export function createCombat({
       damage,
       fromPlayer: true,
     });
-    if (inventory.selectedName === 'bow') {
+    if (source === 'off') {
+      if (inventory.offhandName === 'bow') {
+        inventory.damageOffhand(COMBAT.BOW.WEAR_PER_SHOT);
+      }
+    } else if (inventory.selectedName === 'bow') {
       inventory.damageSelected(COMBAT.BOW.WEAR_PER_SHOT);
     }
   }
@@ -650,6 +658,10 @@ export function createCombat({
     // 0..1 — how far the current draw has charged (HUD/hand feedback)
     get drawCharge() {
       return draw ? Math.min(1, draw.t / COMBAT.BOW.FULL_DRAW_SECONDS) : 0;
+    },
+    // which hand is drawing: 'main' | 'off' | null (the hand pose reader)
+    get drawSource() {
+      return draw ? draw.source : null;
     },
     get arrowCount() {
       return arrows.length; // test/debug scaffolding

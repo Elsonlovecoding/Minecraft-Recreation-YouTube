@@ -32,6 +32,7 @@
 import * as THREE from 'three';
 import { INVENTORY, UI, CRAFTING, ITEMS } from '../config.js';
 import { renderSlotContent } from './icons.js';
+import { createPlayerPreview } from './player_preview.js';
 import { CraftingGrid } from '../systems/crafting.js';
 import {
   SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT, isFuel, smeltResult,
@@ -163,12 +164,25 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       display: flex; align-items: center; justify-content: center;
       gap: 12px; margin-bottom: 14px;
     }
-    /* Armour column beside the 2x2 craft area (inventory mode, Phase 13) */
+    /* Armour column | player preview | offhand | 2x2 craft area (inventory
+       mode; preview and offhand are Phase 14) */
     .screen-equip {
       display: flex; align-items: center; justify-content: center;
-      gap: 40px;
+      gap: 14px; margin-bottom: 14px;
     }
     .screen-armour { display: grid; grid-template-columns: ${UI.SCREEN_SLOT_PX}px; }
+    .player-preview {
+      width: ${UI.PLAYER_PREVIEW.WIDTH_PX}px; height: ${UI.PLAYER_PREVIEW.HEIGHT_PX}px;
+      background: #1c1c1c;
+      border: 2px solid; border-color: #373737 #ffffff #ffffff #373737;
+      box-sizing: content-box; overflow: hidden;
+    }
+    .player-preview canvas { display: block; }
+    .screen-offhand {
+      display: flex; flex-direction: column; justify-content: flex-end;
+      align-self: stretch; padding-bottom: 2px;
+    }
+    .screen-equip .screen-craft { margin-bottom: 0; }
     .armour-slot::before {
       content: ''; position: absolute; inset: 0; margin: auto;
       width: ${Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE)}px;
@@ -381,8 +395,9 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
 
   // Armour column (Phase 13): four gated slots beside the inventory-mode
   // 2x2 craft area. Empty slots show a faint piece silhouette (the
-  // .armour-slot-N ::before ghosts; `filled` hides them). The equip row
-  // wraps the armour column and the 2x2 section side by side.
+  // .armour-slot-N ::before ghosts; `filled` hides them). Phase 14: the
+  // equip row is armour | live 3D player preview | offhand slot | 2x2 —
+  // the vanilla survival-inventory layout.
   const equipRow = document.createElement('div');
   equipRow.className = 'screen-equip';
   const armourCol = document.createElement('div');
@@ -396,6 +411,15 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     armourEls.push(el);
   }
   equipRow.appendChild(armourCol);
+  const preview = createPlayerPreview({ inventory });
+  equipRow.appendChild(preview.el);
+  const offhandCol = document.createElement('div');
+  offhandCol.className = 'screen-offhand';
+  const offhandEl = document.createElement('div');
+  offhandEl.className = 'screen-slot';
+  attachSlotEvents(offhandEl, () => inventory.offhand, 0);
+  offhandCol.appendChild(offhandEl);
+  equipRow.appendChild(offhandCol);
   equipRow.appendChild(craftSections[0].section);
   panel.insertBefore(equipRow, craftSections[1].section);
 
@@ -544,6 +568,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       renderSlotContent(armourEls[i], stack, iconPx);
       armourEls[i].classList.toggle('filled', !!stack);
     }
+    renderSlotContent(offhandEl, inventory.offhandStack, iconPx);
     for (const s of craftSections) {
       const active = showsCraft() && s.grid === activeGrid();
       s.section.style.display = active ? 'flex' : 'none';
@@ -578,6 +603,9 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   inventory.armour.subscribe(() => {
     if (open) refresh();
   });
+  inventory.offhand.subscribe(() => {
+    if (open) refresh();
+  });
   invGrid.subscribe(() => {
     if (open) refresh();
   });
@@ -591,7 +619,10 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   }
 
   root.addEventListener('contextmenu', (e) => e.preventDefault());
-  root.addEventListener('mousemove', moveCursorEl);
+  root.addEventListener('mousemove', (e) => {
+    moveCursorEl(e);
+    preview.onMouseMove(e.clientX, e.clientY); // the model follows the mouse
+  });
   root.addEventListener('mouseup', () => {
     // A release outside any slot just ends the gesture; the stack stays on
     // the cursor for the next click.
@@ -728,9 +759,11 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   }
 
   // Per frame from main.js: the furnace indicators move continuously (slot
-  // changes emit and re-render, but burn/progress only tick).
-  function update() {
+  // changes emit and re-render, but burn/progress only tick), and the
+  // player preview renders while the inventory screen is up (Phase 14).
+  function update(dt) {
     if (open && mode === 'furnace') updateIndicators();
+    if (open && mode === 'inventory') preview.update(dt ?? 0);
   }
 
   document.addEventListener('keydown', (e) => {

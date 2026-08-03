@@ -37,6 +37,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   let exhaustion = 0;
   let dead = false;
   let burnSeconds = 0;   // fire time left (set by lava, cleared by water)
+  let poisonSeconds = 0; // hunger-poison time left (rotten flesh, Phase 14)
   let flash = 0;         // damage screen-flash countdown
   let contactTimer = 0;  // countdown until the next contact damage tick
   let fireTimer = STATS.FIRE_TICK_SECONDS;
@@ -85,11 +86,17 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     v.y = Math.max(v.y, STATS.KNOCKBACK_VERTICAL);
   }
 
+  // Every exhaustion gain routes through here: EXHAUSTION_SCALE (Phase 14)
+  // runs the whole hunger system at a fraction of the vanilla drain rate.
+  function gainExhaustion(amount) {
+    exhaustion += amount * STATS.EXHAUSTION_SCALE;
+  }
+
   function damage(amount) {
     if (amount <= 0 || dead) return;
     health = Math.max(0, health - amount);
     flash = STATS.DAMAGE_FLASH_SECONDS;
-    exhaustion += STATS.EXHAUST_DAMAGE; // being hurt costs a little food
+    gainExhaustion(STATS.EXHAUST_DAMAGE); // being hurt costs a little food
     if (health === 0) die();
   }
 
@@ -100,6 +107,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   function die() {
     dead = true;
     burnSeconds = 0;
+    poisonSeconds = 0;
     const body = player.body;
     body.velocity.x = 0;
     body.velocity.y = 0;
@@ -139,6 +147,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     saturation = STATS.RESPAWN_SATURATION;
     exhaustion = 0;
     burnSeconds = 0;
+    poisonSeconds = 0;
     flash = 0;
     contactTimer = 0;
     regenTimer = STATS.REGEN_INTERVAL_SECONDS;
@@ -149,10 +158,15 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   }
 
   // Eating (interaction.js calls this when the hold-to-eat completes).
-  // `food` is a { hunger, saturation } entry from the inventory registry.
+  // `food` is a { hunger, saturation, poisonChance? } entry from the
+  // inventory registry. Rotten flesh (Phase 14): poisonChance rolls the
+  // vanilla Hunger effect — for its duration exhaustion accrues by itself.
   function eat(food) {
     hunger = Math.min(PLAYER.MAX_HUNGER, hunger + food.hunger);
     saturation = Math.min(hunger, saturation + food.saturation);
+    if (food.poisonChance && Math.random() < food.poisonChance) {
+      poisonSeconds = STATS.HUNGER_POISON.SECONDS;
+    }
   }
 
   // Exhaustion from movement and jumps, measured from the body's actual
@@ -164,8 +178,8 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     if (prevX !== null) {
       const dist = Math.hypot(p.x - prevX, p.z - prevZ);
       if (dist > 0 && dist < STATS.EXHAUST_MAX_STEP_BLOCKS) {
-        if (body.sprinting) exhaustion += dist * STATS.EXHAUST_SPRINT_PER_BLOCK;
-        else if (body.swimming) exhaustion += dist * STATS.EXHAUST_SWIM_PER_BLOCK;
+        if (body.sprinting) gainExhaustion(dist * STATS.EXHAUST_SPRINT_PER_BLOCK);
+        else if (body.swimming) gainExhaustion(dist * STATS.EXHAUST_SWIM_PER_BLOCK);
       }
     }
     prevX = p.x;
@@ -174,7 +188,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     // ground->air heuristic would also bill knockback pops and fluid exit
     // hops as jumps.
     if (body.lastJumped) {
-      exhaustion += body.sprinting ? STATS.EXHAUST_SPRINT_JUMP : STATS.EXHAUST_JUMP;
+      gainExhaustion(body.sprinting ? STATS.EXHAUST_SPRINT_JUMP : STATS.EXHAUST_JUMP);
     }
   }
 
@@ -262,6 +276,13 @@ export function createStats({ world, player, inventory, items, onDeath }) {
 
     // --- hunger: activity -> exhaustion -> saturation -> hunger
     trackActivity();
+    // Hunger poisoning (rotten flesh): exhaustion accrues on its own for
+    // the effect's duration. Applied UNSCALED — the poison is the point,
+    // EXHAUSTION_SCALE only slows the ambient drain.
+    if (poisonSeconds > 0) {
+      poisonSeconds = Math.max(0, poisonSeconds - dt);
+      exhaustion += STATS.HUNGER_POISON.EXHAUSTION_PER_SECOND * dt;
+    }
     settleExhaustion();
 
     // --- natural regeneration (costs exhaustion, so healing makes you
@@ -271,7 +292,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
       if (regenTimer <= 0) {
         regenTimer = STATS.REGEN_INTERVAL_SECONDS;
         health = Math.min(PLAYER.MAX_HEALTH, health + 1);
-        exhaustion += STATS.REGEN_EXHAUSTION;
+        gainExhaustion(STATS.REGEN_EXHAUSTION);
       }
     } else {
       regenTimer = STATS.REGEN_INTERVAL_SECONDS;
@@ -292,7 +313,13 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   // breaks). Fly mode and death are exempt like everything else.
   function exhaust(amount) {
     if (dead || player.mode === 'fly') return;
-    exhaustion += amount;
+    gainExhaustion(amount);
+  }
+
+  // Can THIS food be eaten right now? The golden apple's `always` flag is
+  // the one exception to the full-hunger gate (Phase 14).
+  function canEatFood(food) {
+    return !dead && (hunger < PLAYER.MAX_HUNGER || !!food?.always);
   }
 
   return {
@@ -301,6 +328,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     applyKnockback,
     eat,
     exhaust,
+    canEatFood,
     respawn,
     get health() {
       return health;
@@ -325,6 +353,9 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     },
     get burning() {
       return burnSeconds > 0;
+    },
+    get poisoned() {
+      return poisonSeconds > 0;
     },
     get dead() {
       return dead;

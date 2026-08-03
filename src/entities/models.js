@@ -17,7 +17,13 @@
 //   { name, texOffs: [u, v], size: [w, h, d] (px), pivot: [x, y, z] (px,
 //     model space, feet origin), offset: [x, y, z] (px, box min corner
 //     relative to the pivot), mirror?, inflate? (px grown on every side —
-//     vanilla uses it for zombie/creeper heads' outer skin, we for none yet) }
+//     vanilla uses it for the sheep's wool layer),
+//     rotation?: [x, y, z] radians baked at creation (the quadruped body
+//       lies on its side: the vanilla π/2 body roll, -x here),
+//     boxes?: [{ texOffs, size, offset, mirror?, inflate? }, ...] extra
+//       boxes riding the same pivot (Phase 14 — a pig's snout, the cow's
+//       nose/horns/udder, the chicken's beak: vanilla attaches several
+//       cubes to one bone) }
 //
 // createMobModel returns { group, parts, material }: `group` sits at the
 // feet centre, each named part is a Group pivoted for animation (swing legs
@@ -86,21 +92,25 @@ function appendBox(arrays, x0, y0, z0, x1, y1, z1, u, v, w, h, d, texW, texH, mi
 const geometryCache = new Map();
 
 function partGeometry(def, part) {
-  const key = `${def.texture}:${part.name}`;
+  const key = `${def.textureKey ?? def.texture}:${part.name}`;
   let geometry = geometryCache.get(key);
   if (geometry) return geometry;
   const arrays = { pos: [], uv: [], col: [], idx: [] };
-  const [w, h, d] = part.size;
-  const [ox, oy, oz] = part.offset;
-  const grow = (part.inflate ?? 0) * PX;
   const [tw, th] = def.textureSize;
-  appendBox(
-    arrays,
-    ox * PX - grow, oy * PX - grow, oz * PX - grow,
-    (ox + w) * PX + grow, (oy + h) * PX + grow, (oz + d) * PX + grow,
-    part.texOffs[0], part.texOffs[1], w, h, d, tw, th,
-    !!part.mirror,
-  );
+  // The part's own box plus any extra boxes riding the same pivot.
+  const boxes = [part, ...(part.boxes ?? [])];
+  for (const box of boxes) {
+    const [w, h, d] = box.size;
+    const [ox, oy, oz] = box.offset;
+    const grow = (box.inflate ?? 0) * PX;
+    appendBox(
+      arrays,
+      ox * PX - grow, oy * PX - grow, oz * PX - grow,
+      (ox + w) * PX + grow, (oy + h) * PX + grow, (oz + d) * PX + grow,
+      box.texOffs[0], box.texOffs[1], w, h, d, tw, th,
+      !!box.mirror,
+    );
+  }
   geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(arrays.pos, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(arrays.uv, 2));
@@ -113,6 +123,9 @@ function partGeometry(def, part) {
 const textureCache = new Map();
 
 function sheetTexture(path) {
+  // A ready THREE.Texture passes through (the player preview's generated
+  // canvas skin — ui/player_preview.js — has no file to load).
+  if (path && path.isTexture) return path;
   let texture = textureCache.get(path);
   if (!texture) {
     texture = new THREE.TextureLoader().load(path);
@@ -149,11 +162,33 @@ export function createMobModel(def) {
     // XYZ order a yawed head pitching at the player ROLLS sideways instead
     // of nodding — the Phase 12 zombie's "head angled slightly wrong" bug.
     pivot.rotation.order = 'YXZ';
+    // Baked base rotation (quadruped bodies lie on their side). Animation
+    // never writes these parts, so the pose survives.
+    if (part.rotation) pivot.rotation.set(...part.rotation);
     pivot.add(new THREE.Mesh(partGeometry(def, part), material));
     group.add(pivot);
     parts[part.name] = pivot;
   }
   return { group, parts, material };
+}
+
+// Attach a second texture's model (the sheep's wool coat) onto an existing
+// model's parts: each overlay part shares its base part's pivot AND baked
+// rotation, so it becomes a zero-offset child and rides every animation for
+// free. Returns the overlay material (for tinting alongside the base) and
+// the overlay pivots (visibility toggling — shearing).
+export function attachOverlayModel(baseParts, overlayDef) {
+  const { parts, material } = createMobModel(overlayDef);
+  const pivots = [];
+  for (const [name, pivot] of Object.entries(parts)) {
+    const basePart = baseParts[name];
+    if (!basePart) continue;
+    pivot.position.set(0, 0, 0);
+    pivot.rotation.set(0, 0, 0);
+    basePart.add(pivot);
+    pivots.push(pivot);
+  }
+  return { material, pivots };
 }
 
 // ---------------------------------------------------------------------------
@@ -224,4 +259,87 @@ export const SPIDER_LEG_POSE = [
   { roll: SP_ROLL * 0.74, yaw: SP_YAW },       // mid-rear
   { roll: SP_ROLL * 0.74, yaw: -SP_YAW },      // mid-front
   { roll: SP_ROLL, yaw: -SP_YAW * 2 },         // front pair
+];
+
+// ---------------------------------------------------------------------------
+// Passive herd models (Phase 14) — converted from the vanilla models with
+// the same rules, verified box-by-box against the shipped sheets' actual
+// UV regions (the alpha maps line up exactly). Quadruped bodies carry the
+// vanilla lying-on-the-side roll as a baked part rotation (three.js
+// -π/2 x — animation never touches the body part, so it holds).
+// ---------------------------------------------------------------------------
+
+const QUAD_BODY_ROLL = [-Math.PI / 2, 0, 0];
+
+// Pig (pig_temperate_pig.png, 64x64 — classic quadruped layout in the top
+// half): 8x8x8 head with the snout box, 10x16x8 body, four 4x6x4 legs.
+export const PIG_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 12, -6], offset: [-4, -4, -8],
+    boxes: [{ texOffs: [16, 16], size: [4, 3, 1], offset: [-2, -3, -9] }] },
+  { name: 'body', texOffs: [28, 8], size: [10, 16, 8], pivot: [0, 13, 2], offset: [-5, -6, -7],
+    rotation: QUAD_BODY_ROLL },
+  { name: 'rightHindLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [-3, 6, 7], offset: [-2, -6, -2] },
+  { name: 'leftHindLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [3, 6, 7], offset: [-2, -6, -2] },
+  { name: 'rightFrontLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [-3, 6, -5], offset: [-2, -6, -2] },
+  { name: 'leftFrontLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [3, 6, -5], offset: [-2, -6, -2] },
+];
+
+// Cow (cow_temperate_cow.png, 64x64 — the 1.21.5 sheet: classic cow layout
+// plus the remodel's 6x3x2 nose at (0,32), confirmed present in the art):
+// 8x8x6 head with nose and two 1x3x1 horns, 12x18x10 body with the 4x6x1
+// udder, four 4x12x4 legs.
+export const COW_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 6], pivot: [0, 20, -8], offset: [-4, -4, -6],
+    boxes: [
+      { texOffs: [0, 32], size: [6, 3, 2], offset: [-3, -4, -8] },   // nose
+      { texOffs: [22, 0], size: [1, 3, 1], offset: [-5, 2, -4] },    // right horn
+      { texOffs: [22, 0], size: [1, 3, 1], offset: [4, 2, -4] },     // left horn
+    ] },
+  { name: 'body', texOffs: [18, 4], size: [12, 18, 10], pivot: [0, 19, 2], offset: [-6, -8, -7],
+    rotation: QUAD_BODY_ROLL,
+    boxes: [{ texOffs: [52, 0], size: [4, 6, 1], offset: [-2, -8, -8] }] }, // udder
+  { name: 'rightHindLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [-3, 12, 7], offset: [-2, -12, -2] },
+  { name: 'leftHindLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [3, 12, 7], offset: [-2, -12, -2] },
+  { name: 'rightFrontLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [-3, 12, -5], offset: [-2, -12, -2] },
+  { name: 'leftFrontLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [3, 12, -5], offset: [-2, -12, -2] },
+];
+
+// Sheep (sheep_sheep.png, 64x32): the skin layer — 6x6x8 head, 8x16x6 body,
+// four 4x12x4 legs. The wool coat is the overlay model below on its own
+// sheet, attached via attachOverlayModel (hidden while sheared).
+export const SHEEP_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [6, 6, 8], pivot: [0, 18, -8], offset: [-3, -2, -6] },
+  { name: 'body', texOffs: [28, 8], size: [8, 16, 6], pivot: [0, 19, 2], offset: [-4, -6, -7],
+    rotation: QUAD_BODY_ROLL },
+  { name: 'rightHindLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [-3, 12, 7], offset: [-2, -12, -2] },
+  { name: 'leftHindLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [3, 12, 7], offset: [-2, -12, -2] },
+  { name: 'rightFrontLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [-3, 12, -5], offset: [-2, -12, -2] },
+  { name: 'leftFrontLeg', texOffs: [0, 16], size: [4, 12, 4], pivot: [3, 12, -5], offset: [-2, -12, -2] },
+];
+
+// The wool coat (sheep_sheep_wool.png): the same rig inflated — head cap
+// 0.6px, body coat 1.75px, upper-leg cuffs 0.5px (vanilla fur layer).
+export const SHEEP_WOOL_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [6, 6, 6], pivot: [0, 18, -8], offset: [-3, -2, -4], inflate: 0.6 },
+  { name: 'body', texOffs: [28, 8], size: [8, 16, 6], pivot: [0, 19, 2], offset: [-4, -6, -7], inflate: 1.75 },
+  { name: 'rightHindLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [-3, 12, 7], offset: [-2, -6, -2], inflate: 0.5 },
+  { name: 'leftHindLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [3, 12, 7], offset: [-2, -6, -2], inflate: 0.5 },
+  { name: 'rightFrontLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [-3, 12, -5], offset: [-2, -6, -2], inflate: 0.5 },
+  { name: 'leftFrontLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [3, 12, -5], offset: [-2, -6, -2], inflate: 0.5 },
+];
+
+// Chicken (chicken_temperate_chicken.png, 64x32): 4x6x3 head with beak and
+// wattle, 6x8x6 body, 3x5x3 legs, 1x4x6 wings (flap while falling).
+export const CHICKEN_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [4, 6, 3], pivot: [0, 9, -4], offset: [-2, 0, -2],
+    boxes: [
+      { texOffs: [14, 0], size: [4, 2, 2], offset: [-2, 2, -4] },    // beak
+      { texOffs: [14, 4], size: [2, 2, 2], offset: [-1, 0, -3] },    // wattle
+    ] },
+  { name: 'body', texOffs: [0, 9], size: [6, 8, 6], pivot: [0, 8, 0], offset: [-3, -4, -3],
+    rotation: QUAD_BODY_ROLL },
+  { name: 'rightLeg', texOffs: [26, 0], size: [3, 5, 3], pivot: [-2, 5, 1], offset: [-1, -5, -3] },
+  { name: 'leftLeg', texOffs: [26, 0], size: [3, 5, 3], pivot: [1, 5, 1], offset: [-1, -5, -3] },
+  { name: 'rightWing', texOffs: [24, 13], size: [1, 4, 6], pivot: [-4, 11, 0], offset: [0, -4, -3] },
+  { name: 'leftWing', texOffs: [24, 13], size: [1, 4, 6], pivot: [4, 11, 0], offset: [-1, -4, -3] },
 ];

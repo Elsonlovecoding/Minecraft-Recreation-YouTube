@@ -148,7 +148,12 @@ export class Entity {
         v.y *= Math.exp(-MOBS.LAVA_DRAG * dt);
       } else {
         v.y -= MOBS.GRAVITY * dt;
-        if (v.y < -MOBS.TERMINAL_VELOCITY) v.y = -MOBS.TERMINAL_VELOCITY;
+        // Per-type fall cap (Phase 14: the chicken's wing-flap slow fall).
+        // Clamped HERE, after gravity — an AI-side clamp would race the
+        // integration and leak up to gravity*dt of extra speed per frame
+        // (frame-rate dependent, +3.2 blocks/s at a clamped 0.1s frame).
+        const cap = this.def.maxFallSpeed ?? MOBS.TERMINAL_VELOCITY;
+        if (v.y < -cap) v.y = -cap;
       }
     }
 
