@@ -8,7 +8,13 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 12 — the entity foundation (base entity physics, budgeted A* pathfinding, mob spawning framework with world.getLight, box-model mob system from real entity textures, walk/head animation, one placeholder mob that spawns, pursues, bites, takes hits and dies) + Phase 11 bug fixes (true Esc pause, flowing lava, exact crack-overlay alignment, vanilla fall damage, starvation floor at 5 hearts)**
+Phase last completed: **Phase 13 — hostile mobs, combat and armour (the real
+roster: zombie / skeleton with bow / creeper with block-destroying explosion /
+wall-climbing spider, daylight burning, weighted natural spawning; the combat
+system: weapon damage with vanilla 1.9 cooldown scaling and falling crits, the
+player bow with draw-scaled arrows, arrow projectiles both ways; armour: four
+equip slots with drag + right-click equip, SPEC damage reduction, durability
+wear, HUD armour bar, drops on death) + the Phase 12 zombie-head-angle fix**
 
 ---
 
@@ -925,6 +931,251 @@ Phase 12 (this session) additions, one entry per file:
   vanilla; measured: standing still and 5 minutes of walking drain
   nothing, continuous sprinting loses its first hunger point after ~43s.
 
+Phase 13 (this session) additions, one entry per file:
+- `src/entities/mobs.js` Phase 13 — the placeholder is gone; the real
+  hostile roster, each an entry in `MOB_TYPES` (SPEC stats/drops exactly)
+  plus an AI state function, spawn-weighted into the Phase 12 framework:
+  - **zombie** (20hp, 3dmg, rotten flesh): the Phase 12 pursue-and-bite,
+    melee now routed through combat so armour reduces it; burns in
+    daylight.
+  - **skeleton** (20hp, arrows for 4, bone + arrow drops): keeps its
+    distance — approaches to `SKELETON.PREFERRED_RANGE`, backs straight
+    away inside `RETREAT_RANGE`, holds and aims with line of sight (a
+    coarse solid-block march, checked ~1/s at the shot decision), and
+    fires every 2s with LEAD: the arrow aims at the player's position
+    plus velocity x flight-time, lifted for the gravity arc, jittered by
+    `ARROW_INACCURACY`. Arms raise into an aiming pose (eased blend) and
+    track the target pitch. Burns in daylight.
+  - **creeper** (20hp, explosion 22 at centre, gunpowder): walks at the
+    player; inside `IGNITE_RANGE` (3) it stops, HISSES (combat's
+    procedural synth, volume by distance), swells up to +35% scale and
+    blink-flashes white at 5Hz while the 1.5s SPEC fuse runs; the fuse
+    rewinds at 2x if the player escapes `ABORT_RANGE` (7). At zero it
+    removes itself (no drops — exploding is not dying) and hands combat
+    the explosion. Does not burn in daylight.
+  - **spider** (16hp, 2dmg, string, 0.9 tall / 1.2 wide so it fits
+    1-block gaps — pathfinding clearance 1): fast (3.2), neutral in
+    bright light unless `provoked` (any player hit flips the flag),
+    hostile at effective light <= 7 like vanilla; CLIMBS — pressing into
+    a wall sets the entity's climbing state (vanilla ladder-style: the
+    AI writes the climb speed, gravity stays out of it) so walls are not
+    cover. Eight legs splay in the vanilla rest pose and scuttle-swing
+    while moving.
+  - **Daylight burning** (zombie + skeleton): direct sky light 15 at the
+    head, `dayNight.skyDarken <= 2` (day), not in water — 1 damage/s and
+    an orange flicker tint. Any roof/canopy shades (leaves cost 1 sky
+    light level, so trees are real cover, like vanilla).
+  - Animation dispatch per type: biped (zombie/skeleton arms + legs,
+    skeleton aim blend), creeper (diagonal leg pairs), spider (leg-pair
+    yaw scuttle + roll lift over the models.js rest pose). Head tracking,
+    body-yaw ease, hurt flash, light tint, death fall-over all carry over
+    from Phase 12; the creeper adds its fuse flash/swell to the tint
+    chain (hurt > fuse blink > fire flicker > plain tint).
+- `src/entities/models.js` Phase 13 — the per-mob box-geometry tables,
+  converted from the real vanilla Java models (pivot_y = 24 - rotationPoint,
+  offset_y = -(boxOffset + height)): `HUMANOID_MODEL` (moved from mobs.js),
+  `SKELETON_MODEL` (2px limbs, 64x32), `CREEPER_MODEL` (head at 18..26px,
+  four 4x6x4 legs at z ±4), `SPIDER_MODEL` (head/neck/abdomen + eight
+  16x2x2 legs pivoted at the body sides) and `SPIDER_LEG_POSE` (the
+  vanilla splay angles). **The Phase 12 zombie-head bug fix**: every part
+  pivot now rotates in `YXZ` order — with the default XYZ, a yawed head
+  pitching at the player rolled sideways instead of nodding (the "head
+  angled slightly wrong" report; worst at diagonal look angles).
+- `src/systems/combat.js` Phase 13 — the stub is real, four parts:
+  - **Player melee**: every click swings; damage = `WEAPON_DAMAGE`
+    (swords AND axes now) x the vanilla 1.9 charge curve
+    0.2 + 0.8·(elapsed/cooldown)² — sword recharges in 0.625s, axe in
+    1.0s, everything else 0.25s — x1.5 crit while falling (SPEC).
+    Landed hits wear the held tool 1 and cost attack exhaustion.
+  - **Armour pipeline**: `damagePlayer` is the single entry for
+    combat-type damage (mob melee, arrows, explosions): reduction =
+    4% per worn protection point (config `COMBAT.ARMOR_POINTS`, the
+    vanilla per-piece tables — full sets land exactly on SPEC: leather
+    7pts=28%, iron 15=60%, diamond 20=80%), minimum 1 through any
+    armour, knockback BEFORE damage (the Phase 11 corpse-launch lesson),
+    every hit wears each equipped piece max(1, floor(damage/4)).
+    Environmental damage (falls, lava, fire, drowning, cactus, starving)
+    keeps its direct stats path, unreduced.
+  - **Bow + arrows**: hold right click with the bow selected to draw
+    (needs an arrow; slot switch restarts; pointer-lock loss cancels),
+    release fires from the crosshair — damage rounds 1..6 and speed
+    18..53 by draw fraction of 1s (SPEC: 6 at full draw), consuming one
+    arrow and 1 bow durability. Arrows (the real
+    `assets/entity/projectiles_arrow.png` as two crossed quads, tip
+    +z, oriented by velocity, tinted by baked light) fly a gravity arc
+    with light drag; per frame the flight segment is voxel-raycast for
+    blocks and slab-tested against mobs (player arrows) or the player
+    AABB (skeleton arrows) — nearest wins. Block hits stick the arrow
+    (exact hit CELL remembered — mining that block frees it to fall);
+    stuck player arrows can be picked back up within 1.2 blocks after
+    0.5s; stuck arrows despawn at 30s, flyers at 15s.
+  - **Explosions**: a ragged crater (radius 3, per-block rim jitter) of
+    every destructible block — `hardness > 10` survives (obsidian,
+    bedrock), fluids and portal interiors untouched — with 30% of
+    destroyed blocks dropping their registry drop tables; block removal
+    rides `world.setBlock`, so falling-sand support checks, torch pops
+    and chest content spills all fire through the normal listener chain.
+    Damage scales linearly to zero at radius 6 (creeper max 22 — SPEC)
+    for the player (through armour, knocked away from the centre) and
+    every living mob. Plus an expanding flash shell and a WebAudio boom.
+  - The tiny procedural noise synth (lazy AudioContext, looped noise
+    buffer through a filter + gain envelope) supplies the creeper hiss
+    and the explosion boom — there is no audio asset system yet, and
+    generated art is the established pattern.
+  - Pure maths exported for tests: `weaponCooldownSeconds`,
+    `attackChargeFactor`, `armourReductionFactor`, `rayAABB` (moved here
+    from mobs.js; mobs imports it back — combat never imports the mob
+    manager, main.js injects a lazy getter).
+- `src/player/inventory.js` Phase 13 — `ArmourContainer`: four equip
+  slots (helmet/chestplate/leggings/boots) as a gated SlotContainer in
+  the furnace's gating pattern — a wrong-piece placement is inert,
+  `addStack` (the shift-click router) sends a piece to its own slot only
+  when empty, `damageAll(wear)` wears every equipped piece and breaks a
+  piece at zero durability. `Inventory.armour` instance, `equipSelected`
+  (right-click equip: swaps the held piece with the worn one),
+  `armourPoints` (config points sum — drives combat reduction and the
+  HUD bar), `consumeItem(name, n)` (all-or-nothing across stacks — bow
+  shots eat arrows), and `drainAll` now empties the armour slots too
+  (SPEC: armour drops on death with the rest of the inventory).
+- `src/player/interaction.js` Phase 13 — the right-click chain grows one
+  link: usable block (unless sneaking) > bucket > **armour equip** >
+  hold-to-eat > place. Bow: holding right with the bow selected drives
+  `combat.updateDraw`; only a real button RELEASE fires along the current
+  crosshair ray — switching the hotbar slot away mid-draw cancels (never
+  auto-fires), as does pointer-lock loss. Drawing (like eating) blocks
+  mining and placing. Breaking a real block now costs
+  `STATS.EXHAUST_BREAK_BLOCK`.
+- `src/player/hand.js` Phase 13 — the first-person hand, split out of
+  interaction.js per the ARCHITECTURE cap note it carried since Phase 12
+  (interaction is back to ~650 lines): the fixed-FOV render pass, the
+  generated pixel-skin arm, the held block/tool/model meshes following
+  the hotbar selection, and the swing / eat / bow-draw pose animation
+  (the draw pose eases in and pulls back with the charge, `HAND.DRAW_*`).
+  Faithful extraction — interaction drives it (startSwing, update with
+  the eating state), main.js calls `renderHand` as before.
+- `src/entities/entity.js` Phase 13 — `horizontalCollision` (pushed into
+  a wall last step) and the `climbing` state: while climbing, horizontal
+  control stays ground-style (the body keeps pressing the wall while
+  airborne) and gravity is skipped entirely — the AI writes the climb
+  velocity like a vanilla ladder. Fighting gravity instead made the
+  climb rate framerate-dependent: at the clamped 0.1s frame,
+  gravity·dt alone exceeded the climb speed and spiders could not climb
+  at all below ~13fps.
+- `src/player/stats.js` Phase 13 — `exhaust(amount)` exposed for
+  combat's attack cost and interaction's block-break cost (fly mode and
+  death exempt, like everything else).
+- `src/ui/screens.js` Phase 13 — the inventory screen carries an armour
+  column beside the 2x2 craft area: four gated slots with faint
+  grey piece silhouettes when empty (CSS ghosts, hidden by `filled`),
+  full click/drag/right-click semantics via the shared slot machinery,
+  shift-click equips a piece from the inventory (inventory mode only)
+  and unequips back from the armour column.
+- `src/ui/hud.js` Phase 13 — the armour bar: 10 pixel-art plates above
+  the hearts (mirroring breath above hunger), one per 2 protection
+  points with half-plate odd values, hidden entirely while nothing is
+  worn (vanilla).
+- `src/main.js` Phase 13 — `createCombat` wired between stats and
+  interaction (interaction's combat bridge IS the combat system now: the
+  crosshair mob raycast, attacks, and the bow); mobs receive combat for
+  melee/arrows/explosions; `combat.update` ticks arrows and explosion
+  flashes inside the pause gate. `window.__combat` joins the dev
+  scaffolding.
+- config Phase 13 — `COMBAT` (cooldowns, charge curve, crit, armour
+  points/reduction/wear, bow, arrow physics, explosion), `MOBS` grew
+  `DAYLIGHT_BURN`, `SKELETON`, `CREEPER`, `SPIDER` blocks and dropped
+  the player-side `ATTACK_COOLDOWN_SECONDS` (weapon-dependent in COMBAT
+  now); `WEAPON_DAMAGE` gained the axes and dropped the never-consumed
+  `bow_full_draw` (ranged bow damage lives in `COMBAT.BOW`);
+  `ARMOR_REDUCTION` (set-level, never consumed) replaced by the
+  per-piece points tables; `STATS` gained `EXHAUST_ATTACK`,
+  `EXHAUST_BREAK_BLOCK`, `ARMOR_PX`; `INTERACTION.HAND` gained the
+  `DRAW_*` pose.
+
+Phase 13 verification: 68 node checks against the real modules — the
+weapon table exact (fist 1, swords 4/5/6/7, axes 7/9/9/9), cooldowns
+(sword 0.625s / axe 1.0s / default 0.25s), the charge curve at its
+endpoints and midpoint (0.2 / 0.4 / 1.0, overcharge clamped), armour
+reduction landing exactly on the SPEC set values (7/15/20 points ->
+28/60/80%), rayAABB (hit/miss/inside/range/reverse), the armour container
+(slot gating inert on wrong pieces for click and right-click, addStack
+routing only into an empty own slot, pick-up off worn slots, damageAll
+wear arithmetic and break-at-zero, equipSelected swaps, full-set points,
+drainAll including armour, consumeItem all-or-nothing across stacks),
+the registry matching SPEC stats/drops for all four mobs, creeper fuse
+1.5s, the entity wall-collision flag and the climb impulse scaling a real
+wall (and NOT lifting non-climbers), and the model tables (2px skeleton
+limbs, 4 creeper legs, 8 16px spider legs, creeper head 18..26px, spider
+head forward). In headless Chromium, 35 gameplay checks against the
+running game, zero console errors throughout: the zombie closes 8 blocks
+and bites; full iron armour turns the 3-damage bite into exactly 1 while
+wearing every piece; the HUD armour bar appears; a fully-charged iron
+sword hits for 6, a spam swing for ~1-2, and a knockback-airborne swing
+crits for 9 (the falling crit, caught accidentally and then asserted
+deliberately); the skeleton fires real arrow entities that hit the
+player; the creeper ignites within 3 blocks, swells, blinks and explodes
+— removed, an 8+-block crater carved, the player damaged through armour;
+the spider ignores the player at noon until provoked by a sword hit, then
+chases and bites, and climbs a 5-block stone well pressing toward the
+player; zombies and skeletons burn at noon under open sky while the
+creeper stands unharmed; the bow draw charges to full, the released
+arrow hits for 6, consumes 1 arrow and 1 bow durability, and the draw
+state clears; the inventory screen shows the four armour slots filled
+with the worn set. Screenshots verify the look: all four mobs correct
+against their real textures (zombie arms-raised walk, thin aiming
+skeleton, creeper with the iconic face on four stubby legs, splayed
+red-eyed spider), the armour column with ghost silhouettes and
+durability bars, the armour bar over the hearts, the held bow.
+
+Phase 13's adversarial review (five independent lenses — combat logic,
+mobs/AI/models, armour/inventory/UI, Phase 11/12 regressions, session
+fidelity — each probing the real modules with its own node and headless-
+Chromium repro scripts over the full diff) came back clean on the armour
+machinery (a 120,000-operation click/equip/drag conservation fuzz plus 41
+browser DOM checks: zero violations, wrong-piece placements inert on
+every path, unequip into a full inventory loses nothing, death drops
+carry worn durability through pickup) and on session fidelity (every
+requirement present with exact values). Seven findings were confirmed
+with repro probes and fixed + re-verified:
+- Switching the hotbar slot away from the bow mid-draw FIRED the arrow
+  (and skipped bow wear) instead of cancelling — only a real button
+  release fires now; any other break of the draw cancels, like the
+  pointer-lock path always did.
+- A stuck arrow left in a streaming-unloaded chunk synchronously
+  regenerated that chunk every chunk-border crossing (~8ms per arrow per
+  crossing, measured) through its mined-block probe — stuck arrows in
+  unloaded chunks freeze like items and mobs (0/5 crossings regenerate
+  in the re-run probe).
+- Mining out the block under a >15s-old stuck arrow deleted the arrow
+  on the next frame (the flying-despawn safety net measured TOTAL age) —
+  the age resets when an arrow is freed, so it falls and re-sticks.
+- A spider killed mid-climb rose gravity-free through its death
+  animation (the dead AI stopped rewriting `climbing`) — a corpse clears
+  the climbing state in the entity step; the probe's corpse now falls
+  like the control zombie.
+- The skeleton's 0.5-block-sampled line of sight passed through block
+  corners, locking it into stand-and-fire against a wall its (exactly
+  raycast) arrows could never pass — LoS now uses the same voxel
+  raycast the arrows fly on (combat.lineOfSight).
+- The explosion flash leaked one sphere geometry per blast (only the
+  material was disposed) — the shell geometry is shared now.
+- Fly-mode/dead-player targeting was inconsistent across the roster
+  (skeletons and creepers stood down, zombies and spiders kept crowding)
+  — one `playerTargetable` gate for all four AIs.
+Plus the config-hygiene pass the fidelity lens asked for: creeper hiss
+audibility (HISS_RANGE/HISS_MIN_VOLUME), explosion boom range
+(BOOM_RANGE), skeleton aim height (AIM_HEIGHT_FRACTION), arrow stick
+backoff (ARROW.STICK_BACKOFF), the daylight-burn head sample reusing
+the mob's headHeightFraction, and the HUD plate count derived from the
+best set's points instead of a literal 10. Development itself had
+already caught and fixed three more through the harness: stuck arrows
+oscillating stuck/unstuck every frame (exact hit-cell tracking now),
+spider climbing framerate-dependent to the point of impossibility below
+~13fps (climbing is a gravity-free velocity state like vanilla ladders),
+and climbing mobs losing wall pressure while airborne (ground-style
+steering persists while climbing). All suites re-run green after every
+fix: 68 node + 35 browser + the reviewers' own probes, zero console
+errors.
+
 Phase 6 verification: 70 node checks against the real modules — raycast
 geometry (axis-aligned/diagonal/negative directions, boundary origins,
 through-water, inside-block starts, reach limit), mining plans for every
@@ -1371,32 +1622,53 @@ suites + the reviewers' own probes), zero console errors.
 ## Partially built
 
 - Remaining stub modules with responsibility headers: entities/dragon.js,
-  systems/brewing.js, systems/combat.js, dimensions/ (entities/entity.js,
-  pathfinding.js, models.js and mobs.js are real as of Phase 12).
+  systems/brewing.js, dimensions/ (entities/entity.js, pathfinding.js,
+  models.js, mobs.js are real as of Phase 12; systems/combat.js as of 13).
+- Phase 13 deliberate slices:
+  - The overworld hostile roster is complete. Still to come with their
+    dimensions/phases: enderman, blaze, ghast; passive herds (cow, pig,
+    sheep, chicken — the meat drops the food registry already expects).
+  - Armour reduces COMBAT damage (mob melee, arrows, explosions) only;
+    environmental damage (falls, lava, fire, drowning, cactus, starving)
+    is unreduced (vanilla reduces cactus/lava contact too — accepted
+    simplification, documented in combat.js).
+  - Skeleton arrows only test the player and player arrows only test
+    mobs — no friendly fire, no vanilla skeleton-vs-zombie wars, and a
+    skeleton can never shoot itself. Skeletons don't strafe (retreat is
+    a straight back-away) and don't seek shade while burning.
+  - Explosions have no line-of-sight/exposure model: blocks and entities
+    within radius are hit through walls. Dropped item entities in the
+    blast survive (vanilla destroys them). No visual particles beyond
+    the expanding flash shell; sound is the procedural WebAudio synth
+    (no audio asset system yet).
+  - The bow has no vanilla zoom-while-drawing, no attack-cooldown
+    indicator on the HUD, and crits don't require the near-full charge
+    vanilla does (SPEC wording — falling is enough).
+  - Spider hitbox is 1.2 wide (vanilla 1.4) so cave corridors don't jam
+    it; A* stays column-based (width-unaware) and climbing recovers the
+    difference. Mobs still take no fall damage (Phase 12 slice).
 - Phase 12 deliberate slices:
-  - One placeholder mob only (zombie stats/skin, pursue-and-bite). The
-    real roster — skeleton bow AI, creeper fuse, spider walls, enderman,
-    passive herds with the meat drops the food registry expects — is the
-    next phase: each is a registry entry in entities/mobs.js + an AI state
-    function. Zombies do not burn in daylight yet (needs the fire state on
-    entities).
+  - ~~One placeholder mob only... Zombies do not burn in daylight yet~~ —
+    Phase 13: the real roster (zombie/skeleton/creeper/spider registry
+    entries + AI state functions), zombies and skeletons burn in
+    daylight. Enderman and the passive herds remain (above).
   - Mobs don't push the player or each other (no entity-entity collision);
-    melee reach compensates. Mob-vs-mob damage unused.
+    melee reach compensates. Mob-vs-mob damage now exists ONLY from
+    explosions (a creeper blast hurts nearby mobs).
   - Only lava flows. Water stays static (generation seals its lakes; water
     flow + springs are a later phase — the fluids.js automaton generalises
     when needed). Lava meeting water makes nothing (no obsidian/cobble
     yet); flows hover where a fall lands on water.
   - Flowing lava has flat partial-height tops per level (no corner-sloped
     surfaces), and sources keep the static still-lava tile.
-  - Mob melee ignores armour (ARMOR_REDUCTION still unconsumed — armour
-    equip slots remain the combat phase's job) and there is no attack
-    exhaustion cost yet.
+  - ~~Mob melee ignores armour... no attack exhaustion cost yet~~ —
+    Phase 13: melee routes through combat's armour pipeline; attack and
+    block-break exhaustion cost their vanilla values.
   - Spawning is one-at-a-time (no vanilla pack spawns) and there is no
     per-category mob-cap density scaling by loaded chunks.
-- `player/stats.js` is complete for solo survival (Phase 11). Still
-  missing: armour equip slots + damage reduction (combat phase — armour
-  items exist in the registry), and block-break/attack exhaustion costs
-  (negligible vanilla values, add with combat).
+- `player/stats.js` is complete for solo survival (Phase 11).
+  ~~Still missing: armour equip slots + damage reduction... exhaustion
+  costs~~ — all shipped in Phase 13.
 - Burning has no screen-edge fire overlay or sound — damage flash only.
   Fire exists only as a state (lava sets it); there is no fire BLOCK yet
   (flint-and-steel lighting things is the portal phase).
@@ -1433,9 +1705,9 @@ suites + the reviewers' own probes), zero console errors.
     drops grid contents on close; here they return to the inventory, which
     is the modern-vanilla behaviour for the 2x2 and kinder for the 3x3).
 - Phase 7 deliberate slices:
-  - Armour items exist in the registry (stack 1, correct durabilities) and
-    can live in the inventory, but there are no equip slots and no damage
-    reduction yet — that's the combat phase.
+  - ~~Armour items... no equip slots and no damage reduction yet~~ —
+    Phase 13: four gated equip slots on the inventory screen, right-click
+    equip, SPEC damage reduction, durability wear, death drops.
   - No off-hand. ~~Cursor stacks can't be thrown into the world by clicking
     outside the panel~~ — Phase 11: they can (left = stack, right = one).
     No Q-to-drop while playing yet.

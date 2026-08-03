@@ -288,11 +288,19 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     settleExhaustion(); // regen exhaustion lands the frame it accrues
   }
 
+  // External activity costs (Phase 13: melee swings that land, block
+  // breaks). Fly mode and death are exempt like everything else.
+  function exhaust(amount) {
+    if (dead || player.mode === 'fly') return;
+    exhaustion += amount;
+  }
+
   return {
     update,
     damage,
     applyKnockback,
     eat,
+    exhaust,
     respawn,
     get health() {
       return health;

@@ -407,6 +407,7 @@ export const STATS = {
   DEATH_DROP_Y_OFFSET: 1,       // drops spawn this far above the feet
   HEART_PX: 18,                 // HUD heart icon size
   HUNGER_PX: 18,                // HUD drumstick icon size
+  ARMOR_PX: 18,                 // HUD armour icon size (Phase 13)
 
   // Contact damage (cactus registers damagesOnContact; lava handled above)
   CACTUS_DAMAGE: 1,             // per contact tick (half a heart, vanilla)
@@ -438,6 +439,8 @@ export const STATS = {
   EXHAUST_JUMP: 0.05,
   EXHAUST_SPRINT_JUMP: 0.2,
   EXHAUST_DAMAGE: 0.1,          // taking any damage costs a little food
+  EXHAUST_ATTACK: 0.1,          // landing a melee hit (vanilla, Phase 13)
+  EXHAUST_BREAK_BLOCK: 0.005,   // breaking a block (vanilla, Phase 13)
   EXHAUST_MAX_STEP_BLOCKS: 2,   // per-frame moves beyond this are teleports
                                 // (respawn), not travel — no exhaustion
   RESPAWN_SATURATION: 5,        // saturation after (re)spawn (vanilla)
@@ -496,21 +499,90 @@ export const TOOL_TIERS = {
   diamond: { speedMultiplier: 8, durability: 1562 },
 };
 
-// Keys are the item ids the inventory uses (wooden_sword...), so the combat
-// phase can look up WEAPON_DAMAGE[inventory.selectedName] directly.
+// Keys are the item ids the inventory uses (wooden_sword...), so combat can
+// look up WEAPON_DAMAGE[inventory.selectedName] directly. Real Minecraft
+// Java figures; anything not listed (including the bow used as a club)
+// hits for the fist value. Bow RANGED damage is COMBAT.BOW.
 export const WEAPON_DAMAGE = {
   fist: 1,
   wooden_sword: 4,
   stone_sword: 5,
   iron_sword: 6,
   diamond_sword: 7,
-  bow_full_draw: 6,
+  wooden_axe: 7,
+  stone_axe: 9,
+  iron_axe: 9,
+  diamond_axe: 9,
 };
 
-export const ARMOR_REDUCTION = {
-  leather: 0.28,
-  iron: 0.60,
-  diamond: 0.80,
+// ---------------------------------------------------------------------------
+// Combat (systems/combat.js) — Phase 13: the player's side of a fight.
+// ---------------------------------------------------------------------------
+
+export const COMBAT = {
+  // Attack cooldown per weapon class (seconds to fully recharge — vanilla
+  // 1.9 attack speeds: sword 1.6/s = 0.625s, axe ~1.0s, everything else
+  // fist-fast). Attacking early does heavily reduced damage:
+  // factor = MIN_CHARGE_FACTOR + (1 - MIN_CHARGE_FACTOR) * charge², the
+  // vanilla 0.2 + 0.8c² curve.
+  COOLDOWN_SECONDS: { sword: 0.625, axe: 1.0, default: 0.25 },
+  MIN_CHARGE_FACTOR: 0.2,
+  CRIT_MULTIPLIER: 1.5,           // 50% bonus damage attacking while falling (SPEC)
+  WEAPON_WEAR_PER_HIT: 1,         // durability a held tool loses landing a hit
+
+  // Armour: per-piece protection points (the vanilla tables). Reduction =
+  // points * REDUCTION_PER_POINT, so the SPEC full-set values fall out
+  // exactly: leather 7 pts = 28%, iron 15 = 60%, diamond 20 = 80%.
+  ARMOR_POINTS: {
+    leather: { helmet: 1, chestplate: 3, leggings: 2, boots: 1 },
+    golden:  { helmet: 2, chestplate: 5, leggings: 3, boots: 1 },
+    iron:    { helmet: 2, chestplate: 6, leggings: 5, boots: 2 },
+    diamond: { helmet: 3, chestplate: 8, leggings: 6, boots: 3 },
+  },
+  ARMOR_REDUCTION_PER_POINT: 0.04,
+  // Every armour-reduced hit wears each equipped piece by
+  // max(1, floor(damage / ARMOR_WEAR_DAMAGE_DIVISOR)) durability (vanilla).
+  ARMOR_WEAR_DAMAGE_DIVISOR: 4,
+
+  // Bow (SPEC: 1 to 6 damage scaling with draw time, 6 at full draw).
+  BOW: {
+    FULL_DRAW_SECONDS: 1.0,       // vanilla full charge
+    MIN_DRAW_SECONDS: 0.15,       // releases shorter than this fire nothing
+    MIN_DAMAGE: 1,
+    MAX_DAMAGE: 6,
+    MIN_SPEED: 18,                // arrow blocks/s at minimum draw
+    MAX_SPEED: 53,                // blocks/s at full draw (vanilla ~3 blocks/tick)
+    WEAR_PER_SHOT: 1,
+  },
+
+  // Arrows (both the player's and skeletons').
+  ARROW: {
+    GRAVITY: 20,                  // blocks/s² (vanilla 0.05 blocks/tick²)
+    DRAG: 0.5,                    // 1/s velocity damping in flight
+    LENGTH: 0.9,                  // rendered shaft length (vanilla render scale)
+    STUCK_DESPAWN_SECONDS: 30,    // stuck arrows vanish after this
+    FLYING_DESPAWN_SECONDS: 15,   // safety net for arrows that never land
+                                  // (per flight — resets when a stuck arrow
+                                  // is freed by mining its block)
+    STICK_BACKOFF: 0.4,           // fraction of LENGTH the stick point backs
+                                  // off the hit face (tip touches the block)
+    PICKUP_RADIUS: 1.2,           // player-fired stuck arrows collect within this
+    PICKUP_DELAY_SECONDS: 0.5,    // ...but not before this after sticking
+    SPAWN_FORWARD: 0.4,           // arrows spawn this far along the aim direction
+    EYE_DROP: 0.1,                // ...and this far below the shooter's eye
+  },
+
+  // Explosions (the creeper's; damage itself comes from the mob registry).
+  EXPLOSION: {
+    BLOCK_RADIUS: 3,              // vanilla creeper power
+    RADIUS_JITTER: 0.6,           // per-block radius roughness (crater edges)
+    MAX_BLAST_HARDNESS: 10,       // blocks harder than this survive (obsidian
+                                  // 50, bedrock ∞ — everything normal breaks)
+    DROP_CHANCE: 0.3,             // chance a destroyed block drops its items
+    DAMAGE_RADIUS: 6,             // damage falls off linearly to zero here
+    FLASH_SECONDS: 0.3,           // expanding white shell lifetime
+    BOOM_RANGE: 40,               // the boom fades to silence at this distance
+  },
 };
 
 // Mining a block above your tool tier: possible but very slow, drops nothing.
@@ -589,7 +661,6 @@ export const MOBS = {
   HURT_FLASH_SECONDS: 0.4,        // red tint after taking damage
   DEATH_SECONDS: 0.45,            // fall-over animation before removal
   ATTACK_REACH: 3,                // player melee reach against mobs (vanilla)
-  ATTACK_COOLDOWN_SECONDS: 0.5,   // between player melee swings that can hit
   MELEE_RANGE: 1.4,               // mob-to-player centre distance that can bite
                                   // (vanilla zombie reach ~1.43 — and, unlike
                                   // 1.8, geometrically unable to cross a
@@ -604,11 +675,53 @@ export const MOBS = {
                                   // pinning it forever against the no-shove
                                   // sweep clamp)
 
-  // --- AI (the pursue state; more states come with the real mobs)
+  // --- AI (shared pursue machinery + the per-mob states)
   AGGRO_RADIUS: 32,               // pursue when the player is within this
   REPATH_SECONDS: 0.5,            // recompute the A* path this often
   WAYPOINT_RADIUS: 0.35,          // a waypoint counts reached within this
   CHASE_DIRECT_RANGE: 4,          // this close, skip the path and walk straight
+
+  // Zombies and skeletons burn in daylight (SPEC): direct sky above
+  // (sky light 15 — any canopy or roof shades) while the sun is high
+  // (skyDarken at/below the threshold), unless in water.
+  DAYLIGHT_BURN: {
+    MIN_SKY_LIGHT: 15,            // direct, unshaded sky required
+    MAX_SKY_DARKEN: 2,            // dayNight.skyDarken at/below this = day
+    TICK_SECONDS: 1.0,            // fire tick cadence (vanilla)
+    DAMAGE: 1,                    // per tick
+  },
+
+  // Skeleton (keeps distance, shoots with lead)
+  SKELETON: {
+    PREFERRED_RANGE: 10,          // approaches until inside this
+    RETREAT_RANGE: 5,             // backs away when the player is closer
+    SHOOT_INTERVAL_SECONDS: 2.0,  // one arrow this often while aiming (vanilla)
+    ARROW_SPEED: 32,              // blocks/s (vanilla ~1.6 blocks/tick)
+    ARROW_INACCURACY: 1.2,        // blocks/s of random spread on the shot
+    EYE_HEIGHT: 1.6,              // arrows leave from here
+    AIM_LEAD_FACTOR: 1.0,         // fraction of the player's velocity led
+    AIM_HEIGHT_FRACTION: 0.6,     // aims at this fraction of the player's height
+  },
+
+  // Creeper (approaches, hisses, flashes, explodes)
+  CREEPER: {
+    FUSE_SECONDS: 1.5,            // SPEC: explodes after 1.5s
+    IGNITE_RANGE: 3,              // fuse starts within this distance
+    ABORT_RANGE: 7,               // fuse rewinds when the player escapes this
+    FUSE_REWIND_RATE: 2,          // rewind speed multiple while aborted
+    SWELL_SCALE: 0.35,            // extra model scale at full fuse
+    FLASH_HZ: 5,                  // white-flash blink rate while fusing
+    HISS_RANGE: 16,               // hiss volume fades to nothing at this distance
+    HISS_MIN_VOLUME: 0.2,         // ...but an igniting creeper is never silent
+  },
+
+  // Spider (fast, climbs, neutral in bright light unless provoked)
+  SPIDER: {
+    HOSTILE_LIGHT_MAX: 7,         // hostile at/below this effective light
+    CLIMB_SPEED: 2.5,             // blocks/s up a wall it is pushing against
+    LEG_SWING: 0.4,               // radians of leg yaw scuttle at full stride
+    LEG_LIFT: 0.15,               // radians of leg roll lift while striding
+  },
 
   // --- animation (entities/models.js rigs)
   LIMB_SWING_CYCLES_PER_BLOCK: 0.55, // stride cycles per block walked
@@ -777,6 +890,11 @@ export const INTERACTION = {
     EAT_NIBBLE_HZ: 4.5,              // nibble bobs per second
     EAT_NIBBLE_AMP: 0.03,            // nibble bob amplitude
     EAT_ENGAGE_RATE: 10,             // 1/s ease into/out of the eating pose
+    // Drawing a bow (Phase 13): the bow raises toward screen centre and
+    // pulls back while the draw charges.
+    DRAW_OFFSET: [-0.18, 0.07, 0.06], // hand offset while drawing
+    DRAW_TIP: 0.3,                   // extra x-rotation raising the bow
+    DRAW_ENGAGE_RATE: 8,             // 1/s ease into/out of the draw pose
   },
 };
 

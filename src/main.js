@@ -2,7 +2,7 @@
 // the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
-import { DEBUG, SKY, LAVA_VIEW, ITEMS, WEAPON_DAMAGE } from './config.js';
+import { DEBUG, SKY, LAVA_VIEW, ITEMS } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
@@ -24,6 +24,7 @@ import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
 import { createSmeltingSystem } from './systems/smelting.js';
+import { createCombat } from './systems/combat.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -113,22 +114,19 @@ async function init() {
       screens.showDeath();
     },
   });
-  // Phase 12: mobs — created after interaction, so the combat bridge
-  // resolves lazily (clicks can only arrive long after init finishes).
+  // Phase 13: the combat system — player melee (weapon damage, cooldown
+  // charge, crits), the armour damage pipeline, bow + arrows, explosions.
+  // Mobs are created after it, so the mob list resolves lazily.
   let mobs;
+  const combat = createCombat({
+    world, scene, player, stats, inventory, items, dayNight,
+    getMobs: () => mobs,
+  });
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory, stats,
-    // A mob in the crosshair intercepts left clicks: the held weapon's
-    // damage (fist without one), knockback along the view direction.
-    combat: {
-      raycast: (origin, dir, maxDist) =>
-        (mobs ? mobs.raycast(origin, dir, maxDist) : null),
-      attack: (mob, dir) => mobs.attack(
-        mob,
-        WEAPON_DAMAGE[inventory.selectedName] ?? WEAPON_DAMAGE.fist,
-        dir,
-      ),
-    },
+    // A mob in the crosshair intercepts left clicks (attack, not mine);
+    // holding right with the bow draws and releases through combat too.
+    combat,
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -148,7 +146,7 @@ async function init() {
       return false;
     },
   });
-  mobs = createMobs({ world, scene, player, stats, items, dayNight });
+  mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -174,6 +172,7 @@ async function init() {
   window.__falling = falling;
   window.__fluids = fluids;
   window.__mobs = mobs;
+  window.__combat = combat;
   window.__stats = stats;
   window.__smelting = smelting;
   window.__chests = chests;
@@ -248,6 +247,7 @@ async function init() {
       interaction.update(delta);
       items.update(delta, player.position, onPickup);
       mobs.update(delta);     // spawning, AI, mob physics, animation
+      combat.update(delta);   // arrows in flight, explosion flashes
       falling.update(delta);
       smelting.update(delta); // furnaces run with the UI closed, independently
       chests.update(delta);   // lid animation + chunk-visibility follow

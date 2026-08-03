@@ -6,3 +6,6 @@ node_modules
 # Dev-harness ESM shim for node unit tests (uncommitted; the game needs no npm)
 package.json
 package-lock.json
+# Dev-harness browser entry (index.html with the importmap pointed at the
+# local three copy — the sandbox blocks unpkg.com; production is untouched)
+test.html

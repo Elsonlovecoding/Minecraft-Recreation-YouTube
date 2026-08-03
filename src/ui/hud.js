@@ -11,7 +11,7 @@
 // not a per-slot ::after class — the class toggle sometimes didn't repaint
 // under pointer lock, leaving the box on the old slot.
 
-import { PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS } from '../config.js';
+import { PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS, COMBAT } from '../config.js';
 import { renderSlotContent } from './icons.js';
 import { getAtlasTexture, TILE } from '../render/atlas.js';
 
@@ -25,6 +25,11 @@ let hungerUrls = null;
 let lastHunger = -1;
 let flashEl = null;
 let lastHealth = -1;
+let armourEls = [];   // armour bar above the hearts (Phase 13)
+let armourUrls = null;
+let lastArmour = -1;
+let armourRow = null;
+let hudInventory = null; // armourPoints source for the bar
 let selectEl = null;     // the hotbar selection highlight box
 let lastSelected = -1;
 let syncSelection = null; // repositions selectEl; also guarded per frame
@@ -134,9 +139,52 @@ function hungerDataUrl(variant) {
   return canvas.toDataURL();
 }
 
+// Pixel-art armour plate in the vanilla armour-bar style: shoulder caps
+// over a tapering chest. 'o' outline, 's' steel, 'S' highlight; the empty
+// variant greys the fill, the half variant keeps colour on the left half.
+const ARMOR_SHAPE = [
+  'oo....oo',
+  'oso..oso',
+  'osSooSso',
+  'osSSSSso',
+  '.oSSSSo.',
+  '.osSSso.',
+  '.osssso.',
+  '..oooo..',
+];
+
+function armourDataUrl(variant) {
+  const rows = ARMOR_SHAPE.length;
+  const cols = ARMOR_SHAPE[0].length;
+  const scale = 3;
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * scale;
+  canvas.height = rows * scale;
+  const ctx = canvas.getContext('2d');
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const c = ARMOR_SHAPE[y][x];
+      if (c === '.') continue;
+      let color;
+      if (c === 'o') color = '#20222b';
+      else {
+        const lit = variant === 'full' || (variant === 'half' && x < cols / 2);
+        if (lit) color = c === 'S' ? '#e8ecf5' : '#a8b0c0';
+        else color = c === 'S' ? '#4d4d4d' : '#3a3a3a';
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+  return canvas.toDataURL();
+}
+
 export function initHud(inventory) {
+  hudInventory = inventory;
   const iconPx = Math.round(UI.HOTBAR_SLOT_PX * UI.ICON_SCALE);
   const statsBottom = UI.HOTBAR_BOTTOM_PX + UI.HOTBAR_SLOT_PX + 10;
+  // Armour sits above the hearts on the left, like breath above hunger.
+  const armourBottom = statsBottom + STATS.HEART_PX + 4;
   // Bubbles sit above the hunger row (vanilla), which mirrors the hearts on
   // the right half of the hotbar.
   const breathBottom = statsBottom + STATS.HUNGER_PX + 4;
@@ -213,6 +261,19 @@ export function initHud(inventory) {
     }
     #hud-hearts .heart {
       width: ${STATS.HEART_PX}px; height: ${STATS.HEART_PX}px; margin-right: 1px;
+      background-size: contain; background-repeat: no-repeat;
+      image-rendering: pixelated;
+    }
+    #hud-armour {
+      /* left-aligned above the hearts (vanilla layout); hidden unarmoured */
+      position: fixed; left: 50%; bottom: ${armourBottom}px;
+      transform: translateX(-${Math.round((UI.HOTBAR_SLOT_PX * INVENTORY.HOTBAR_SIZE + 8) / 2)}px);
+      display: none; z-index: 5; pointer-events: none;
+      filter: drop-shadow(1px 1px 0 rgba(0,0,0,0.5));
+    }
+    #hud-armour .plate {
+      width: ${STATS.ARMOR_PX}px; height: ${STATS.ARMOR_PX}px; margin-right: 1px;
+      display: inline-block;
       background-size: contain; background-repeat: no-repeat;
       image-rendering: pixelated;
     }
@@ -293,6 +354,28 @@ export function initHud(inventory) {
   document.body.appendChild(hearts);
   lastHealth = -1;
 
+  // --- armour bar (Phase 13) — one plate per 2 protection points
+  armourUrls = {
+    full: armourDataUrl('full'),
+    half: armourDataUrl('half'),
+    empty: armourDataUrl('empty'),
+  };
+  armourRow = document.createElement('div');
+  armourRow.id = 'hud-armour';
+  armourEls = [];
+  // One plate per 2 protection points, sized to the best possible set
+  // (a full diamond set = 20 points = 10 plates), like hearts to health.
+  const maxPoints = Object.values(COMBAT.ARMOR_POINTS.diamond)
+    .reduce((a, b) => a + b, 0);
+  for (let i = 0; i < maxPoints / 2; i++) {
+    const a = document.createElement('div');
+    a.className = 'plate';
+    armourRow.appendChild(a);
+    armourEls.push(a);
+  }
+  document.body.appendChild(armourRow);
+  lastArmour = -1;
+
   // --- hunger row (Phase 11)
   hungerUrls = {
     full: hungerDataUrl('full'),
@@ -360,6 +443,18 @@ export function updateHud(player, stats) {
       const points = stats.hunger - (hungerEls.length - 1 - i) * 2;
       const url = points >= 2 ? hungerUrls.full : points === 1 ? hungerUrls.half : hungerUrls.empty;
       hungerEls[i].style.backgroundImage = `url(${url})`;
+    }
+  }
+  // Armour bar: shown only while wearing anything (vanilla), one plate per
+  // 2 protection points, filling left to right.
+  const armourPoints = hudInventory ? hudInventory.armourPoints : 0;
+  if (armourPoints !== lastArmour) {
+    lastArmour = armourPoints;
+    armourRow.style.display = armourPoints > 0 ? 'block' : 'none';
+    for (let i = 0; i < armourEls.length; i++) {
+      const points = armourPoints - i * 2;
+      const url = points >= 2 ? armourUrls.full : points === 1 ? armourUrls.half : armourUrls.empty;
+      armourEls[i].style.backgroundImage = `url(${url})`;
     }
   }
   flashEl.style.opacity = stats.flashFraction > 0
