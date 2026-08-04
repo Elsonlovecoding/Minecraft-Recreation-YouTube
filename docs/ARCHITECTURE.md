@@ -108,9 +108,10 @@ constants registry — splitting it would scatter the single source of tunables)
 hand lives in `player/hand.js` now; ~740 after the Phase 14 offhand);
 `entities/mobs.js` got the mandated spawning split in Phase 14
 (`entities/spawning.js`, plus passive behaviour in `entities/passive.js`)
-but the herd registry entries put it back at ~880 — the next session that
-grows it should move the MOB_TYPES registry into its own file;
-`ui/screens.js` sits at ~840 as of Phase 14 (preview + offhand slot) — the
+but the herd registry entries put it back over the cap (~910) — the next
+session that grows it MUST move the MOB_TYPES registry into its own file
+(`entities/registry.js`) before adding anything else;
+`ui/screens.js` sits at ~810 as of Phase 14 (preview + offhand slot) — the
 brewing-stand screen should split the container screens out.
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view

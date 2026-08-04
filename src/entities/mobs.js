@@ -18,7 +18,7 @@
 // (enderman/blaze/ghast arrive with their dimensions.)
 
 import * as THREE from 'three';
-import { MOBS, COMBAT, LIGHTING, PLAYER } from '../config.js';
+import { MOBS, COMBAT, LIGHTING, PLAYER, CHUNK } from '../config.js';
 import { Entity } from './entity.js';
 import { findPath } from './pathfinding.js';
 import {
@@ -291,7 +291,26 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     // target and the draw animation rides along.
     if (type.ai === 'skeleton' && parts.leftArm) {
       const S = MOBS.SKELETON;
-      const bow = createExtrudedItemMesh('bow', S.BOW_SCALE);
+      // The slab arrives async and its material is the SHARED extruded-item
+      // cache entry (the player's held bow and every dropped bow use the
+      // same instance). Clone it per mob so the tint loop below can darken
+      // it with the rest of the skeleton — without a clone the bow stayed
+      // fullbright white on a near-invisible midnight mob, and tinting the
+      // shared material would bleed onto the player's own bow.
+      // `bow` is declared BEFORE the call: on a cache hit the factory fires
+      // onReady synchronously, and a `const` here would still be in its
+      // temporal dead zone (the Phase 10 held-tool crash, same shape). The
+      // claim is idempotent, so the post-call invocation covers exactly
+      // that case and no-ops on the async path.
+      let bow;
+      const claimBowMaterial = () => {
+        const mesh = bow?.children[0];
+        if (!mesh?.isMesh || mob.materials.includes(mesh.material)) return;
+        mesh.material = mesh.material.clone(); // shares the texture, owns its colour
+        mob.materials.push(mesh.material);
+      };
+      bow = createExtrudedItemMesh('bow', S.BOW_SCALE, claimBowMaterial);
+      claimBowMaterial();
       bow.position.set(...S.BOW_OFFSET);
       bow.rotation.set(...S.BOW_TILT);
       parts.leftArm.add(bow);
@@ -818,42 +837,54 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     for (let i = mobs.length - 1; i >= 0; i--) {
       const mob = mobs[i];
       const e = mob.entity;
-      if (!e.dead && !e.removed) AI[mob.type.ai](mob, dt);
+      // Mobs in unloaded chunks freeze ENTIRELY, like dropped items — the
+      // physics step already guarded itself, but the AI (wander probes,
+      // pathfinding) and the suffocation check below call world.getBlock
+      // too, which would synchronously regenerate the far chunk every
+      // frame after every streaming unload. Unreachable before Phase 14
+      // (hostiles despawn inside the data-keep radius); never-despawning
+      // passives made it a recurring travel hitch.
+      const ep = e.position;
+      const chunkLoaded = !!world.getChunkIfLoaded(
+        Math.floor(ep.x / CHUNK.SIZE), Math.floor(ep.z / CHUNK.SIZE),
+      );
+      if (!e.dead && !e.removed && chunkLoaded) AI[mob.type.ai](mob, dt);
       e.step(dt);
 
-      // Fire: lava contact and daylight burning share the tick (a mob
-      // takes one or the other, lava dominating).
-      mob.onFire = daylightBurning(mob);
-      if ((e.inLava || mob.onFire) && !e.dead) {
-        mob.burnTimer -= dt;
-        if (mob.burnTimer <= 0) {
-          mob.burnTimer = e.inLava
-            ? MOBS.BURN_DAMAGE_TICK_SECONDS
-            : MOBS.DAYLIGHT_BURN.TICK_SECONDS;
-          e.damage(e.inLava ? MOBS.LAVA_CONTACT_DAMAGE : MOBS.DAYLIGHT_BURN.DAMAGE);
+      if (chunkLoaded) {
+        // Fire: lava contact and daylight burning share the tick (a mob
+        // takes one or the other, lava dominating).
+        mob.onFire = daylightBurning(mob);
+        if ((e.inLava || mob.onFire) && !e.dead) {
+          mob.burnTimer -= dt;
+          if (mob.burnTimer <= 0) {
+            mob.burnTimer = e.inLava
+              ? MOBS.BURN_DAMAGE_TICK_SECONDS
+              : MOBS.DAYLIGHT_BURN.TICK_SECONDS;
+            e.damage(e.inLava ? MOBS.LAVA_CONTACT_DAMAGE : MOBS.DAYLIGHT_BURN.DAMAGE);
+          }
+        } else {
+          mob.burnTimer = 0;
         }
-      } else {
-        mob.burnTimer = 0;
-      }
 
-      // Suffocation (vanilla): a solid block ending up in the head cell —
-      // placed by the player, or falling sand settling there — damages the
-      // mob until it dies. Without this a head-embedded body would be
-      // pinned forever by the sweep's no-shove clamp.
-      const ep = e.position;
-      const headSolid = !e.dead && blockDef(world.getBlock(
-        Math.floor(ep.x),
-        Math.floor(ep.y + e.def.height - 0.1),
-        Math.floor(ep.z),
-      )).solid;
-      if (headSolid) {
-        mob.suffocateTimer -= dt;
-        if (mob.suffocateTimer <= 0) {
-          mob.suffocateTimer = MOBS.SUFFOCATION_TICK_SECONDS;
-          e.damage(MOBS.SUFFOCATION_DAMAGE);
+        // Suffocation (vanilla): a solid block ending up in the head cell —
+        // placed by the player, or falling sand settling there — damages the
+        // mob until it dies. Without this a head-embedded body would be
+        // pinned forever by the sweep's no-shove clamp.
+        const headSolid = !e.dead && blockDef(world.getBlock(
+          Math.floor(ep.x),
+          Math.floor(ep.y + e.def.height - 0.1),
+          Math.floor(ep.z),
+        )).solid;
+        if (headSolid) {
+          mob.suffocateTimer -= dt;
+          if (mob.suffocateTimer <= 0) {
+            mob.suffocateTimer = MOBS.SUFFOCATION_TICK_SECONDS;
+            e.damage(MOBS.SUFFOCATION_DAMAGE);
+          }
+        } else {
+          mob.suffocateTimer = 0;
         }
-      } else {
-        mob.suffocateTimer = 0;
       }
 
       e.updateLifecycle(dt, playerPos);

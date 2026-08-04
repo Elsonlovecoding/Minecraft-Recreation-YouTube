@@ -1276,6 +1276,70 @@ pool at night vs the dark control, the inventory screen's preview
 (neutral skin, armour ghosts, offhand slot) and the armoured/mouse-
 follow variants.
 
+Phase 14's adversarial review (five independent lenses — passives/spawning,
+offhand/interaction/inventory, rendering/lighting, Phase 1-13 regressions,
+session fidelity — each probing the real modules with its own node and
+headless-Chromium repro scripts over the full diff; every finding
+independently re-reproduced by a dedicated verifier before it counted)
+raised 15 findings, refuted 4 and confirmed 11. All were fixed and
+regression-checked (24 new browser checks in the fix suite):
+- **Far passives regenerated their chunks every frame** (the one major
+  finding): mobs.js's per-frame suffocation probe and the new wander probe
+  call `world.getBlock` with no loaded-chunk guard. Before Phase 14 this
+  was unreachable — every mob was hostile and despawned at 128 blocks,
+  inside the 160-block data-keep radius — but never-despawning passives
+  left behind by a travelling player sat in unloaded chunks, so each one
+  synchronously regenerated its chunk (~6ms) on every frame after every
+  streaming unload, forever. Mobs in unloaded chunks now freeze entirely
+  (AI + fire + suffocation), exactly like dropped items and the physics
+  step; verified: a cow 4000 blocks out keeps existing, builds no wander
+  state, and its chunk stays unloaded.
+- **Passives walked into surface lava**: the wander safety probe scanned
+  the drop column from feet-1 downward, so a lava flow layered ON solid
+  ground (a spill or spring — the shape fluids.js actually produces) read
+  as safe floor. The probe now rejects lava at feet level first; verified
+  against a staged flow with a clear-ground control.
+- **A bow swapped away mid-draw still fired** (and skipped its durability):
+  releaseDraw attributed wear by inspecting the CURRENT hand, so F-swapping
+  (or switching slots) and releasing in the same frame fired an unworn
+  shot — contradicting interaction.js's own "any break of the draw
+  cancels" invariant, which only ran on frames where the button was held.
+  The release now cancels unless the source hand still holds the bow.
+- **Arrows in the offhand were invisible to the bow**: `hasArrowItem` and
+  the consumption scanned only the main slot array, so the vanilla habit of
+  keeping arrows in the offhand silently refused to draw. Both now see the
+  offhand and consume from it FIRST (vanilla order).
+- **The active-hand rule was static per item name**, so a main-hand item
+  whose use *couldn't succeed* still blocked the offhand: food at full
+  hunger, an arrowless bow, or shears with no sheep under the crosshair
+  made right-click do nothing at all. `hasRightClickUse` is context-aware
+  now (and resolves once per frame against that frame's mob raycast).
+- **The skeleton's bow rendered fullbright**: it used the SHARED
+  extruded-item material (the same instance as the player's held bow and
+  every dropped bow) and was never registered for the per-mob tint — a
+  glowing white bow on a near-invisible midnight skeleton. Each skeleton
+  now clones the material (texture shared, colour owned); verified the bow
+  tints to exactly the body's brightness while the player's own bow stays
+  fullbright. The clone path also re-triggered the Phase 10 TDZ trap
+  (`onReady` fires synchronously on a cache hit) — caught by the new
+  regression test and fixed the way hand.js does it.
+- Polish: the armour-plate CanvasTexture was missing `SRGBColorSpace`
+  (washed-out plate shading against the sRGB-decoded skin beside it); the
+  preview's mouse-follow sensitivity/clamp numbers moved into config
+  (`UI.PLAYER_PREVIEW.MAX_TARGET_YAW/YAW_SENSITIVITY/PITCH_SENSITIVITY`)
+  per the ARCHITECTURE constants rule; a stale `eating` doc comment.
+- Two harness flakes the fidelity lens caught in the test suite itself
+  (not the game): the sheep-removal check polled by TYPE NAME, so a
+  naturally-spawned sheep at noon could keep it true forever (identity
+  now), and the held-light remesh assertion compared absolute counts of
+  ambient streaming noise (now a proportional bound against the
+  empty-hand baseline — a per-step relight would multiply the count, not
+  nudge it).
+The four refuted claims: the preview's WebGL context is created lazily
+enough to be harmless, `stats.canEat` is still consumed, the "Steve skin
+if present" branch is correctly moot (no skin ships in assets), and the
+mobs.js line count is a documented, deliberate deferral.
+
 Phase 13 verification: 68 node checks against the real modules — the
 weapon table exact (fist 1, swords 4/5/6/7, axes 7/9/9/9), cooldowns
 (sword 0.625s / axe 1.0s / default 0.25s), the charge curve at its
@@ -1810,6 +1874,10 @@ suites + the reviewers' own probes), zero console errors.
   systems/brewing.js, dimensions/ (entities/entity.js, pathfinding.js,
   models.js, mobs.js are real as of Phase 12; systems/combat.js as of 13).
 - Phase 14 deliberate slices:
+  - Mobs (like items and arrows before them) FREEZE in unloaded chunks —
+    a passive herd left 500 blocks behind holds its position and state
+    until the player returns, rather than simulating. Anything new that
+    reads the world per mob per frame must go inside that gate.
   - The held-torch light is render-time only: the SPAWN gates still read
     baked light, so holding a torch does not prevent hostile spawns around
     the player (only a placed torch does) — the documented tradeoff of the
@@ -1999,11 +2067,23 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   dynamic sources (a thrown glowstone?) could ride the same uniforms if
   ever needed (one light only by design). `stats.canEatFood(food)` is
   the eating gate; `STATS.EXHAUSTION_SCALE` the single hunger-pace knob.
-- File-size caps (ARCHITECTURE): mobs.js sits at ~880 even after the
-  spawning split — the next session that grows it should move the
-  MOB_TYPES registry into its own entities/registry.js (ARCHITECTURE
-  note updated). screens.js is at ~840; the brewing-stand screen should
-  trigger a split (container screens vs the inventory screen).
+- **The unloaded-chunk rule is now universal**: dropped items, arrows AND
+  mobs freeze whenever their chunk isn't loaded. Any new per-frame system
+  that calls `world.getBlock`/`getLight` for an entity must sit inside a
+  `world.getChunkIfLoaded(...)` gate — without it, streaming unloads turn
+  into a synchronous chunk regeneration every frame (the Phase 14 review's
+  one major finding, and the same bug shape Phases 6 and 12 each hit once).
+- Attaching a shared cached mesh (`createExtrudedItemMesh`) to an entity
+  that gets TINTED means cloning its material per instance — the cache is
+  shared with the player's hand and every dropped copy. And declare the
+  group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
+  on a cache hit, so a `const` is still in its temporal dead zone (this
+  has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
+- File-size caps (ARCHITECTURE): mobs.js is OVER the cap at ~910 even
+  after the spawning split (the herd registry entries) — the next session
+  that touches it must first move the MOB_TYPES registry into its own
+  entities/registry.js. screens.js is at ~810; the brewing-stand screen
+  should trigger a split (container screens vs the inventory screen).
 - The mob-type registry entries for the herds reference config MOBS.PASSIVE
   at module load (chicken maxFallSpeed) — config stays import-order-safe
   as long as it has no imports of its own; keep it that way.
@@ -2221,4 +2301,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 11 | Full survival stats (player/stats.js): hunger 20 + hidden saturation + exhaustion from activity (sprint/swim/jump/damage/regen), natural regen at hunger>=18 costing exhaustion (the eat-to-heal loop), starvation to the SPEC 1-heart floor, fall damage 1 heart/block beyond 3 via body.lastLanding, drowning 2/s at breath 0, lava contact + 15s burning DoT that water extinguishes, cactus contact with knockback (applyKnockback API for combat), death screen with Respawn button + inventory dropped at the death site (open screens close first, dead players collect nothing) + respawn at world spawn; hunger drumstick HUD row (right-to-left) with breath bubbles moved above; eating: hold right click ~1.6s with nibble hand animation, FOODS registry (vanilla hunger/saturation, cooked > raw, stew leaves a bowl). Bug fixes: torch box model (2x10px floor post + 22.5-degree wall variants, ids 57-60, face-aware placement, solid-support requirement, support-break pop, atlas-sprite item visuals), buckets scoop/place water and lava (fluid-aware raycast, one action per press), dropped sprite items extruded 1px thick, block icons redrawn in true dimetric proportions (~11% taller), click-outside-panel throws the cursor stack (left all / right one), cave entrances ~3x more common (census-tuned), canopies a layer deeper with hash-kept corners. 44 node + 22 browser checks + screenshot suite, zero console errors; adversarial 5-lens review with per-finding verification | Brewing stand; mobs + combat (armour equip/reduction, attack/break exhaustion, WEAPON_DAMAGE consumer); rivers; Q-drop; fire overlay visual; eating doesn't slow movement |
 | 12 | Entity foundation: base entity (entities/entity.js — swept-AABB physics with 1-block step-up, water/lava handling, health/knockback/hurt/death timers, despawn rules, unloaded-chunk freeze), budgeted A* pathfinding (entities/pathfinding.js — step up 1, drops capped at 3, lava/cactus avoided, 500-expansion budget with closest-approach fallback), mob spawning framework (entities/mobs.js — ring 24..96, solid opaque ground, hostile light <= 7 via new world.getLight + dayNight.skyDarken, passive >= 9 on grass, caps from config), box-model mob system (entities/models.js — standard entity unwrap from the real sheets, mirrored legacy limbs, pivot rigs, per-instance tint materials), walking limb swing + head tracking + body-yaw easing + baked-light tinting + red hurt flash + death fall-over, player melee via crosshair mob raycast with WEAPON_DAMAGE, mob melee biting through stats.damage/applyKnockback; placeholder mob (zombie stats/skin) proves spawn->pursue->bite->hit->die->drops. Bug fixes: true Esc pause (everything freezes — physics, momentum, day/night, entities, break progress, furnaces; input dead while paused; Esc/click resumes), flowing lava (world/fluids.js: pour-first spread 3 with descending partial-height animated rendering, falls, recedes, settles generated leaks), crack overlay exactly on the face via polygonOffset, fall damage halved to vanilla (0.5 hearts/block past 3), starvation floor 5 hearts (Easy). 26 node + browser suites (pause/mob/lava/visual), zero console errors; adversarial multi-lens review with per-finding refutation | Real mob roster (zombie/skeleton/creeper/spider/enderman + passives, daylight burning, per-type AI split); combat polish (armour equip + reduction, attack/break exhaustion, mob-vs-mob); water flow; lava+water -> obsidian/cobble; entity-entity collision; mob sounds |
 | 13 | Hostile roster (zombie / skeleton / creeper / spider: per-type AI, daylight burning, weighted spawning, vanilla box models); combat system (weapon damage with 1.9 cooldown scaling + falling crits, player bow with draw-scaled arrows, arrow projectiles both ways, creeper explosions with block destruction); armour (four equip slots, SPEC damage reduction, durability wear, HUD bar, death drops); first-person hand split into player/hand.js | Passive herds; enderman/blaze/ghast with their dimensions; skeleton bow render + shot pacing polish; mob-vs-mob combat beyond explosions |
-| 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers |
+| 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), mobs frozen in unloaded chunks, models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end; 5-lens adversarial review with all 11 confirmed findings fixed | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers |

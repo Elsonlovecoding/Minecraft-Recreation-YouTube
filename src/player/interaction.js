@@ -222,22 +222,27 @@ export function createInteraction({
     equip: () => inventory.equipOffhand(),
   };
 
-  // Does this item have ANY right-click use? Decides which hand acts.
-  function hasRightClickUse(name) {
+  // Does this item have a right-click use THAT COULD SUCCEED right now?
+  // Decides which hand acts. Context matters (review fix): food at full
+  // hunger, a bow with no arrows and shears with no sheep under the
+  // crosshair have no use this click — vanilla lets the offhand act then.
+  function hasRightClickUse(name, mobHit) {
     if (!name) return false;
     if (name === 'bucket' || name === 'water_bucket' || name === 'lava_bucket') return true;
-    if (name === 'bow' || name === 'shears') return true;
+    if (name === 'bow') return combat ? combat.hasArrow : true;
+    if (name === 'shears') return !!mobHit; // no block/air use in this game
     if (armourSlotIndex(name) !== null) return true;
-    if (foodValue(name)) return true;
+    const food = foodValue(name);
+    if (food) return stats ? stats.canEatFood(food) : true;
     return blockIdByName(name) !== null; // placeable block
   }
 
   // The acting hand for this right click: the main hand if its item has a
   // use, else the offhand if ITS item does (vanilla's fallback), else the
   // main hand (a use-less click falls through harmlessly).
-  function activeHand() {
-    if (hasRightClickUse(mainHand.name)) return mainHand;
-    if (hasRightClickUse(offHand.name)) return offHand;
+  function activeHand(mobHit) {
+    if (hasRightClickUse(mainHand.name, mobHit)) return mainHand;
+    if (hasRightClickUse(offHand.name, mobHit)) return offHand;
     return mainHand;
   }
 
@@ -535,12 +540,12 @@ export function createInteraction({
     return false;
   }
 
-  function updatePlacing(dt) {
+  function updatePlacing(dt, hand) {
     if (!mouseRight) return;
     placeTimer -= dt;
     if (placeTimer > 0) return;
     placeTimer = INTERACTION.PLACE_REPEAT_SECONDS;
-    tryPlace(activeHand());
+    tryPlace(hand);
   }
 
   // --- per-frame update
@@ -594,28 +599,30 @@ export function createInteraction({
     // targeted usable block (crafting table...), unless sneaking. Then
     // full-bucket placement, then armour equip. Bucket actions never
     // hold-repeat — the held item changes underneath, so a repeat would
-    // immediately undo itself.
+    // immediately undo itself. The acting hand resolves ONCE per frame
+    // against this frame's mob raycast; the press resolution, bow draw,
+    // eating and hold-to-place below all share it.
+    const useHand = activeHand(mobHit);
     if (useCheckPending) {
       useCheckPending = false;
-      const hand = activeHand();
-      if (mobHit && onUseMob && onUseMob(mobHit, hand.name)) {
-        if (hand.name === 'shears') hand.damage(1); // shears wear per shear
+      if (mobHit && onUseMob && onUseMob(mobHit, useHand.name)) {
+        if (useHand.name === 'shears') useHand.damage(1); // wear per shear
         mouseRight = false;
-        startSwing(hand.key);
-      } else if (hand.name === 'bucket' && tryScoopFluid(hand)) {
+        startSwing(useHand.key);
+      } else if (useHand.name === 'bucket' && tryScoopFluid(useHand)) {
         mouseRight = false;
-        startSwing(hand.key);
+        startSwing(useHand.key);
       } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
         mouseRight = false;
         startSwing();
-      } else if (tryBucketPlace(hand)) {
+      } else if (tryBucketPlace(useHand)) {
         mouseRight = false;
-        startSwing(hand.key);
-      } else if (hand.equip()) {
+        startSwing(useHand.key);
+      } else if (useHand.equip()) {
         // Right-clicking held armour equips it directly (Phase 13),
         // swapping with the worn piece. One action per press.
         mouseRight = false;
-        startSwing(hand.key);
+        startSwing(useHand.key);
       }
     }
 
@@ -625,7 +632,6 @@ export function createInteraction({
     // restarts, losing pointer lock cancels (see pointerlockchange).
     // Phase 14: the bow can be drawn from the offhand when the main hand
     // item has no right-click use.
-    const useHand = activeHand();
     if (combat?.updateDraw) {
       if (mouseRight && useHand.name === 'bow' && !eating) {
         combat.updateDraw(dt, useHand.key);
@@ -680,7 +686,7 @@ export function createInteraction({
     const usingItem = eating || !!combat?.isDrawing;
     if (usingItem || mobHit) resetBreak();
     else updateBreaking(dt);
-    if (!usingItem) updatePlacing(dt);
+    if (!usingItem) updatePlacing(dt, useHand);
 
     // Crack overlay over the block being broken. A destroy-stage texture
     // that hasn't finished loading yet would bind as an empty texture and
@@ -709,7 +715,8 @@ export function createInteraction({
     get breakProgress() {
       return breakProgress;
     },
-    // { name, t } while a hold-to-eat is in progress, else null
+    // { name, slot, t, source } while a hold-to-eat is in progress, else
+    // null (source: 'main' | 'off' — which hand eats, Phase 14)
     get eating() {
       return eating;
     },
