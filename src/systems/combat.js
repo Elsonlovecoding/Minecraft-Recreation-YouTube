@@ -460,7 +460,16 @@ export function createCombat({
 
   // --- bow ------------------------------------------------------------------
 
-  const hasArrowItem = () => inventory.slots.some((s) => s && s.name === 'arrow');
+  // Arrows count from the offhand too (Phase 14 review fix — vanilla
+  // players keep them there, and vanilla consumes the offhand FIRST).
+  const hasArrowItem = () =>
+    inventory.offhandName === 'arrow' ||
+    inventory.slots.some((s) => s && s.name === 'arrow');
+
+  const consumeArrow = () => {
+    if (inventory.offhandName === 'arrow') return inventory.consumeOffhand(1);
+    return inventory.consumeItem('arrow', 1);
+  };
 
   // Advance the draw while the button is held (interaction calls this every
   // frame a held bow + right button coincide). A draw only starts with an
@@ -492,7 +501,12 @@ export function createCombat({
     const source = draw.source;
     draw = null;
     if (t < COMBAT.BOW.MIN_DRAW_SECONDS || stats.dead) return;
-    if (!inventory.consumeItem('arrow', 1)) return;
+    // The source hand must STILL hold the bow — an F-swap (or slot switch)
+    // raced ahead of the release; that's a cancel like any other broken
+    // draw (Phase 14 review fix: it used to fire anyway, skipping wear).
+    const handName = source === 'off' ? inventory.offhandName : inventory.selectedName;
+    if (handName !== 'bow') return;
+    if (!consumeArrow()) return;
     const B = COMBAT.BOW;
     const charge = Math.min(1, t / B.FULL_DRAW_SECONDS);
     const damage = Math.round(B.MIN_DAMAGE + (B.MAX_DAMAGE - B.MIN_DAMAGE) * charge);
@@ -654,6 +668,11 @@ export function createCombat({
     sfx,
     get isDrawing() {
       return draw !== null;
+    },
+    // Is there an arrow to fire at all? (interaction's active-hand rule:
+    // an arrowless bow shouldn't gate the offhand's own use)
+    get hasArrow() {
+      return hasArrowItem();
     },
     // 0..1 — how far the current draw has charged (HUD/hand feedback)
     get drawCharge() {

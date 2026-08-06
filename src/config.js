@@ -904,6 +904,10 @@ export const UI = {
     HEAD_EXTRA_YAW: 0.5,          // radians the head adds beyond the body
     MAX_HEAD_PITCH: 0.5,          // radians the head tips up/down
     TURN_RATE: 10,                // 1/s easing toward the mouse direction
+    MAX_TARGET_YAW: 1.6,          // clamp on the raw look target (body + head
+                                  // limits divide it up between them)
+    YAW_SENSITIVITY: 2.2,         // target radians per canvas-width of cursor
+    PITCH_SENSITIVITY: 1.4,       // target radians per canvas-height of cursor
     ARMOUR_INFLATE_PX: 0.75,      // armour overlay growth per side (pixels)
     LEGGING_INFLATE_PX: 0.4,      // trousers sit inside the boots/chest layer
   },

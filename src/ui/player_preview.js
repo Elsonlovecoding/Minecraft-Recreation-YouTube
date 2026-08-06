@@ -137,6 +137,8 @@ function getPlateTexture() {
   plateTexture.magFilter = THREE.NearestFilter;
   plateTexture.minFilter = THREE.NearestFilter;
   plateTexture.generateMipmaps = false;
+  plateTexture.colorSpace = THREE.SRGBColorSpace; // authored sRGB, like every
+                                                  // other texture in the project
   return plateTexture;
 }
 
@@ -225,9 +227,11 @@ export function createPlayerPreview({ inventory }) {
     // The camera looks along +z at the model's -z face, so screen-right is
     // world -x — positive yaw turns the model's gaze that way; screen-down
     // (dy positive) is a downward glance (negative head pitch).
-    targetYaw = Math.max(-1.6, Math.min(1.6, dx * 2.2));
+    targetYaw = Math.max(
+      -P().MAX_TARGET_YAW, Math.min(P().MAX_TARGET_YAW, dx * P().YAW_SENSITIVITY),
+    );
     targetPitch = Math.max(
-      -P().MAX_HEAD_PITCH, Math.min(P().MAX_HEAD_PITCH, -dy * 1.4),
+      -P().MAX_HEAD_PITCH, Math.min(P().MAX_HEAD_PITCH, -dy * P().PITCH_SENSITIVITY),
     );
   }
 

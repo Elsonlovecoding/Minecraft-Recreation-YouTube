@@ -44,6 +44,10 @@ export function createPassiveBehaviour({ world, player, items }) {
     const px = Math.floor(p.x + dirX * P().PROBE_AHEAD_BLOCKS);
     const pz = Math.floor(p.z + dirZ * P().PROBE_AHEAD_BLOCKS);
     const feetY = Math.floor(p.y + 0.01);
+    // Lava LAYERED ON solid ground (a surface flow or bucket spill) sits at
+    // feet level — the drop-column scan below would find the solid floor
+    // under it and call the step safe.
+    if (isLava(getBlock(px, feetY, pz))) return false;
     for (let dy = 0; dy <= P().MAX_WANDER_DROP; dy++) {
       const id = getBlock(px, feetY - 1 - dy, pz);
       if (isLava(id)) return false;
