@@ -185,7 +185,7 @@ async function init() {
       },
     },
   });
-  portals = createPortals({ world, scene, player, stats, dimensions });
+  portals = createPortals({ world, scene, player, stats, camera, dimensions });
   world.addBlockListener(portals.onBlockChanged);
 
   const buildStart = performance.now();
@@ -200,9 +200,22 @@ async function init() {
   // playthrough — 10 obsidian, flint and steel, diamond pickaxe, iron sword.
   if (TEST_CHEST) {
     const p = player.body.position;
-    const tcx = Math.floor(p.x) + 2;
-    const tcz = Math.floor(p.z);
-    const tcy = world.getHighestSolidY(tcx, tcz) + 1;
+    // Prefer a column whose surface is level with the player — leaves count
+    // as solid, so a bare +2 offset could sit the chest on a tree canopy.
+    let tcx = Math.floor(p.x) + 2;
+    let tcz = Math.floor(p.z);
+    let tcy = world.getHighestSolidY(tcx, tcz) + 1;
+    for (const [ox, oz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]) {
+      const x = Math.floor(p.x) + ox;
+      const z = Math.floor(p.z) + oz;
+      const y = world.getHighestSolidY(x, z) + 1;
+      if (Math.abs(y - p.y) <= 2) {
+        tcx = x;
+        tcz = z;
+        tcy = y;
+        break;
+      }
+    }
     world.setBlock(tcx, tcy, tcz, BLOCK.CHEST);
     const chest = chests.chestAt(tcx, tcy, tcz);
     chest.container.addStack({ name: 'obsidian', count: 10 });

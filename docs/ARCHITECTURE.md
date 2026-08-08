@@ -16,14 +16,22 @@ src/
   world/
     blocks.js            block registry: ids, textures, hardness, drops
     terrain.js           noise, heightmap, biomes, trees
-    caves.js             cave carving, ore placement, lava placement
-    chunks.js            chunk data, meshing, face culling
+    noise.js             seeded simplex/fbm/Field3D machinery for the
+                         carver (Phase 15 split out of caves.js per the
+                         size cap — moved verbatim, byte-identical output)
+    caves.js             cave carving (tunnels, caverns, Phase 15 mega
+                         caverns + waterfall springs), ore placement, lava
+                         placement
+    chunks.js            chunk data, meshing, face culling; special
+                         emitters (torch, lava flow, Phase 15 portal)
     chests.js            chest block entities: contents + entity-textured
                          box model + lid animation (Phase 10 addition)
     fluids.js            flowing lava: budgeted spread/fall/recede automaton
-                         over block-change events (Phase 12 addition)
+                         over block-change events (Phase 12 addition);
+                         water+lava hardening to obsidian/cobble (Phase 15)
     world.js             chunk manager, get/set block, loading, block-change
-                         listeners, getLight point queries
+                         listeners, getLight point queries, dimension
+                         backing-store swap (Phase 15)
 
   render/
     renderer.js          Three.js setup, tone mapping, shadows, post
@@ -41,6 +49,8 @@ src/
 
   entities/
     entity.js            base entity, physics, despawn
+    registry.js          the MOB_TYPES registry: per-mob stats and drops
+                         (Phase 15 split out of mobs.js per the size cap)
     pathfinding.js       A* over world blocks
     models.js            mob models from textured boxes: standard entity
                          unwrap, animation rigs (Phase 12 addition); the
@@ -72,8 +82,16 @@ src/
                          (combat never imports the mob manager)
 
   dimensions/
-    portals.js           portal detection, lighting, travel
-    nether.js            nether generation, fortress
+    dimensions.js        multiple worlds in memory: swaps the single World
+                         instance's backing store + every entity manager's
+                         collections per dimension (Phase 15 addition)
+    portals.js           nether portal: frame detection, flint-and-steel
+                         lighting, stand-to-travel with 1:8 scaling, linked
+                         portal reuse/creation, particles + ambience
+                         (Phase 15)
+    nether.js            nether generation, fortress (Phase 15 ships a flat
+                         placeholder generator; the real Nether replaces it
+                         behind the same interface)
     end.js               end island, pillars, crystals
     stronghold.js        stronghold generation, end portal room
 
@@ -106,11 +124,13 @@ in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
 hand lives in `player/hand.js` now; ~740 after the Phase 14 offhand);
-`entities/mobs.js` got the mandated spawning split in Phase 14
-(`entities/spawning.js`, plus passive behaviour in `entities/passive.js`)
-but the herd registry entries put it back over the cap (~910) — the next
-session that grows it MUST move the MOB_TYPES registry into its own file
-(`entities/registry.js`) before adding anything else;
+`entities/mobs.js` got its mandated MOB_TYPES split in Phase 15
+(`entities/registry.js`; mobs.js is ~770 after the skeleton-cycle fix);
+`world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
+(the mega-cavern pass would have pushed it past the cap; ~640 now);
+`world/chunks.js` sits exactly AT ~800 after the Phase 15 portal emitter —
+the next session that grows it must split (the special-shape emitters —
+torch/lava/portal — are the natural cut);
 `ui/screens.js` sits at ~810 as of Phase 14 (preview + offhand slot) — the
 brewing-stand screen should split the container screens out.
 

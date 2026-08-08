@@ -8,17 +8,32 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 14 — passive mobs and the survival loop closed
-(cow / pig / sheep / chicken with wander + panic-flee AI, daylight grass
-spawning, no despawn, real temperate-variant textures on models verified
-box-by-box against the sheets' UV layouts; sheep shearing with wool regrowth;
-chickens lay eggs and fall slowly), the survival-loop extras (exact vanilla
-food table with golden-apple and rotten-flesh rules; kill animals -> cook
-meat -> eat verified end to end), the inventory-screen player model preview,
-the offhand slot (F swap, left-hand render, right-click fallback), the
-held-torch dynamic light (render-time, zero remeshing), the real 20-minute
-day/night phase timing, and the skeleton fixes (visible bow, draw-and-release
-cycle at the vanilla ~2s cadence)**
+Phase last completed: **Phase 15 — portal mechanics: the Nether portal end
+to end (obsidian frame detection at the SPEC minimum 4x5 with optional
+corners, flint-and-steel lighting with durability, animated purple portal
+blocks with particles and procedural ambience, 3-second stand-to-travel,
+1:8 coordinate scaling both ways, linked portal reuse/creation on the far
+side, portal break-down when the frame is disturbed), the dimension system
+(multiple worlds in memory — one World instance whose backing store swaps;
+every entity manager swaps its collections; the swapped-out dimension stays
+frozen and hidden until return), a PLACEHOLDER flat-netherrack Nether under
+the fixed red sky (the real Nether replaces it next session), obsidian
+where water meets lava (sources harden to obsidian, flows to cobblestone),
+the distinct mega-cavern generation pass (uncommon 30-130-block chambers,
+20+ tall, multi-level, waterfall springs, lava at the bottom) and the
+skeleton shooting fix (a real raise-draw-release cycle and arrows that are
+actually visible at night — the Phase 14 entry claimed this fixed; the
+visible-cycle half was not)**
+
+---
+
+## TEMPORARY, MUST REMOVE (before Phase 20)
+
+- **The spawn test chest** (`TEST_CHEST` in config.js, default true;
+  placement in main.js right after prebuild): a chest at the player's spawn
+  point holding 10 obsidian, 1 flint and steel, 1 diamond pickaxe and
+  1 iron sword, so the portal and Nether can be tested without a full
+  playthrough. Delete the config flag and the main.js block together.
 
 ---
 
@@ -1230,6 +1245,224 @@ Phase 14 (this session) additions, one entry per file:
   constants); MOBS.PASSIVE added; LIGHTING.HELD_LIGHT/HELD_LIGHT_TINT;
   INTERACTION.HAND.OFFHAND_*; UI.PLAYER_PREVIEW.
 
+Phase 15 (this session) additions, one entry per file:
+- `src/dimensions/portals.js` — the Nether portal, four parts:
+  (1) **Pure frame detection** (node-tested): `detectFrame(getBlock, x, y,
+  z)` from any candidate interior cell — falls to the bottom row, slides to
+  the low end, walks the interior upward — accepting axis-aligned obsidian
+  rectangles with full bottom/top bars and side columns, corners optional
+  (excluded from validation entirely), interior from 2x3 (the SPEC 4x5
+  outer minimum) up to `PORTALS.MAX_INTERIOR` 21, all-air inside.
+  (2) **Lighting + break-down**: `tryIgnite(target)` lights the frame
+  around the cell in front of the clicked face (interaction.js routes a
+  flint-and-steel right click here; a successful light wears the tool 1);
+  interiors fill with NETHER_PORTAL blocks and the portal registers in a
+  per-dimension registry (kept HERE, not swapped — travel needs both sides
+  at once; every portal in a run passes through lightFrame, so the registry
+  is complete). Any frame or interior cell disturbed (mined obsidian,
+  explosion, falling block) winks the whole portal out via the block
+  listener; obsidian stays and can be re-lit.
+  (3) **Travel**: standing in portal blocks (feet or eye cell) for
+  `NETHER_STAND_SECONDS` 3 travels — coordinates divide by 8 entering the
+  Nether and multiply by 8 leaving (SPEC); the destination reuses a
+  registered portal within `LINK_SEARCH_RADIUS` 32 of the scaled point or
+  builds a fresh minimum frame standing on local ground (the bottom bar
+  replaces the surface row, so the player walks out flush) and lights it;
+  arrival is inside the destination portal with an arrival hold (no
+  re-trigger until the player steps out), velocity zeroed, fallDistance
+  cleared, the CAMERA snapped to the arrival eye (the controller re-derives
+  it next frame; without the snap, the rest of the travel frame streamed
+  and rendered from the stale pre-travel position — for far-from-origin
+  portals that unloaded the freshly prebuilt arrival meshes), and a
+  synchronous `world.prebuild` so the player never lands in void.
+  (4) **Particles + ambience**: a pooled THREE.Points cloud (additive
+  purple sprites, per-particle drift/fade) respawning off active portal
+  cells within range of the player, and the procedural WebAudio layer —
+  proximity hum, ignition shimmer, travel whoosh (the combat synth
+  pattern; no audio assets exist, every failure silent).
+- `src/dimensions/dimensions.js` — NEW: the dimension system. ONE World
+  instance (every system closed over it at boot); `switchTo(key)` swaps its
+  backing store — chunk map, generator, scene group, streaming position
+  (`world.swapState`) — and calls `swapDimensionState(stored)` on every
+  entity manager (items, mobs, falling, combat arrows, fluids queue,
+  furnace map, chest map). The swapped-out dimension keeps chunks, meshes
+  (hidden scene group), entities and container state in memory, completely
+  frozen, until it swaps back. Per-dimension defs carry the fixed-sky
+  profile (nether: config NETHER_SKY via dayNight.setDimensionSky) and the
+  natural-spawning flag (off in the placeholder Nether).
+- `src/dimensions/nether.js` — the PLACEHOLDER Nether generator: flat
+  netherrack (y 60..64) over bedrock (58..59), `biomeAt` 'nether', behind
+  the same generateChunk/heightAt/biomeAt interface TerrainGenerator
+  exposes. The real Nether replaces exactly this class next session.
+- `src/world/world.js` Phase 15 — constructor takes an optional `generator`;
+  `swapState(state)` exchanges chunks/generator/scene/streaming-position and
+  returns the previous store (dimensions.js owns the stores).
+- `src/world/fluids.js` Phase 15 — water meets lava (SPEC: obsidian on the
+  portal critical path): `hardenOnWaterContact` — a lava cell with water
+  above or beside becomes OBSIDIAN (source) or COBBLESTONE (flow/fall),
+  immediately on any block change (placing a water bucket against lava
+  hardens it the same frame — the setBlock listener chain lets the obsidian
+  shell cascade along the whole contact face), first-thing in processCell,
+  and via the settle scan for generated contacts (a waterfall pool reaching
+  a lava leak). Water below lava does NOT harden it (vanilla). Conversions
+  are real blocks (markModified true), unlike derived flow writes.
+- `src/world/caves.js` Phase 15 — the mega-cavern pass, DISTINCT from the
+  tunnel noise (the "caves are all narrow tunnels" report): a very-low-
+  frequency 2D region mask (`CAVES.MEGA.REGION_*`) gates where they exist
+  at all — ~9% of area, ~5 chambers per 1000x1000 blocks, uncommon but
+  findable — and inside a region a low-frequency squashed 3D field carves
+  where it exceeds a threshold that relaxes toward the region core and
+  ramps unreachable at the band edges (y -52..26, always far below the
+  surface; the ocean shield's colTop clamp already covers the band).
+  Chambers measure 30-130 blocks across and up to 20+ tall (census:
+  region max x-run 70, tallest interior column 22), stacked into multiple
+  levels where the field folds; the existing lava rules flood their floors
+  below y=10 (lakes below -54). Plus waterfall springs (`CAVES.WATERFALL`):
+  rare water columns pouring from upper cavern walls into a small floor
+  pool — water is still static, so the column IS the fall; per-chunk
+  seeded PRNG (the roll drawn unconditionally so the stream stays aligned),
+  in-chunk writes only, springs that never find a floor within MAX_FALL
+  are skipped. Everything still a pure function of (seed, x, y, z) —
+  re-verified byte-identical across generation orders.
+- `src/world/noise.js` — NEW (split): the carver's seeded noise machinery
+  (mulberry32, hashes, smoothstep/lerp/bilerp, 2D+3D simplex, fbm,
+  Field3D) moved VERBATIM out of caves.js per the ARCHITECTURE cap — the
+  mega pass would have pushed caves.js past it. A/B-verified zero output
+  differences over 37k samples. terrain.js keeps its own 2D copy on
+  purpose (independent testability, per its header).
+- `src/world/chunks.js` Phase 15 — portal rendering: a PASS_PORTAL bucket
+  whose material samples a GENERATED purple swirl canvas (no portal tile
+  ships in the atlas; generated art is the established pattern), scrolled
+  upward with a sideways wobble per un-paused frame
+  (`chunkMaterials.scrollPortal`, config PORTALS.SWIRL). `emitPortal`
+  renders each portal cell as the vanilla 4/16-thick slab — two DoubleSide
+  quads at 6/16 and 10/16 across the thin axis, axis read from same-row
+  portal neighbours (every interior cell has one; width >= 2), UVs in
+  WORLD coordinates so one seamless swirl spans multi-cell and
+  chunk-border portals. The material is deliberately unlit/un-patched —
+  the portal is an emissive surface (registry light 11 lights its
+  surroundings through the normal flood fill).
+- `src/render/lighting.js` Phase 15 — `dayNight.setDimensionSky(profile)`:
+  a fixed-sky override (config NETHER_SKY: fog colour/near/far, SKY_DARKEN
+  5, red SKY_TINT) applied at the end of every update while set — the dome
+  renders flat fog colour (exact horizon match, same no-tone-map reasoning
+  as ever), sun/moon hide, baked skylight holds a constant dusk. The clock
+  still advances underneath, so returning to the overworld lands at the
+  right time of day; passing null restores the cycle and the SKY fog
+  distances.
+- `src/entities/registry.js` — NEW (split): the MOB_TYPES registry moved
+  verbatim out of mobs.js — the mandated split the Phase 14 cap note
+  required before mobs.js could grow again.
+- `src/entities/mobs.js` Phase 15 — the skeleton shooting fix (the session
+  report overriding Phase 14's "fixed" claim — the state machine WAS
+  firing on a 2s cycle, but the aim pose held the arms permanently raised
+  with a 7-degree wind-up nobody could see, and arrows spawned at the eye
+  centre): the aim pose now follows the firing cycle — arms DOWN through
+  the cooldown, raised and drawn over DRAW_SECONDS (string arm folding
+  back 0.9 rad, bow arm lifting 0.25), released, lowered — and
+  `skeletonShoot` fires from the BOW's world position (getWorldPosition
+  refreshes ancestor matrices; eye fallback until the async mesh exists).
+  Plus the dimension hooks: `swapDimensionState` (mobs stored hidden +
+  frozen per dimension) and `setNaturalSpawning` (off in the placeholder
+  Nether).
+- `src/systems/combat.js` Phase 15 — arrow visibility (the "damage with no
+  projectile" half of the report): `lightTintAt` floors at
+  `COMBAT.ARROW.MIN_TINT` 0.45 — skeletons fire at night and underground,
+  where the raw curve (falloff^11+ ≈ 0.09) rendered the arrow as an
+  invisible black sliver on a black sky. Skeleton `ARROW_SPEED` eased 32
+  -> 24 (config) so the shot reads as a projectile with a visible arc; the
+  aim lead/lift maths compensate. `swapDimensionState` stores arrows per
+  dimension and cancels any draw in progress.
+- `src/player/interaction.js` Phase 15 — the right-click chain grows one
+  link: mob use > bucket scoop > use block > **flint-and-steel ignite** >
+  bucket place > armour equip. `onIgnite(target)` (main.js ->
+  portals.tryIgnite) runs from either hand via the active-hand rule; only
+  a successful ignition wears the tool (striking bare rock does nothing —
+  there is still no free-standing fire block). Sneak+use still bypasses
+  usable blocks first, so a frame built against a crafting table lights.
+- `src/entities/items.js` / `src/entities/falling.js` /
+  `src/systems/smelting.js` / `src/world/chests.js` Phase 15 — the
+  `swapDimensionState` hooks: dropped items and mid-fall blocks swap their
+  entity lists (meshes hidden, physics frozen); the furnace and chest maps
+  swap entries in place (exported Map identity preserved) so a Nether
+  furnace at (2, 65, 3) can never collide with an overworld one; stored
+  furnaces freeze mid-burn and resume on return.
+- `src/main.js` Phase 15 — per-dimension scene groups (a switch is one
+  visibility flip), dimensions + portals wiring (portals.onBlockChanged on
+  the listener list, onIgnite into interaction), death in the Nether
+  respawns at the OVERWORLD spawn (switchTo before stats.respawn), the
+  loop ticks portals.update and scrollPortal inside the pause gate, and
+  the TEMPORARY test chest (see the heading above) placed after prebuild
+  on a column whose surface is level with the player (leaves count as
+  solid — a bare offset could sit it on a canopy).
+- config Phase 15 — `PORTALS` grew MAX_INTERIOR / LINK_SEARCH_RADIUS /
+  SWIRL / PARTICLES / AMBIENCE; `NETHER.PLACEHOLDER` (floor 64, bedrock
+  58-59); `NETHER_SKY` grew SKY_DARKEN + SKY_TINT; `CAVES.MEGA` +
+  `CAVES.WATERFALL`; `MOBS.SKELETON` ARROW_SPEED 24 and the readable
+  DRAW_STRING_PULL 0.9 / DRAW_ARM_RAISE 0.25; `COMBAT.ARROW.MIN_TINT`;
+  `TEST_CHEST` (temporary, above).
+
+Phase 15 verification (zero console errors throughout): 26 node checks —
+16 frame-detection (the SPEC 4x5 minimum found from every interior cell,
+corners present and absent, z-axis frames, 1-wide/2-tall/oversized/broken
+frames rejected, junk-inside rejected, open air terminates, cell counts)
+and 10 obsidian (source -> obsidian beside and above water, flow ->
+cobblestone, water below inert, the flow FRONT hardening as lava spreads
+toward a pool with the source surviving, lava poured against water
+hardening immediately, pools intact throughout) — plus the generation
+censuses: mega-lattice sweep over 4096x4096 (9.2% gated area, ~5 chambers
+per 1000x1000, top sizes 50-130 across / 20-52 tall), real-chunk census
+(max x-run 70, tallest interior column 22, 1028 lava cells in the band,
+waterfalls present, ~5.2ms/chunk generation, chunk-order byte-identical)
+and the noise-split A/B (37k samples, zero differences). In headless
+Chromium, 61 checks: boot (zero errors, overworld active, test chest
+present with exactly the kit); the portal round trip END TO END (frame
+built + lit via tryIgnite, portal blocks + registry, stand timer running
+at 1.5s and travel at 3s, arrival INSIDE the linked portal on netherrack
+with coordinates /8, arrival hold — 4 more seconds standing there does
+NOT bounce back, step out + re-enter returns *8 to within 4 blocks of the
+original portal which is REUSED not duplicated, breaking a frame block
+clears the interior and deregisters); the far-from-origin trip (a portal
+at x=800: camera snapped to the arrival eye, the arrival chunk meshed the
+same frame — the stale-camera review finding); flint and steel through
+the REAL input chain under real pointer lock (right press -> portal lit,
+tool worn to 63); the skeleton cycle (4 raise-draw-release cycles in 9s,
+drawTime ramping to 1.0, aimBlend oscillating 0 -> 1 -> 0 — arms
+genuinely lower between shots, every arrow mesh visible with tint exactly
+the 0.45 floor at midnight); the mega cavern entered in the live game (a
+34-wide run with a 20-tall vault, 905 lava + 7 water cells in its region,
+torch-lit screenshot); and dimension isolation (a dropped diamond, a cow
+and a BURNING furnace stored away on switch — counts 0, models hidden,
+furnace map empty; nether edits and drops invisible from the overworld
+and vice versa; on return everything restored, the furnace having smelted
+NOTHING while frozen and resuming on return). Screenshots verify the
+look: the lit frame with the animated purple swirl and drifting particles
+on open grass, the flat red-fog Nether with the linked portal standing on
+netherrack, the skeleton mid-draw at night, the torch-lit cavern vault.
+
+The Phase 15 review (a systematic pass over the full diff after the
+feature suites were green) confirmed and fixed:
+- **The travel frame streamed and rendered from the stale pre-travel
+  camera** (the controller only re-derives the camera from the body on the
+  next player.update, which runs BEFORE portals.update in the loop): for
+  portals far from the origin, updateStreaming's unload pass disposed the
+  freshly prebuilt arrival meshes and the frame rendered void. travel()
+  now snaps the camera to the arrival eye before prebuilding; verified by
+  the far-portal browser test above.
+- **The test chest could sit on a tree canopy** (leaves are solid to
+  getHighestSolidY): placement now searches nearby columns for a surface
+  level with the player.
+- **A portal spanning a chunk border seamed its swirl** (UVs were
+  chunk-local): portal UVs are world-space now.
+Everything else surveyed clean: the mesher's PASS_NONE culling rule
+already handles portal neighbours (the Phase 10 fix), explosions already
+spare portals (hardness null) and their frames (obsidian above the blast
+cap), lava spread only fills air so it can never invade a portal, fluids
+may not be placed into portal cells (not replaceable), the frame-fill
+order can't self-destroy a lighting portal (registration follows the
+fill), and the swap protocol preserves every exported collection's
+identity.
+
 Phase 14 verification (zero console errors throughout): 71 node checks —
 15 core (the exact required food table incl. cooked-beats-raw and the
 golden-apple/rotten-flesh flags; offhand swap/consume/replace/damage/
@@ -1871,8 +2104,39 @@ suites + the reviewers' own probes), zero console errors.
 ## Partially built
 
 - Remaining stub modules with responsibility headers: entities/dragon.js,
-  systems/brewing.js, dimensions/ (entities/entity.js, pathfinding.js,
-  models.js, mobs.js are real as of Phase 12; systems/combat.js as of 13).
+  systems/brewing.js, dimensions/end.js, dimensions/stronghold.js
+  (entities/entity.js, pathfinding.js, models.js, mobs.js are real as of
+  Phase 12; systems/combat.js as of 13; dimensions/portals.js and
+  dimensions/dimensions.js as of 15 — dimensions/nether.js exists but is
+  the Phase 15 placeholder generator).
+- Phase 15 deliberate slices:
+  - **The Nether is a placeholder**: a flat netherrack plain (bedrock
+    floor, fixed red sky, no ceiling, no mobs, no natural spawning). The
+    real generation — caverns, lava oceans, soul sand, glowstone, quartz,
+    fortresses, blazes, ghasts, the widened/faster lava automaton — is the
+    next session, replacing PlaceholderNetherGenerator behind the same
+    interface. All dimensions share the overworld chunk shape (16x384x16);
+    the Nether's y 0..128 simply generates inside it (no per-dimension
+    world heights, no bedrock ceiling yet).
+  - Linked-portal placement uses the destination's highest solid column —
+    a return portal whose scaled point lands in an ocean builds on the sea
+    floor (arrive swimming), and the search ignores Y entirely (a portal
+    60 blocks below at the same x/z can win the link). Vanilla is also
+    crude here; refine with the real Nether if it grates.
+  - Portal blocks stop falling sand/gravel (they pop off as items, the
+    torch rule) instead of letting them fall through like vanilla; mobs
+    never use portals (nothing to travel to yet); items/arrows sitting in
+    a portal don't travel either — only the player does.
+  - The portal ambience hum keeps sounding through the Esc pause (one
+    quiet loop; every other sound is a one-shot). The pause gate freezes
+    the swirl/particles/timer correctly.
+  - Waterfall springs exist only inside mega caverns and water remains
+    static everywhere — the column IS the fall. Real flowing water (and
+    rivers, still the one unplaced SPEC world feature) remains future
+    work; the fluids automaton generalises when it comes.
+  - Exiting lava in the Nether restores the OVERWORLD fog for one frame
+    before the dimension override rewrites it (edge-triggered restore vs
+    per-frame override — invisible in practice).
 - Phase 14 deliberate slices:
   - Mobs (like items and arrows before them) FREEZE in unloaded chunks —
     a passive herd left 500 blocks behind holds its position and state
@@ -2051,10 +2315,41 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
+- **The next session is the real Nether.** Replace
+  `PlaceholderNetherGenerator` (dimensions/nether.js) behind the same
+  generateChunk/heightAt/biomeAt interface: netherrack caverns, lava
+  oceans, soul sand, glowstone, nether quartz ore, the bedrock ceiling at
+  128, fortresses with blazes (+ ghasts, nether wart for brewing). The
+  portal side needs NOTHING new — travel, linking and the red sky all
+  already run against whatever the generator produces. Remember the
+  Phase 12 note: vanilla Nether lava spreads twice as far and ticks twice
+  as fast (widen FLUIDS.LAVA_RANGE / halve the tick per dimension — a
+  per-dimension override the fluids swap could carry).
+- Phase 15 APIs: `dimensions.switchTo(key)` / `activeKey`
+  (dimensions/dimensions.js) is the only dimension entry point — managers
+  participate via `swapDimensionState(stored)`; ANY new per-frame system
+  that keeps world-coordinate state must implement it and be added to the
+  managers list in main.js, or its state will leak across dimensions.
+  `portals.registry` (per-dimension), `portals.tryIgnite(target)`,
+  `portals.standFraction` (a HUD vignette hook if wanted).
+  `dayNight.setDimensionSky(profile)` takes any NETHER_SKY-shaped config
+  block — the End's purple sky is the same mechanism.
+  `world.swapState` is dimensions.js's tool; nothing else should call it.
+  Mob spawning per dimension: `mobs.setNaturalSpawning(bool)` today; the
+  real Nether wants per-dimension spawn TABLES instead — extend the
+  dimension defs with a mob list and teach spawning.js to read it rather
+  than hard-coding the overworld pools.
+- The skeleton report is genuinely closed this time (visible
+  raise-draw-release + arrows floored at MIN_TINT 0.45, verified by
+  browser sampling); if a future report contradicts PROGRESS again,
+  believe the report — the Phase 14 harness proved internal state, not
+  what a player sees.
+- world/chunks.js is exactly AT the ~800 cap — the next session that
+  grows it must split the special-shape emitters (torch/lava/portal) out
+  first (see ARCHITECTURE.md).
 - With the survival loop closed, the remaining SPEC arc is the endgame:
-  the Nether (portal + netherrack world + blaze/ghast + blaze rods),
-  brewing, the stronghold + eyes of ender, the End and the dragon. The
-  next natural phase is the Nether portal + dimension.
+  the Nether (now: generation + its mobs), brewing, the stronghold + eyes
+  of ender, the End and the dragon.
 - Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
   right-click-on-mob hook (extend for wheat-luring/breeding). Passive
   types: `ai: 'passive'` + optional `wool`/`laysEggs`/`maxFallSpeed`/
@@ -2301,4 +2596,5 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 11 | Full survival stats (player/stats.js): hunger 20 + hidden saturation + exhaustion from activity (sprint/swim/jump/damage/regen), natural regen at hunger>=18 costing exhaustion (the eat-to-heal loop), starvation to the SPEC 1-heart floor, fall damage 1 heart/block beyond 3 via body.lastLanding, drowning 2/s at breath 0, lava contact + 15s burning DoT that water extinguishes, cactus contact with knockback (applyKnockback API for combat), death screen with Respawn button + inventory dropped at the death site (open screens close first, dead players collect nothing) + respawn at world spawn; hunger drumstick HUD row (right-to-left) with breath bubbles moved above; eating: hold right click ~1.6s with nibble hand animation, FOODS registry (vanilla hunger/saturation, cooked > raw, stew leaves a bowl). Bug fixes: torch box model (2x10px floor post + 22.5-degree wall variants, ids 57-60, face-aware placement, solid-support requirement, support-break pop, atlas-sprite item visuals), buckets scoop/place water and lava (fluid-aware raycast, one action per press), dropped sprite items extruded 1px thick, block icons redrawn in true dimetric proportions (~11% taller), click-outside-panel throws the cursor stack (left all / right one), cave entrances ~3x more common (census-tuned), canopies a layer deeper with hash-kept corners. 44 node + 22 browser checks + screenshot suite, zero console errors; adversarial 5-lens review with per-finding verification | Brewing stand; mobs + combat (armour equip/reduction, attack/break exhaustion, WEAPON_DAMAGE consumer); rivers; Q-drop; fire overlay visual; eating doesn't slow movement |
 | 12 | Entity foundation: base entity (entities/entity.js — swept-AABB physics with 1-block step-up, water/lava handling, health/knockback/hurt/death timers, despawn rules, unloaded-chunk freeze), budgeted A* pathfinding (entities/pathfinding.js — step up 1, drops capped at 3, lava/cactus avoided, 500-expansion budget with closest-approach fallback), mob spawning framework (entities/mobs.js — ring 24..96, solid opaque ground, hostile light <= 7 via new world.getLight + dayNight.skyDarken, passive >= 9 on grass, caps from config), box-model mob system (entities/models.js — standard entity unwrap from the real sheets, mirrored legacy limbs, pivot rigs, per-instance tint materials), walking limb swing + head tracking + body-yaw easing + baked-light tinting + red hurt flash + death fall-over, player melee via crosshair mob raycast with WEAPON_DAMAGE, mob melee biting through stats.damage/applyKnockback; placeholder mob (zombie stats/skin) proves spawn->pursue->bite->hit->die->drops. Bug fixes: true Esc pause (everything freezes — physics, momentum, day/night, entities, break progress, furnaces; input dead while paused; Esc/click resumes), flowing lava (world/fluids.js: pour-first spread 3 with descending partial-height animated rendering, falls, recedes, settles generated leaks), crack overlay exactly on the face via polygonOffset, fall damage halved to vanilla (0.5 hearts/block past 3), starvation floor 5 hearts (Easy). 26 node + browser suites (pause/mob/lava/visual), zero console errors; adversarial multi-lens review with per-finding refutation | Real mob roster (zombie/skeleton/creeper/spider/enderman + passives, daylight burning, per-type AI split); combat polish (armour equip + reduction, attack/break exhaustion, mob-vs-mob); water flow; lava+water -> obsidian/cobble; entity-entity collision; mob sounds |
 | 13 | Hostile roster (zombie / skeleton / creeper / spider: per-type AI, daylight burning, weighted spawning, vanilla box models); combat system (weapon damage with 1.9 cooldown scaling + falling crits, player bow with draw-scaled arrows, arrow projectiles both ways, creeper explosions with block destruction); armour (four equip slots, SPEC damage reduction, durability wear, HUD bar, death drops); first-person hand split into player/hand.js | Passive herds; enderman/blaze/ghast with their dimensions; skeleton bow render + shot pacing polish; mob-vs-mob combat beyond explosions |
-| 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), mobs frozen in unloaded chunks, models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end; 5-lens adversarial review with all 11 confirmed findings fixed | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers |
+| 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), mobs frozen in unloaded chunks, models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end; 5-lens adversarial review with all 11 confirmed findings fixed | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers; the skeleton "fix" proved internal-state-only — the visible cycle landed in Phase 15 |
+| 15 | Portal mechanics: obsidian frame detection (SPEC 4x5 minimum, corners optional, node-tested pure logic), flint-and-steel lighting with durability wear through the real right-click chain, animated generated-swirl portal blocks (world-space UVs, emissive light 11), purple portal particles + procedural hum/shimmer/whoosh, 3s stand-to-travel with 1:8 coordinate scaling, linked portal reuse within 32 blocks or creation flush on local ground, portal break-down via the block listener; the dimension system (dimensions/dimensions.js): one World whose backing store swaps, per-dimension scene groups, every entity manager swapping collections (items/mobs/falling/arrows/fluids/furnaces/chests — frozen + hidden while stored, furnaces provably not smelting), fixed dimension skies (setDimensionSky), Nether death respawning at the overworld spawn; the placeholder flat-netherrack Nether; water+lava -> obsidian/cobblestone (immediate on contact, fluids.js); the distinct mega-cavern pass + waterfall springs (world/noise.js split, byte-identical); the skeleton shooting fix (raise-draw-release cycle, bow-position arrows, MIN_TINT night visibility, visible arc at speed 24); MOB_TYPES -> entities/registry.js (mandated split); TEMPORARY test chest behind config TEST_CHEST; 26 node + 61 browser checks, review fixes (stale-camera travel frame, canopy chest, portal UV seam) | The real Nether generation + blazes/ghasts (placeholder replaced next session); nether portal ceiling-height placement niceties (ocean-floor return portals, Y-blind link search); mobs/items never travel portals; brewing, stronghold, End, dragon |

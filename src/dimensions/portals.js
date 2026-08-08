@@ -195,7 +195,12 @@ function sweep({ seconds, volume, from, to }) {
 // `dimensions` is dimensions/dimensions.js (activeKey + switchTo); `world`
 // is the single World instance whose guts the switch swaps; `player` the
 // controller (body teleports on travel); `stats` gates travel while dead.
-export function createPortals({ world, scene, player, stats, dimensions }) {
+// `camera` is snapped to the arrival eye during travel — the controller
+// only re-derives it from the body on the NEXT player.update, and the rest
+// of this frame (chunk streaming, the render) must not run from the stale
+// pre-travel position, which would unload the freshly prebuilt arrival
+// meshes and draw one frame of void.
+export function createPortals({ world, scene, player, stats, camera, dimensions }) {
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
   const registry = { overworld: [], nether: [] };
   let standTimer = 0;
@@ -335,6 +340,7 @@ export function createPortals({ world, scene, player, stats, dimensions }) {
     body.velocity.y = 0;
     body.velocity.z = 0;
     body.fallDistance = 0;
+    camera.position.set(p.x, p.y + PLAYER.EYE_HEIGHT, p.z);
     arrivalHold = true;
     standTimer = 0;
     world.prebuild(p); // the arrival area meshes before the next frame

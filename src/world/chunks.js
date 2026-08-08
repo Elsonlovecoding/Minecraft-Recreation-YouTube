@@ -581,7 +581,9 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
       bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
       bucket.count += 4;
     };
-    const along = alongX ? lx : lz; // u continuity across the plane
+    // u continuity in WORLD coordinates so a portal spanning a chunk border
+    // carries one seamless swirl across it.
+    const along = alongX ? chunk.cx * SIZE + lx : chunk.cz * SIZE + lz;
     for (const off of [PORTAL_PLANE_MIN, PORTAL_PLANE_MAX]) {
       const corners = [];
       const uvs = [];
