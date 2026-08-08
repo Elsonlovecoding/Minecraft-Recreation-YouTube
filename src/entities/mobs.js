@@ -1,11 +1,11 @@
-// entities/mobs.js — the mob manager and registry. Per-mob stats + drops
-// from SPEC.md (box-model geometry lives in entities/models.js), the
-// hostile AI state machines, walk/head animation over the models.js rigs,
-// daylight burning, and the player-attack raycast. Damage TO the player
-// routes through the injected combat system (systems/combat.js) so armour
-// reduction applies; skeleton arrows and creeper explosions are combat's
-// machinery too. Phase 14 splits (ARCHITECTURE cap): natural spawning lives
-// in entities/spawning.js, passive behaviour in entities/passive.js.
+// entities/mobs.js — the mob manager. The hostile AI state machines,
+// walk/head animation over the models.js rigs, daylight burning, and the
+// player-attack raycast. Damage TO the player routes through the injected
+// combat system (systems/combat.js) so armour reduction applies; skeleton
+// arrows and creeper explosions are combat's machinery too. Splits per the
+// ARCHITECTURE cap: natural spawning lives in entities/spawning.js, passive
+// behaviour in entities/passive.js, and (Phase 15) the MOB_TYPES registry —
+// per-mob stats and drops — in entities/registry.js.
 //
 // The roster (SPEC mob tables):
 //   zombie    walks at the player, melee bites, burns in daylight
@@ -21,11 +21,8 @@ import * as THREE from 'three';
 import { MOBS, COMBAT, LIGHTING, PLAYER, CHUNK } from '../config.js';
 import { Entity } from './entity.js';
 import { findPath } from './pathfinding.js';
-import {
-  createMobModel, attachOverlayModel, HUMANOID_MODEL, SKELETON_MODEL,
-  CREEPER_MODEL, SPIDER_MODEL, SPIDER_LEG_POSE, COW_MODEL, PIG_MODEL,
-  SHEEP_MODEL, SHEEP_WOOL_MODEL, CHICKEN_MODEL,
-} from './models.js';
+import { createMobModel, attachOverlayModel, SPIDER_LEG_POSE } from './models.js';
+import { MOB_TYPES } from './registry.js';
 import { createSpawner } from './spawning.js';
 import { createPassiveBehaviour } from './passive.js';
 import { rayAABB, lineOfSight } from '../systems/combat.js';
@@ -33,185 +30,7 @@ import { createExtrudedItemMesh } from './items.js';
 import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
 import { blockDef } from '../world/blocks.js';
 
-// ---------------------------------------------------------------------------
-// Mob registry — stats and drops are the SPEC.md hostile table, exactly.
-// ---------------------------------------------------------------------------
-
-export const MOB_TYPES = {
-  zombie: {
-    name: 'zombie',
-    ai: 'zombie',
-    anim: 'biped',
-    hostile: true,
-    spawnWeight: 100,
-    texture: 'assets/entity/zombie_zombie.png',
-    textureSize: [64, 64],
-    model: HUMANOID_MODEL,
-    pose: { rightArm: { x: Math.PI / 2 }, leftArm: { x: Math.PI / 2 } },
-    width: 0.6,
-    height: 1.95,
-    clearance: 2,              // standing room in cells (pathfinding)
-    maxHealth: 20,             // SPEC
-    speed: 2.3,                // blocks/s — the vanilla shamble
-    attackDamage: 3,           // SPEC
-    burnsInDaylight: true,
-    drops: [{ item: 'rotten_flesh', count: [0, 2] }],
-  },
-  skeleton: {
-    name: 'skeleton',
-    ai: 'skeleton',
-    anim: 'biped',
-    hostile: true,
-    spawnWeight: 100,
-    texture: 'assets/entity/skeleton_skeleton.png',
-    textureSize: [64, 32],
-    model: SKELETON_MODEL,
-    width: 0.6,
-    height: 1.99,
-    clearance: 2,
-    maxHealth: 20,             // SPEC
-    speed: 2.5,
-    attackDamage: 4,           // SPEC: 4 by arrow
-    burnsInDaylight: true,
-    drops: [
-      { item: 'bone', count: [0, 2] },
-      { item: 'arrow', count: [0, 2] },
-    ],
-  },
-  creeper: {
-    name: 'creeper',
-    ai: 'creeper',
-    anim: 'creeper',
-    hostile: true,
-    spawnWeight: 100,
-    texture: 'assets/entity/creeper_creeper.png',
-    textureSize: [64, 32],
-    model: CREEPER_MODEL,
-    width: 0.6,
-    height: 1.7,
-    clearance: 2,
-    maxHealth: 20,             // SPEC
-    speed: 2.5,
-    attackDamage: 22,          // SPEC: 22 at the explosion's centre
-    drops: [{ item: 'gunpowder', count: [0, 2] }],
-  },
-  spider: {
-    name: 'spider',
-    ai: 'spider',
-    anim: 'spider',
-    hostile: true,
-    spawnWeight: 100,
-    texture: 'assets/entity/spider_spider.png',
-    textureSize: [64, 32],
-    model: SPIDER_MODEL,
-    width: 1.2,                // a touch under the vanilla 1.4 so cave
-                               // corridors don't jam it (climbing recovers)
-    height: 0.9,
-    clearance: 1,              // fits through 1-block gaps
-    maxHealth: 16,             // SPEC
-    speed: 3.2,                // fast
-    attackDamage: 2,           // SPEC
-    headHeightFraction: 0.6,   // eye sits low on the flat body
-    drops: [{ item: 'string', count: [0, 2] }],
-  },
-
-  // --- the passive herds (Phase 14). Stats from the SPEC passive table;
-  // meat item ids follow the texture names (beef, porkchop, mutton,
-  // chicken — what the smelting recipes and food registry expect). `speed`
-  // is the panic-flee speed; wandering ambles at a fraction of it
-  // (config MOBS.PASSIVE). Temperate texture variants per the session note.
-  cow: {
-    name: 'cow',
-    ai: 'passive',
-    anim: 'quadruped',
-    hostile: false,
-    spawnWeight: 100,
-    texture: 'assets/entity/cow_temperate_cow.png',
-    textureSize: [64, 64],
-    model: COW_MODEL,
-    width: 0.9,
-    height: 1.4,
-    clearance: 2,
-    maxHealth: 10,             // SPEC
-    speed: 2.0,
-    headHeightFraction: 0.9,
-    drops: [
-      { item: 'beef', count: [1, 3] },     // SPEC raw_beef
-      { item: 'leather', count: [0, 2] },  // SPEC leather
-    ],
-  },
-  pig: {
-    name: 'pig',
-    ai: 'passive',
-    anim: 'quadruped',
-    hostile: false,
-    spawnWeight: 100,
-    texture: 'assets/entity/pig_temperate_pig.png',
-    textureSize: [64, 64],
-    model: PIG_MODEL,
-    width: 0.9,
-    height: 0.9,
-    clearance: 1,
-    maxHealth: 10,             // SPEC
-    speed: 2.0,
-    headHeightFraction: 0.8,
-    drops: [{ item: 'porkchop', count: [1, 3] }], // SPEC raw_porkchop
-  },
-  sheep: {
-    name: 'sheep',
-    ai: 'passive',
-    anim: 'quadruped',
-    hostile: false,
-    spawnWeight: 100,
-    texture: 'assets/entity/sheep_sheep.png',
-    textureSize: [64, 32],
-    model: SHEEP_MODEL,
-    // The wool coat renders as an overlay model on its own sheet, hidden
-    // while sheared (entities/passive.js owns shear/regrow).
-    overlay: {
-      texture: 'assets/entity/sheep_sheep_wool.png',
-      textureSize: [64, 32],
-      model: SHEEP_WOOL_MODEL,
-    },
-    wool: true,
-    width: 0.9,
-    height: 1.3,
-    clearance: 2,
-    maxHealth: 8,              // SPEC
-    speed: 2.0,
-    headHeightFraction: 0.9,
-    // SPEC: wool + raw_mutton — but a sheared sheep has no wool to give.
-    dropsFor: (mob) => [
-      { item: 'mutton', count: [1, 2] },
-      ...(mob.sheared ? [] : [{ item: 'white_wool', count: 1 }]),
-    ],
-    drops: [],                 // superseded by dropsFor (kept for tooling)
-  },
-  chicken: {
-    name: 'chicken',
-    ai: 'passive',
-    anim: 'chicken',
-    hostile: false,
-    spawnWeight: 100,
-    texture: 'assets/entity/chicken_temperate_chicken.png',
-    textureSize: [64, 32],
-    model: CHICKEN_MODEL,
-    laysEggs: true,
-    // The wing-flap slow fall: a per-type fall cap the physics step clamps
-    // (entities/entity.js) — frame-rate exact, unlike an AI-side clamp.
-    maxFallSpeed: MOBS.PASSIVE.CHICKEN.FALL_SPEED,
-    width: 0.4,
-    height: 0.7,
-    clearance: 1,
-    maxHealth: 4,              // SPEC
-    speed: 1.75,
-    headHeightFraction: 0.95,
-    drops: [
-      { item: 'chicken', count: 1 },       // SPEC raw_chicken
-      { item: 'feather', count: [0, 2] },  // SPEC feather
-    ],
-  },
-};
+// MOB_TYPES (stats/drops) lives in entities/registry.js as of Phase 15.
 
 // ---------------------------------------------------------------------------
 // Small angle helpers (animation)
@@ -279,6 +98,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       passive: null,
       sheared: false,
       woolPivots: null,
+      bowGroup: null,
     };
     // The sheep's wool coat: a second sheet's model riding the same rig.
     if (type.overlay) {
@@ -314,6 +134,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       bow.position.set(...S.BOW_OFFSET);
       bow.rotation.set(...S.BOW_TILT);
       parts.leftArm.add(bow);
+      mob.bowGroup = bow; // arrows leave from here (Phase 15)
     }
     applyPose(mob);
     mobs.push(mob);
@@ -508,9 +329,19 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   }
 
   // Fire an arrow with lead: aim where the player is heading, lifted for
-  // the gravity arc over the flight time.
-  function skeletonShoot(mob, from) {
+  // the gravity arc over the flight time. The arrow leaves from the BOW in
+  // the skeleton's hand (Phase 15 — it used to pop out of the eye centre),
+  // falling back to the eye until the async bow mesh exists.
+  const bowWorldPos = new THREE.Vector3();
+  function skeletonShoot(mob, eye) {
     const S = MOBS.SKELETON;
+    let from = eye;
+    if (mob.bowGroup) {
+      // getWorldPosition refreshes the ancestor matrices itself, so this is
+      // the bow's exact position under the current draw pose.
+      mob.bowGroup.getWorldPosition(bowWorldPos);
+      from = { x: bowWorldPos.x, y: bowWorldPos.y, z: bowWorldPos.z };
+    }
     const t = player.body.position;
     const v = player.body.velocity;
     const target = {
@@ -643,8 +474,13 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     if (mob.parts.rightLeg) mob.parts.rightLeg.rotation.x = swing;
     if (mob.parts.leftLeg) mob.parts.leftLeg.rotation.x = -swing;
     // Arms counter-swing over their pose (the zombie's stay raised, swaying
-    // a little); an aiming skeleton raises both toward the player instead.
-    const aimTarget = mob.aiming && !mob.entity.dead ? 1 : 0;
+    // a little). The skeleton's shooting cycle (Phase 15 — the "no shooting
+    // animation" report): the arms stay DOWN through the cooldown and rise
+    // into the aim only while the draw itself runs, so every shot reads as
+    // raise -> draw over ~1s -> release -> lower, instead of a permanently
+    // frozen aim pose whose wind-up was a barely visible 7-degree twitch.
+    const aimTarget =
+      mob.aiming && mob.shootCooldown === 0 && !mob.entity.dead ? 1 : 0;
     mob.aimBlend += (aimTarget - mob.aimBlend) *
       (1 - Math.exp(-MOBS.LIMB_SWING_FADE_RATE * dt));
     const armSwing = swing * (pose.rightArm ? MOBS.POSED_ARM_SWAY : 1);
@@ -827,11 +663,35 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     return best;
   }
 
+  // --- dimension switch (Phase 15) -----------------------------------------
+
+  // Swap the live mob list for another dimension's stored one (the
+  // dimensions/dimensions.js manager protocol): stored mobs stay in the
+  // scene hidden and completely frozen. The exported `mobs` array keeps
+  // its identity. Natural spawning is per dimension — the placeholder
+  // Nether spawns nothing until its own mobs arrive next session.
+  let naturalSpawning = true;
+
+  function swapDimensionState(stored = []) {
+    const prev = mobs.slice();
+    for (const m of prev) m.group.visible = false;
+    mobs.length = 0;
+    for (const m of stored) {
+      m.group.visible = true;
+      mobs.push(m);
+    }
+    return prev;
+  }
+
+  function setNaturalSpawning(on) {
+    naturalSpawning = !!on;
+  }
+
   // --- per-frame update ----------------------------------------------------
 
   function update(dt) {
     if (dt <= 0) return;
-    spawner.update(dt);
+    if (naturalSpawning) spawner.update(dt);
 
     const playerPos = player.body.position;
     for (let i = mobs.length - 1; i >= 0; i--) {
@@ -901,6 +761,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     update,
     raycast,
     useOnMob,  // right-click items on mobs (shears -> sheep)
+    swapDimensionState,
+    setNaturalSpawning,
     spawnAt,   // dev/test scaffolding: __mobs.spawnAt(__mobs.types.zombie, x, y, z)
     types: MOB_TYPES,
     mobs,      // read-only by convention (debug/tests)

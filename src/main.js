@@ -2,7 +2,9 @@
 // the streamed chunk terrain and the player controller together.
 
 import * as THREE from 'three';
-import { DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING } from './config.js';
+import {
+  DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, TERRAIN, TEST_CHEST,
+} from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
 import {
@@ -19,8 +21,11 @@ import { createFluids } from './world/fluids.js';
 import { createChests } from './world/chests.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
-import { createInventory } from './player/inventory.js';
+import { createInventory, itemMaxDurability } from './player/inventory.js';
 import { createStats } from './player/stats.js';
+import { createDimensions } from './dimensions/dimensions.js';
+import { createPortals } from './dimensions/portals.js';
+import { PlaceholderNetherGenerator } from './dimensions/nether.js';
 import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
@@ -56,7 +61,15 @@ async function init() {
   // Phase 12: kept in a named binding — the loop drives the animated
   // flowing-lava texture through chunkMaterials.scrollLava.
   const chunkMaterials = createChunkMaterials(atlasTexture);
-  world.bindScene(scene, chunkMaterials);
+  // Phase 15: each dimension's chunk meshes live in their own group, so a
+  // dimension switch is one visibility flip — the swapped-out world's
+  // meshes stay in memory, hidden, exactly as they were.
+  const overworldGroup = new THREE.Group();
+  const netherGroup = new THREE.Group();
+  netherGroup.visible = false;
+  scene.add(overworldGroup);
+  scene.add(netherGroup);
+  world.bindScene(overworldGroup, chunkMaterials);
 
   // Phase 5: the player — spawned safely on the surface, camera at eye
   // height. The old fly camera lives behind DEBUG.FLY_TOGGLE_CODE.
@@ -123,6 +136,7 @@ async function init() {
     world, scene, player, stats, inventory, items, dayNight,
     getMobs: () => mobs,
   });
+  let portals; // assigned below — clicks can only arrive long after init
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory, stats,
     // A mob in the crosshair intercepts left clicks (attack, not mine);
@@ -131,6 +145,8 @@ async function init() {
     // Right-clicking a mob (Phase 14): shears shear a sheep. `mobs` is
     // assigned below; clicks can only arrive long after init finishes.
     onUseMob: (mob, itemName) => mobs.useOnMob(mob, itemName),
+    // Flint and steel on a block face (Phase 15): light a portal frame.
+    onIgnite: (target) => portals.tryIgnite(target),
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -152,12 +168,48 @@ async function init() {
   });
   mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
 
+  // Phase 15: the dimension system — the overworld and the (placeholder)
+  // Nether, each keeping its own chunks and entities, switched between by
+  // the portal system. Every entity manager above participates via the
+  // swapDimensionState protocol.
+  const dimensions = createDimensions({
+    world, dayNight, mobs,
+    managers: [items, mobs, falling, combat, fluids, smelting, chests],
+    defs: {
+      overworld: { group: overworldGroup, sky: null, spawning: true },
+      nether: {
+        group: netherGroup,
+        sky: NETHER_SKY,
+        spawning: false, // the real Nether's mobs arrive next session
+        makeGenerator: () => new PlaceholderNetherGenerator(TERRAIN.SEED),
+      },
+    },
+  });
+  portals = createPortals({ world, scene, player, stats, dimensions });
+  world.addBlockListener(portals.onBlockChanged);
+
   const buildStart = performance.now();
   world.prebuild(camera.position);
   console.log(
     `[world] prebuilt ${world.streamStats().meshed} chunk meshes in ` +
     `${(performance.now() - buildStart).toFixed(0)}ms`,
   );
+
+  // TEMPORARY, MUST REMOVE BEFORE PHASE 20 (config TEST_CHEST): a chest at
+  // the spawn point stocked for portal/Nether testing without a full
+  // playthrough — 10 obsidian, flint and steel, diamond pickaxe, iron sword.
+  if (TEST_CHEST) {
+    const p = player.body.position;
+    const tcx = Math.floor(p.x) + 2;
+    const tcz = Math.floor(p.z);
+    const tcy = world.getHighestSolidY(tcx, tcz) + 1;
+    world.setBlock(tcx, tcy, tcz, BLOCK.CHEST);
+    const chest = chests.chestAt(tcx, tcy, tcz);
+    chest.container.addStack({ name: 'obsidian', count: 10 });
+    for (const name of ['flint_and_steel', 'diamond_pickaxe', 'iron_sword']) {
+      chest.container.addStack({ name, count: 1, durability: itemMaxDurability(name) });
+    }
+  }
 
   // Terrain diagnostics (dev scaffolding — they make regressions visible)
   logTerrainProfile(world);
@@ -180,12 +232,19 @@ async function init() {
   window.__stats = stats;
   window.__smelting = smelting;
   window.__chests = chests;
+  window.__dimensions = dimensions;
+  window.__portals = portals;
 
   initDebug();
   initHud(inventory);
   screens = createScreens({
     inventory, canvas, items, player, camera,
-    onRespawn: () => stats.respawn(),
+    // Dying in the Nether respawns at the OVERWORLD spawn point (Phase 15):
+    // the dimension switches home before the respawn teleport.
+    onRespawn: () => {
+      dimensions.switchTo('overworld');
+      stats.respawn();
+    },
   });
   window.__screens = screens;
 
@@ -258,7 +317,9 @@ async function init() {
       stats.update(delta);
       screens.update(delta);  // furnace flame/arrow indicators
       fluids.update(delta);   // lava spread steps + new-chunk settling
+      portals.update(delta);  // stand-in-portal travel, particles, ambience
       chunkMaterials.scrollLava(delta); // animated flowing-lava texture
+      chunkMaterials.scrollPortal(delta); // animated portal swirl
     }
     world.updateStreaming(camera.position); // terrain loads even while paused
     // delta 0 while paused: the palette still applies, time doesn't advance.

@@ -11,8 +11,10 @@ import { BLOCK, isSolid } from './blocks.js';
 const SIZE = CHUNK.SIZE;
 
 export class World {
-  constructor({ seed = TERRAIN.SEED } = {}) {
-    this.generator = new TerrainGenerator(seed);
+  // `generator` (Phase 15): any object with generateChunk/heightAt/biomeAt —
+  // the overworld default, or a dimension generator (dimensions/nether.js).
+  constructor({ seed = TERRAIN.SEED, generator = null } = {}) {
+    this.generator = generator ?? new TerrainGenerator(seed);
     this.chunks = new Map(); // "cx,cz" -> Chunk
     this.scene = null;       // set by bindScene once rendering starts
     this.materials = null;
@@ -117,6 +119,31 @@ export class World {
   // throw — an exception would stop later listeners from seeing the edit.
   addBlockListener(fn) {
     this._blockListeners.push(fn);
+  }
+
+  // Phase 15 (dimensions/dimensions.js): swap this world's backing store —
+  // chunk map, generator, scene group, streaming position — for another
+  // dimension's, returning the replaced store. Every system that closed
+  // over this World instance (player physics, interaction, managers, block
+  // listeners) now reads and writes the other dimension; the swapped-out
+  // dimension's chunks and meshes stay in memory untouched (its scene
+  // group is hidden by the caller) until it swaps back in.
+  swapState(state) {
+    const prev = {
+      chunks: this.chunks,
+      generator: this.generator,
+      scene: this.scene,
+      meshedCount: this.meshedCount,
+      pcx: this._pcx,
+      pcz: this._pcz,
+    };
+    this.chunks = state.chunks;
+    this.generator = state.generator;
+    this.scene = state.scene;
+    this.meshedCount = state.meshedCount;
+    this._pcx = state.pcx;
+    this._pcz = state.pcz;
+    return prev;
   }
 
   // Sky/block light at a cell as { sky, block } (0-15), read from the light

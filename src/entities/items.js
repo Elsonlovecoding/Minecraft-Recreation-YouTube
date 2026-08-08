@@ -593,10 +593,27 @@ export function createItemManager({ world, scene }) {
     for (let i = entities.length - 1; i >= 0; i--) remove(i);
   }
 
+  // Dimension switch (Phase 15, dimensions/dimensions.js): swap the live
+  // entity list for another dimension's stored one. Stored entities keep
+  // their meshes in the scene, hidden and frozen — never updated — until
+  // their dimension swaps back in. The exported `entities` array keeps its
+  // identity (mutated in place).
+  function swapDimensionState(stored = []) {
+    const prev = entities.slice();
+    for (const e of prev) e.group.visible = false;
+    entities.length = 0;
+    for (const e of stored) {
+      e.group.visible = true;
+      entities.push(e);
+    }
+    return prev;
+  }
+
   return {
     spawn,
     update,
     clear,
+    swapDimensionState,
     entities, // read-only by convention (debug overlay / tests)
     get count() {
       return entities.length;

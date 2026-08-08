@@ -97,9 +97,26 @@ export function createFallingBlocks({ world, scene, items }) {
     }
   }
 
+  // Dimension switch (Phase 15): mid-fall blocks and queued support checks
+  // belong to their dimension — swap them out frozen/hidden, restore the
+  // incoming set. State shape: { entities, pending }.
+  function swapDimensionState(stored = { entities: [], pending: [] }) {
+    const prev = { entities: entities.slice(), pending: pending.slice() };
+    for (const e of prev.entities) e.mesh.visible = false;
+    entities.length = 0;
+    pending.length = 0;
+    for (const e of stored.entities) {
+      e.mesh.visible = true;
+      entities.push(e);
+    }
+    pending.push(...stored.pending);
+    return prev;
+  }
+
   return {
     onBlockChanged,
     update,
+    swapDimensionState,
     get count() {
       return entities.length;
     },

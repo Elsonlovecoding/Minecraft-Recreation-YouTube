@@ -232,12 +232,16 @@ export function createCombat({
   };
 
   // Baked-light brightness at a point (the mob tint formula) for arrows —
-  // sampled on spawn and on sticking, not per frame.
+  // sampled on spawn and on sticking, not per frame. Floored at
+  // ARROW.MIN_TINT (Phase 15): skeletons fire at night and underground,
+  // where the raw curve bottoms out below 0.1 and rendered the arrow as an
+  // invisible black sliver — the "damage with no projectile" report.
   function lightTintAt(x, y, z) {
     const light = world.getLight(x, y, z);
     if (!light) return 1;
     const sky = Math.max(0, Math.min(15, light.sky - dayNight.skyDarken));
     return Math.max(
+      COMBAT.ARROW.MIN_TINT,
       LIGHTING.LIGHT_FALLOFF ** (15 - sky),
       LIGHTING.LIGHT_FALLOFF ** (15 - light.block),
     );
@@ -646,6 +650,23 @@ export function createCombat({
     }
   }
 
+  // --- dimension switch (Phase 15) ------------------------------------------
+
+  // Arrows in flight (and stuck ones) belong to their dimension: swap them
+  // out hidden and frozen, restore the incoming set. A draw in progress
+  // cancels — the bow's world just changed under it.
+  function swapDimensionState(stored = []) {
+    draw = null;
+    const prev = arrows.slice();
+    for (const a of prev) a.mesh.visible = false;
+    arrows.length = 0;
+    for (const a of stored) {
+      a.mesh.visible = true;
+      arrows.push(a);
+    }
+    return prev;
+  }
+
   // --- per-frame ------------------------------------------------------------
 
   function update(dt) {
@@ -665,6 +686,7 @@ export function createCombat({
     updateDraw,
     releaseDraw,
     cancelDraw,
+    swapDimensionState,
     sfx,
     get isDrawing() {
       return draw !== null;

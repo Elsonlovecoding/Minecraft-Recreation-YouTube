@@ -252,10 +252,24 @@ export function createChests({ world, scene, items, player }) {
     }
   }
 
+  // Dimension switch (Phase 15): chest states (contents + models) are keyed
+  // by position and belong to their dimension. Stored chests hide their
+  // models and freeze; the exported Map keeps its identity. Restored
+  // visibility follows the owning chunk's mesh again via update(). State
+  // shape: array of [key, state].
+  function swapDimensionState(stored = []) {
+    const prev = [...chests.entries()];
+    for (const [, state] of prev) state.group.visible = false;
+    chests.clear();
+    for (const [k, state] of stored) chests.set(k, state);
+    return prev;
+  }
+
   return {
     update,
     onBlockChanged,
     chestAt,
+    swapDimensionState,
     chests, // read-only by convention (debug/tests)
   };
 }

@@ -488,6 +488,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
 
   let time = TIME.START_TIME * TIME.DAY_LENGTH_SECONDS;
   let lastSkyDarken = 0;
+  let dimSky = null; // Phase 15: fixed-sky override while in another dimension
 
   return {
     get timeOfDay() {
@@ -501,6 +502,23 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
     // Jump to a day fraction (dev scaffolding: window.__dayNight.setTimeOfDay(0.5))
     setTimeOfDay(t) {
       time = (((t % 1) + 1) % 1) * TIME.DAY_LENGTH_SECONDS;
+    },
+    // Phase 15 (dimensions): a fixed-sky dimension profile — e.g. config
+    // NETHER_SKY: { FOG_COLOR, FOG_NEAR, FOG_FAR, SKY_DARKEN, SKY_TINT } —
+    // overrides the keyframed sky every frame while set: the dome renders
+    // flat fog colour (an exact horizon/fog match, same reason the dome is
+    // never tone-mapped), sun and moon hide, and the baked skylight holds a
+    // constant darken and tint. Time itself keeps advancing, so returning
+    // to the overworld lands at the right point of the day. Pass null to
+    // restore the normal cycle.
+    setDimensionSky(profile) {
+      dimSky = profile ?? null;
+      celestials.sun.visible = !dimSky;
+      celestials.moon.visible = !dimSky;
+      if (!dimSky) {
+        fog.near = SKY.FOG_NEAR;
+        fog.far = SKY.FOG_FAR;
+      }
     },
     update(delta, focus) {
       time = (time + delta) % TIME.DAY_LENGTH_SECONDS;
@@ -559,6 +577,23 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       celestials.sun.lookAt(focus);
       celestials.moon.position.copy(sunDir).multiplyScalar(-CELESTIAL.DISTANCE);
       celestials.moon.lookAt(focus);
+
+      // Dimension override (Phase 15): everything above still ran — the
+      // clock advanced and the overworld palette stands ready for the
+      // return trip — but the visible sky is the dimension's fixed profile.
+      if (dimSky) {
+        u.zenithColor.value.setHex(dimSky.FOG_COLOR);
+        u.midColor.value.setHex(dimSky.FOG_COLOR);
+        u.horizonColor.value.setHex(dimSky.FOG_COLOR);
+        u.belowColor.value.setHex(dimSky.FOG_COLOR);
+        u.glowStrength.value = 0;
+        fog.color.setHex(dimSky.FOG_COLOR);
+        fog.near = dimSky.FOG_NEAR;
+        fog.far = dimSky.FOG_FAR;
+        lastSkyDarken = dimSky.SKY_DARKEN;
+        CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = dimSky.SKY_DARKEN;
+        CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
+      }
     },
   };
 }
