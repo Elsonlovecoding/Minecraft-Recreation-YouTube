@@ -24,13 +24,62 @@ export const NETHER = {
   MAX_Y: 128,
   CEILING_Y: 128,         // bedrock ceiling
   COORD_RATIO: 8,         // 1 nether block = 8 overworld blocks
-  // Phase 15 placeholder terrain (dimensions/nether.js): a flat netherrack
-  // plain under the fixed red sky, so the portal has somewhere to arrive.
-  // The real Nether generation replaces this next session.
-  PLACEHOLDER: {
-    FLOOR_Y: 64,          // top netherrack layer (near overworld portal
-                          // heights — y carries over 1:1 through a portal)
-    BEDROCK_TOP_Y: 59,    // bedrock floor 58..59 under netherrack 60..64
+  LAVA_SEA_Y: 31,         // every open cell at/below this floods (the lava
+                          // oceans — the vanilla nether sea level)
+  LAVA_TICK_SECONDS: 0.75, // nether lava spreads twice as fast as the
+                          // overworld's 1.5s tick (vanilla; fluids.js takes
+                          // it as a per-dimension override on switch)
+
+  // Phase 16 — the real Nether generation (dimensions/nether.js): one 3D
+  // density field shaped by a vertical bias profile. Solid where
+  // field + bias(y) > 0, so positive bias closes rock toward the bedrock
+  // floor and ceiling while the negative mid band opens the huge caverns
+  // (and leaves floating netherrack islands where the field folds above
+  // the threshold). Everything below LAVA_SEA_Y that carves open floods
+  // with lava.
+  GEN: {
+    LATTICE_STEP: 4,      // noise sampled every N blocks, trilerped per cell
+    DENSITY: { SCALE_XZ: 1 / 105, SCALE_Y: 1 / 68, OCTAVES: 3 },
+    // [y, bias] keyframes, piecewise-lerped over the full height.
+    SHAPE: [
+      [0, 2.4],           // solid mass against the bedrock floor
+      [12, 0.65],
+      [26, 0.26],         // ocean-floor band: mostly solid, lakes carve open
+      [40, 0.06],
+      [56, -0.13],        // the big-cavern band (portal arrival heights)
+      [74, -0.17],        // most open here
+      [90, 0.02],
+      [106, 0.5],
+      [118, 1.3],         // sealing toward the ceiling
+      [128, 2.6],
+    ],
+    // Bedrock: a solid layer at MIN_Y and at CEILING_Y, plus jagged bands
+    // just inside them (per-layer survival chance, like the overworld's).
+    BEDROCK_JAGGED_CHANCE: [0.8, 0.6, 0.4, 0.2],
+
+    // Soul sand patches: inside sparse 2D mask regions, upward floor
+    // surfaces convert their top layers (the slog through them is the
+    // point — registry `slows`).
+    SOUL_SAND: { MASK_SCALE: 1 / 60, THRESHOLD: 0.34, DEPTH: 3, MAX_Y: 80 },
+
+    // Glowstone clusters dangling from ceilings/overhangs: per-chunk seeded
+    // attempts; a hit grows a compact downward-biased blob of glowstone
+    // (light 15) under a solid roof.
+    GLOWSTONE: {
+      ATTEMPTS_PER_CHUNK: 6,
+      CHANCE: 0.45,        // chance an attempt with a valid roof grows
+      MIN_Y: 36,           // never down at the lava sea
+      MAX_Y: 124,
+      BLOB_MIN: 5,
+      BLOB_MAX: 14,
+    },
+
+    // Nether quartz ore veins in netherrack (vanilla: common).
+    QUARTZ: { MIN_Y: 8, MAX_Y: 117, ATTEMPTS_PER_CHUNK: 12, VEIN_MIN: 4, VEIN_MAX: 13 },
+
+    // Rare lava leaks high on cavern walls — a source placed against a wall
+    // with a drop below it; the fluids automaton pours it on first sight.
+    LAVA_LEAKS: { ATTEMPTS_PER_CHUNK: 2, CHANCE: 0.35, MIN_Y: 44, MAX_Y: 110 },
   },
 };
 
@@ -636,6 +685,16 @@ export const COMBAT = {
                                   // Phase 15 "no projectile" report)
   },
 
+  // Ghast fireballs (Phase 16, systems/combat.js): straight-line exploding
+  // projectiles, deflectable — a melee swing on one under the crosshair
+  // reverses it along the player's look direction and makes it the
+  // player's own projectile (it then hits mobs, famously the ghast).
+  FIREBALL: {
+    SIZE: 1.0,                    // rendered sprite edge / hitbox edge (blocks)
+    DEFLECT_SPEED: 22,            // blocks/s after a melee deflection
+    FLYING_DESPAWN_SECONDS: 20,   // silent removal for shots into the void
+  },
+
   // Explosions (the creeper's; damage itself comes from the mob registry).
   EXPLOSION: {
     BLOCK_RADIUS: 3,              // vanilla creeper power
@@ -814,6 +873,30 @@ export const MOBS = {
     CLIMB_SPEED: 2.5,             // blocks/s up a wall it is pushing against
     LEG_SWING: 0.4,               // radians of leg yaw scuttle at full stride
     LEG_LIFT: 0.15,               // radians of leg roll lift while striding
+  },
+
+  // Ghast (Phase 16 — the Nether's flying menace, SPEC: 10hp, explosion
+  // damage, deflectable fireballs). Spawns only in the Nether (the
+  // dimension def's spawn table), floats on a gravity-free wander,
+  // and lobs slow exploding fireballs at a player it can see.
+  GHAST: {
+    CAP: 4,                       // its own hostile cap (14 ghasts is a wall
+                                  // of fireballs; vanilla keeps them sparse)
+    FLY_SPEED: 2.4,               // wander drift blocks/s
+    VERTICAL_DRIFT: 0.5,          // vertical wander speed as a fraction
+    WANDER_MIN_SECONDS: 2.5,      // one drift leg lasts this range
+    WANDER_MAX_SECONDS: 6,
+    PROBE_BLOCKS: 4,              // solid/lava within this below biases the
+                                  // drift up; solid within it above, down
+    ATTACK_RANGE: 40,             // shoots at a visible player inside this
+    FIREBALL_COOLDOWN_SECONDS: 3, // between shots
+    MOUTH_HEIGHT_FRACTION: 0.4,   // fireballs leave this far up the body
+    FIREBALL: {
+      SPEED: 11,                  // blocks/s — SPEC "slow fireballs"
+      DAMAGE: 12,                 // explosion damage at the centre
+      BLOCK_RADIUS: 1.6,          // crater radius (vanilla ghast power ~1 —
+                                  // far smaller than a creeper's 3)
+    },
   },
 
   // Passive herds (Phase 14 — cow/pig/sheep/chicken, entities/passive.js).
@@ -1174,6 +1257,11 @@ export const NETHER_SKY = {
   // and tinted red, block light (glowstone, lava, the portal) unaffected.
   SKY_DARKEN: 5,
   SKY_TINT: 0xff9a80,
+  // Phase 16: with the bedrock ceiling the real Nether has NO sky light at
+  // all inside — this floors the effective sky level per fragment (and the
+  // mob tint) so enclosed netherrack reads as the dim red glow instead of
+  // pitch black. 0 in dimensions without the field (the overworld cycle).
+  AMBIENT_LIGHT: 6,
 };
 
 export const END_SKY = {
@@ -1226,6 +1314,15 @@ export const PORTALS = {
   LINK_SEARCH_RADIUS: 32,         // reuse an existing portal within this many
                                   // blocks (destination scale) of the scaled
                                   // arrival point; otherwise build one
+  // Building a fresh linked portal in the CEILINGED Nether (Phase 16): the
+  // overworld's highest-solid-column rule would land on TOP of the bedrock
+  // ceiling, so columns spiral out from the scaled point looking for real
+  // interior ground (solid non-lava floor with standing room); failing
+  // that, a sheltered netherrack pocket is carved for the frame.
+  NETHER_PLACE: {
+    SEARCH_RADIUS: 16,            // columns searched around the scaled point
+    CLEARANCE: 5,                 // air cells needed above a natural floor
+  },
   EYE_SHATTER_CHANCE: 0.2,
   STRONGHOLD_MIN_DISTANCE: 1000,
   STRONGHOLD_MAX_DISTANCE: 2000,

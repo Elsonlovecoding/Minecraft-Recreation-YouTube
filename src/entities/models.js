@@ -328,6 +328,31 @@ export const SHEEP_WOOL_MODEL = [
   { name: 'leftFrontLeg', texOffs: [0, 16], size: [4, 6, 4], pivot: [3, 12, -5], offset: [-2, -6, -2], inflate: 0.5 },
 ];
 
+// Ghast (ghast_ghast.png — the classic 64x32 unwrap, shipped at 2x
+// resolution 128x64; texOffs stay in 64x32 model pixels since UVs are
+// normalised): one 16³ body box (texOffs 0,0 — its regions start at u=16,
+// leaving the top-left corner free) and nine 2px tentacles sharing the
+// tentacle art in that corner (also texOffs 0,0 — exactly how the vanilla
+// model overlays them). The model is authored at 1 block and scaled to the
+// 4-block hitbox by the registry's `scale` (the vanilla renderer scales
+// 4.5x the same way). Tentacles hang BELOW the feet origin — visual only,
+// like vanilla — with per-tentacle lengths from the vanilla 8..14 range,
+// fixed here so the model stays deterministic.
+export const GHAST_MODEL = [
+  { name: 'body', texOffs: [0, 0], size: [16, 16, 16], pivot: [0, 0, 0], offset: [-8, 0, -8] },
+  ...[
+    [-5, -5, 13], [0, -5, 9], [5, -5, 11],
+    [-5, 0, 8], [0, 0, 12], [5, 0, 10],
+    [-5, 5, 9], [0, 5, 13], [5, 5, 8],
+  ].map(([px, pz, len], i) => ({
+    name: `tentacle${i}`,
+    texOffs: [0, 0],
+    size: [2, len, 2],
+    pivot: [px, 1, pz],
+    offset: [-1, -len, -1],
+  })),
+];
+
 // Chicken (chicken_temperate_chicken.png, 64x32): 4x6x3 head with beak and
 // wattle, 6x8x6 body, 3x5x3 legs, 1x4x6 wings (flap while falling).
 export const CHICKEN_MODEL = [

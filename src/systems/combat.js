@@ -19,12 +19,19 @@
 //                  assets/entity/projectiles_arrow.png crossed-quad model,
 //                  gravity arc, block sticking, mob/player hits; stuck
 //                  player arrows can be picked back up.
-//   Explosions     the creeper's: a ragged crater of destructible blocks
-//                  (drops ride the registry tables), distance-scaled damage
-//                  to the player (through armour) and mobs, an expanding
-//                  flash shell, and a WebAudio boom. The tiny procedural
-//                  noise synth also supplies the creeper hiss (there is no
-//                  audio asset system yet; generated art is the pattern).
+//   Explosions     the creeper's, and (Phase 16) any per-blast radius —
+//                  ghast fireballs crater far smaller: a ragged crater of
+//                  destructible blocks (drops ride the registry tables),
+//                  distance-scaled damage to the player (through armour)
+//                  and mobs, an expanding flash shell, and a WebAudio
+//                  boom. The tiny procedural noise synth also supplies
+//                  the creeper hiss, the ghast shriek and the deflect
+//                  thwack (no audio asset system; generated is the
+//                  pattern).
+//   Fireballs      Phase 16, systems/fireballs.js (split per the size
+//                  cap): this module wires the system, wraps fireballs
+//                  into the crosshair raycast, and deflects them on a
+//                  melee swing.
 //
 // The pure combat maths (weapon cooldowns, charge factor, armour reduction,
 // ray-vs-AABB) is exported for the node test harness. createCombat wires the
@@ -38,6 +45,7 @@ import {
 } from '../config.js';
 import { BLOCK, blockDef, isSolid } from '../world/blocks.js';
 import { raycastVoxel, parseHeldTool } from '../player/interaction.js';
+import { createFireballs } from './fireballs.js';
 
 // ---------------------------------------------------------------------------
 // Pure combat maths (node-testable)
@@ -229,6 +237,15 @@ export function createCombat({
       seconds: 1.0, volume: 0.9 * volume, filterType: 'lowpass',
       frequency: 220, attack: 0.005,
     }),
+    // The ghast's firing shriek and the melee thwack of a deflection.
+    shriek: (volume) => noiseBurst({
+      seconds: 0.7, volume: 0.6 * volume, filterType: 'bandpass',
+      frequency: 950, attack: 0.02,
+    }),
+    deflect: () => noiseBurst({
+      seconds: 0.15, volume: 0.5, filterType: 'highpass',
+      frequency: 1400, attack: 0.005,
+    }),
   };
 
   // Baked-light brightness at a point (the mob tint formula) for arrows —
@@ -247,15 +264,42 @@ export function createCombat({
     );
   }
 
+  // --- ghast fireballs (Phase 16, systems/fireballs.js) ---------------------
+
+  // Created after the function declarations below resolve (they're hoisted:
+  // explode and playerAABB are plain function declarations in this scope).
+  const fireballSystem = createFireballs({
+    world, scene, getMobs, sfx, rayAABB,
+    playerAABB: (...args) => playerAABB(...args),
+    explode: (...args) => explode(...args),
+  });
+
   // --- player melee ---------------------------------------------------------
 
-  // Nearest living mob on the crosshair ray (interaction's combat bridge).
-  const raycast = (origin, dir, maxDist) => getMobs()?.raycast(origin, dir, maxDist) ?? null;
+  // Nearest attackable thing on the crosshair ray (interaction's combat
+  // bridge): a living mob, or — Phase 16 — a ghast fireball in flight,
+  // whichever is nearer. A fireball comes back wrapped as
+  // { isFireball: true, fireball } so attack() can deflect instead of
+  // damage; interaction treats the return opaquely either way.
+  function raycast(origin, dir, maxDist) {
+    const mob = getMobs()?.raycast(origin, dir, maxDist) ?? null;
+    const mobT = mob ? rayAABB(origin, dir, mob.entity.aabb, maxDist) ?? Infinity : Infinity;
+    const fb = fireballSystem.nearestOnRay(origin, dir, maxDist);
+    if (fb && fb.t <= mobT) return { isFireball: true, fireball: fb.fireball };
+    return mob;
+  }
 
-  // One melee swing at a raycast mob. Every click swings; the damage scales
-  // with how recharged the weapon is (vanilla 1.9), critical hits land while
-  // falling (SPEC +50%).
+  // One melee swing at a raycast target. Every click swings; the damage
+  // scales with how recharged the weapon is (vanilla 1.9), critical hits
+  // land while falling (SPEC +50%). A fireball under the crosshair deflects
+  // instead (SPEC: "deflectable by hitting them"): it reverses along the
+  // player's look direction and becomes the player's own projectile.
   function attack(mob, dir) {
+    if (mob?.isFireball) {
+      lastSwing = clock; // a deflection is a swing — the charge clock resets
+      fireballSystem.deflect(mob.fireball, dir);
+      return;
+    }
     const since = clock - lastSwing;
     lastSwing = clock;
     const name = inventory.selectedName;
@@ -562,10 +606,16 @@ export function createCombat({
   // A creeper-style explosion at `centre` dealing up to `maxDamage` at the
   // blast point. Blocks inside a ragged sphere break (their listeners —
   // falling supports, torch pops, chest spills — ride the setBlock chain);
-  // obsidian/bedrock survive, fluids are untouched.
-  function explode(centre, maxDamage) {
+  // obsidian/bedrock survive, fluids are untouched. Phase 16: the radii are
+  // per-blast now — ghast fireballs crater far smaller than a creeper —
+  // defaulting to the creeper's config values; the damage radius keeps the
+  // config pair's 2x proportion unless given explicitly.
+  function explode(centre, maxDamage, opts = {}) {
     const E = COMBAT.EXPLOSION;
-    const r = Math.ceil(E.BLOCK_RADIUS);
+    const blockRadius = opts.blockRadius ?? E.BLOCK_RADIUS;
+    const damageRadius = opts.damageRadius ??
+      blockRadius * (E.DAMAGE_RADIUS / E.BLOCK_RADIUS);
+    const r = Math.ceil(blockRadius);
     for (let dy = -r; dy <= r; dy++) {
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -575,7 +625,7 @@ export function createCombat({
           const d = Math.hypot(
             x + 0.5 - centre.x, y + 0.5 - centre.y, z + 0.5 - centre.z,
           );
-          if (d > E.BLOCK_RADIUS - Math.random() * E.RADIUS_JITTER) continue;
+          if (d > blockRadius - Math.random() * E.RADIUS_JITTER) continue;
           const id = world.getBlock(x, y, z);
           if (id === BLOCK.AIR) continue;
           const def = blockDef(id);
@@ -593,9 +643,9 @@ export function createCombat({
     const pd = Math.hypot(
       p.x - centre.x, p.y + PLAYER.HEIGHT / 2 - centre.y, p.z - centre.z,
     );
-    if (pd < E.DAMAGE_RADIUS) {
+    if (pd < damageRadius) {
       damagePlayer(
-        Math.round(maxDamage * (1 - pd / E.DAMAGE_RADIUS)),
+        Math.round(maxDamage * (1 - pd / damageRadius)),
         p.x - centre.x, p.z - centre.z,
       );
     }
@@ -608,9 +658,9 @@ export function createCombat({
         const md = Math.hypot(
           mp.x - centre.x, mp.y + e.def.height / 2 - centre.y, mp.z - centre.z,
         );
-        if (md < E.DAMAGE_RADIUS) {
+        if (md < damageRadius) {
           e.damage(
-            Math.round(maxDamage * (1 - md / E.DAMAGE_RADIUS)),
+            Math.round(maxDamage * (1 - md / damageRadius)),
             mp.x - centre.x, mp.z - centre.z,
           );
         }
@@ -629,7 +679,7 @@ export function createCombat({
     );
     mesh.position.set(centre.x, centre.y, centre.z);
     scene.add(mesh);
-    flashes.push({ mesh, t: 0 });
+    flashes.push({ mesh, t: 0, radius: blockRadius });
     sfx.explosion(Math.max(0, 1 - pd / COMBAT.EXPLOSION.BOOM_RANGE));
   }
 
@@ -645,25 +695,29 @@ export function createCombat({
         flashes.splice(i, 1);
         continue;
       }
-      flash.mesh.scale.setScalar(0.8 + f * E.BLOCK_RADIUS * 1.5);
+      flash.mesh.scale.setScalar(0.8 + f * flash.radius * 1.5);
       flash.mesh.material.opacity = 0.85 * (1 - f);
     }
   }
 
   // --- dimension switch (Phase 15) ------------------------------------------
 
-  // Arrows in flight (and stuck ones) belong to their dimension: swap them
+  // Arrows and fireballs in flight belong to their dimension: swap them
   // out hidden and frozen, restore the incoming set. A draw in progress
   // cancels — the bow's world just changed under it.
-  function swapDimensionState(stored = []) {
+  function swapDimensionState(stored = { arrows: [], fireballs: [] }) {
     draw = null;
-    const prev = arrows.slice();
-    for (const a of prev) a.mesh.visible = false;
+    const prev = { arrows: arrows.slice() };
+    for (const a of prev.arrows) a.mesh.visible = false;
     arrows.length = 0;
-    for (const a of stored) {
+    // Phase 15 stored plain arrow arrays; accept both shapes.
+    const inArrows = Array.isArray(stored) ? stored : stored.arrows ?? [];
+    const inFireballs = Array.isArray(stored) ? [] : stored.fireballs ?? [];
+    for (const a of inArrows) {
       a.mesh.visible = true;
       arrows.push(a);
     }
+    prev.fireballs = fireballSystem.swapState(inFireballs);
     return prev;
   }
 
@@ -673,6 +727,7 @@ export function createCombat({
     if (dt <= 0) return;
     clock += dt;
     updateArrows(dt);
+    fireballSystem.update(dt);
     updateFlashes(dt);
   }
 
@@ -682,6 +737,7 @@ export function createCombat({
     attack,
     damagePlayer,
     spawnArrow,
+    spawnFireball: fireballSystem.spawn,
     explode,
     updateDraw,
     releaseDraw,
@@ -707,6 +763,10 @@ export function createCombat({
     get arrowCount() {
       return arrows.length; // test/debug scaffolding
     },
+    get fireballCount() {
+      return fireballSystem.list.length; // test/debug scaffolding
+    },
     arrows, // read-only by convention (debug/tests)
+    fireballs: fireballSystem.list, // read-only by convention (debug/tests)
   };
 }

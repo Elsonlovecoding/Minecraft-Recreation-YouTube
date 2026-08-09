@@ -9,6 +9,7 @@ import { MOBS } from '../config.js';
 import {
   HUMANOID_MODEL, SKELETON_MODEL, CREEPER_MODEL, SPIDER_MODEL,
   COW_MODEL, PIG_MODEL, SHEEP_MODEL, SHEEP_WOOL_MODEL, CHICKEN_MODEL,
+  GHAST_MODEL,
 } from './models.js';
 
 export const MOB_TYPES = {
@@ -87,6 +88,32 @@ export const MOB_TYPES = {
     attackDamage: 2,           // SPEC
     headHeightFraction: 0.6,   // eye sits low on the flat body
     drops: [{ item: 'string', count: [0, 2] }],
+  },
+
+  // --- the Nether roster (Phase 16). `nether: true` keeps a type out of
+  // the default overworld spawn pools — it spawns only where a dimension
+  // def's spawn table lists it (entities/spawning.js reads the profile).
+  ghast: {
+    name: 'ghast',
+    ai: 'ghast',
+    anim: 'ghast',
+    hostile: true,
+    nether: true,
+    spawnWeight: 100,
+    texture: 'assets/entity/ghast_ghast.png',
+    textureSize: [64, 32],     // classic unwrap layout (art ships at 2x)
+    model: GHAST_MODEL,
+    scale: 4,                  // model authored at 1 block, hitbox is 4
+    flying: true,              // entities/entity.js: no gravity while alive
+    width: 4,
+    height: 4,
+    clearance: 4,
+    maxHealth: 10,             // SPEC
+    speed: MOBS.GHAST.FLY_SPEED,
+    attackDamage: MOBS.GHAST.FIREBALL.DAMAGE, // SPEC: damage = explosion
+    minBrightness: 0.35,       // the pale ghost reads through the gloom
+    headHeightFraction: 0.5,
+    drops: [{ item: 'gunpowder', count: [0, 2] }], // SPEC
   },
 
   // --- the passive herds (Phase 14). Stats from the SPEC passive table;

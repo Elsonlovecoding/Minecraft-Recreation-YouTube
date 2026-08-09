@@ -163,6 +163,11 @@ export const CHUNK_LIGHT_UNIFORMS = {
   uHeldLightPos: { value: new THREE.Vector3(0, -1e6, 0) },    // player eye
   uHeldLightLevel: { value: 0 },                              // 0 = off, torch 14
   uHeldLightTint: { value: new THREE.Color(LIGHTING.HELD_LIGHT_TINT) },
+  // Phase 16: a dimension-wide floor on the effective SKY level (the
+  // Nether's "constant dim red ambient" — under its bedrock ceiling the
+  // baked sky light is zero everywhere, and without a floor enclosed
+  // netherrack would render pitch black). 0 in the overworld.
+  uMinSkyLevel: { value: 0 },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -204,10 +209,11 @@ export function patchChunkMaterial(material) {
         + 'uniform vec3 uHeldLightPos;\n'
         + 'uniform float uHeldLightLevel;\n'
         + 'uniform vec3 uHeldLightTint;\n'
+        + 'uniform float uMinSkyLevel;\n'
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
-          float skyLevel = clamp(vLight.x * 15.0 - uSkyDarken, 0.0, 15.0);
+          float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
           float blockLevel = vLight.y * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
@@ -499,6 +505,12 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
     get skyDarken() {
       return lastSkyDarken;
     },
+    // The active dimension's ambient floor on the effective sky level
+    // (Phase 16 — the Nether's dim red; 0 in the overworld). The mob tint
+    // in entities/mobs.js reads it so mobs match the terrain shader.
+    get ambientLight() {
+      return dimSky?.AMBIENT_LIGHT ?? 0;
+    },
     // Jump to a day fraction (dev scaffolding: window.__dayNight.setTimeOfDay(0.5))
     setTimeOfDay(t) {
       time = (((t % 1) + 1) % 1) * TIME.DAY_LENGTH_SECONDS;
@@ -562,6 +574,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       // Baked-light uniforms: skylight dims (and cools) toward night.
       lastSkyDarken = skyDarken;
       CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = skyDarken;
+      CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = 0;
       CHUNK_LIGHT_UNIFORMS.uSkyTint.value
         .lerpColors(white, nightTint, skyDarken / maxDarken);
 
@@ -592,6 +605,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
         fog.far = dimSky.FOG_FAR;
         lastSkyDarken = dimSky.SKY_DARKEN;
         CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = dimSky.SKY_DARKEN;
+        CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = dimSky.AMBIENT_LIGHT ?? 0;
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
       }
     },

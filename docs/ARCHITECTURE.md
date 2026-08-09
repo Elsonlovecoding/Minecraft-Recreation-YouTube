@@ -48,7 +48,8 @@ src/
     stats.js             health, hunger, damage, respawn
 
   entities/
-    entity.js            base entity, physics, despawn
+    entity.js            base entity, physics, despawn; flying types
+                         (Phase 16: the ghast skips gravity while alive)
     registry.js          the MOB_TYPES registry: per-mob stats and drops
                          (Phase 15 split out of mobs.js per the size cap)
     pathfinding.js       A* over world blocks
@@ -66,6 +67,10 @@ src/
     passive.js           passive-herd behaviour: wander/flee AI, sheep
                          shear + wool regrow, chicken eggs, quadruped/
                          chicken animation (Phase 14 addition)
+    ghast.js             ghast behaviour: flying wander, fireball attack,
+                         tentacle animation (Phase 16 split out of mobs.js
+                         per the size cap — the passive.js injection
+                         pattern)
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup
     falling.js           falling sand/gravel entities (Phase 9 addition)
@@ -77,9 +82,14 @@ src/
     combat.js            damage, knockback, armour (Phase 13): player
                          melee with weapon cooldowns and crits, the
                          armour damage pipeline, bow + arrow projectiles,
-                         explosions, the procedural hiss/boom synth.
-                         Mob managers receive it injected via main.js
-                         (combat never imports the mob manager)
+                         explosions (per-blast radii as of Phase 16), the
+                         procedural hiss/boom synth. Mob managers receive
+                         it injected via main.js (combat never imports
+                         the mob manager)
+    fireballs.js         ghast fireball projectiles: straight-line flight,
+                         explode on hit, melee-deflectable (Phase 16 split
+                         out of combat.js per the size cap; combat injects
+                         its deps, so the pair stays cycle-free)
 
   dimensions/
     dimensions.js        multiple worlds in memory: swaps the single World
@@ -89,9 +99,10 @@ src/
                          lighting, stand-to-travel with 1:8 scaling, linked
                          portal reuse/creation, particles + ambience
                          (Phase 15)
-    nether.js            nether generation, fortress (Phase 15 ships a flat
-                         placeholder generator; the real Nether replaces it
-                         behind the same interface)
+    nether.js            the real Nether generator (Phase 16): shaped 3D
+                         density field between bedrock floor and ceiling —
+                         caverns, lava oceans, floating formations, soul
+                         sand, glowstone, quartz. Fortresses still to come
     end.js               end island, pillars, crystals
     stronghold.js        stronghold generation, end portal room
 
@@ -124,8 +135,12 @@ in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
 hand lives in `player/hand.js` now; ~740 after the Phase 14 offhand);
-`entities/mobs.js` got its mandated MOB_TYPES split in Phase 15
-(`entities/registry.js`; mobs.js is ~770 after the skeleton-cycle fix);
+`entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`)
+and its ghast split in Phase 16 (`entities/ghast.js`) — it still sits at ~840
+(the spawn-profile plumbing); the next growth should cut the skeleton AI or
+the animation block out;
+`systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`;
+combat is ~765 now);
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
 `world/chunks.js` sits exactly AT ~800 after the Phase 15 portal emitter —

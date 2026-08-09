@@ -27,6 +27,9 @@ export class Entity {
     this.velocity = { x: 0, y: 0, z: 0 };
     this.wishX = 0;             // AI steering: wanted horizontal velocity
     this.wishZ = 0;
+    this.wishY = 0;             // flying types only (def.flying): wanted
+                                // vertical velocity — gravity stays out
+                                // while the mob lives; a corpse falls
     this.onGround = false;
     this.horizontalCollision = false; // pushed into a wall last step (spiders climb)
     this.climbing = false;      // AI-set (spider): wall-climbing this step —
@@ -112,10 +115,17 @@ export class Entity {
     if (this.dead) {
       this.wishX = 0;
       this.wishZ = 0;
+      this.wishY = 0;        // a dead flyer falls (the gravity path below)
       this.climbing = false; // a corpse falls — the AI stops writing the
                              // flag on death, so clear it here or a spider
                              // killed mid-climb would rise gravity-free
     }
+
+    // Flying types (Phase 16 — the ghast): a living flyer approaches its
+    // wish velocity on ALL THREE axes and skips gravity entirely; fluids
+    // still register (a ghast dipping into lava burns) but don't change
+    // the control model. A dead flyer takes the normal gravity path.
+    const flying = this.def.flying && !this.dead;
 
     // Horizontal control: exponential approach to the wish on the ground
     // and in fluids (acceleration and friction in one, framerate-
@@ -123,7 +133,7 @@ export class Entity {
     const inFluid = this.inWater || this.inLava;
     const speedScale = this.inLava ? MOBS.LAVA_SPEED_FACTOR
       : this.inWater ? MOBS.WATER_SPEED_FACTOR : 1;
-    if (this.onGround || inFluid || this.climbing) {
+    if (this.onGround || inFluid || this.climbing || flying) {
       const k = 1 - Math.exp(-MOBS.GROUND_RESPONSE * dt);
       v.x += (this.wishX * speedScale - v.x) * k;
       v.z += (this.wishZ * speedScale - v.z) * k;
@@ -139,7 +149,10 @@ export class Entity {
     // climb speed and gravity stays out of it (fighting gravity here would
     // make the climb rate framerate-dependent: at a clamped 0.1s frame,
     // gravity*dt alone exceeds the climb speed).
-    if (this.inWater) {
+    if (flying) {
+      const k = 1 - Math.exp(-MOBS.GROUND_RESPONSE * dt);
+      v.y += (this.wishY * speedScale - v.y) * k;
+    } else if (this.inWater) {
       v.y += -MOBS.WATER_GRAVITY * (1 - MOBS.WATER_BUOYANCY * this.submersion) * dt;
       v.y *= Math.exp(-MOBS.WATER_DRAG * dt);
     } else if (!this.climbing) {

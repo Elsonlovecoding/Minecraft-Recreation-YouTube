@@ -8,22 +8,26 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 15 — portal mechanics: the Nether portal end
-to end (obsidian frame detection at the SPEC minimum 4x5 with optional
-corners, flint-and-steel lighting with durability, animated purple portal
-blocks with particles and procedural ambience, 3-second stand-to-travel,
-1:8 coordinate scaling both ways, linked portal reuse/creation on the far
-side, portal break-down when the frame is disturbed), the dimension system
-(multiple worlds in memory — one World instance whose backing store swaps;
-every entity manager swaps its collections; the swapped-out dimension stays
-frozen and hidden until return), a PLACEHOLDER flat-netherrack Nether under
-the fixed red sky (the real Nether replaces it next session), obsidian
-where water meets lava (sources harden to obsidian, flows to cobblestone),
-the distinct mega-cavern generation pass (uncommon 30-130-block chambers,
-20+ tall, multi-level, waterfall springs, lava at the bottom) and the
-skeleton shooting fix (a real raise-draw-release cycle and arrows that are
-actually visible at night — the Phase 14 entry claimed this fixed; the
-visible-cycle half was not)**
+Phase last completed: **Phase 16 — the real Nether: the placeholder
+generator replaced by genuine generation (netherrack between a bedrock
+floor and the bedrock ceiling at 128, huge open caverns from a shaped 3D
+density field, lava oceans flooding every open cell at/below y=31,
+floating netherrack formations, soul sand patches that slow movement,
+glowstone clusters dangling from ceilings, nether quartz ore veins, rare
+wall lava leaks), the SPEC Nether atmosphere completed (no sky/day-night
+as before, plus a new dimension-wide AMBIENT_LIGHT floor on the effective
+sky level so enclosed netherrack reads as constant dim red instead of
+pitch black under the ceiling), Nether lava ticking twice as fast
+(per-dimension fluids override), ceiling-aware linked-portal placement
+(spiral ground search; a carved netherrack pocket when the area offers
+none — arrivals can no longer land on top of the bedrock ceiling), the
+ghast (4-block flying mob on a gravity-free wander, slow exploding
+fireballs at a visible player, melee-deflectable — a deflected fireball
+becomes the player's own projectile and famously kills its ghast),
+per-dimension spawn tables (the Nether spawns only ghasts, any light, its
+own small cap), and the chest-lid fix (the modern sheet stores the box
+unwrap's top/bottom slots SWAPPED — the lid rendered its dark underside
+art on top; model + icon both corrected against the decoded pixels)**
 
 ---
 
@@ -1245,7 +1249,169 @@ Phase 14 (this session) additions, one entry per file:
   constants); MOBS.PASSIVE added; LIGHTING.HELD_LIGHT/HELD_LIGHT_TINT;
   INTERACTION.HAND.OFFHAND_*; UI.PLAYER_PREVIEW.
 
-Phase 15 (this session) additions, one entry per file:
+Phase 16 (this session) additions, one entry per file:
+- `src/dimensions/nether.js` — the REAL Nether generator, replacing the
+  Phase 15 placeholder behind the same generateChunk/heightAt/biomeAt
+  interface. One seeded 3D density field (world-aligned lattice every
+  `NETHER.GEN.LATTICE_STEP` blocks, trilerped per cell — the caves.js
+  discipline: the pure point query shares the lerp helpers and association
+  order, so heightAt can never disagree with the fill) shaped by the
+  `NETHER.GEN.SHAPE` [y, bias] profile: solid mass against the bedrock
+  floor, an ocean-floor band, the huge open cavern band across the portal
+  arrival heights (~75% open at y 56-90, cavern runs spanning whole
+  regions), sealing again toward the ceiling. Where the field folds back
+  positive inside the open band, netherrack masses hang in the air — the
+  floating formations. Every open cell at/below `NETHER.LAVA_SEA_Y` (31)
+  floods with lava (~23% of area at sea level — the oceans; shores animate
+  via the normal fluids settle scan). On top: soul sand patches (2D mask
+  regions; upward floor surfaces convert `DEPTH` layers — registry `slows`
+  makes the crossing a slog), glowstone clusters (per-chunk PRNG; the
+  anchor climbs its air pocket to the roof, then a downward-biased random
+  walk grows a dangling blob, ~16 cells/chunk), nether quartz veins (the
+  _placeVeins random-walk shape, netherrack only), and rare high wall
+  leaks (a lava source with a drop below — pours on first sight). Bedrock:
+  solid at y=0 AND y=128 with jagged hashed bands inside both. Generation
+  ~1.5ms/chunk, byte-identical across generation orders (census-verified).
+- `src/entities/ghast.js` — NEW (split per the ARCHITECTURE cap, the
+  passive.js injection pattern): ghast behaviour. A gravity-free drifting
+  wander (direction held 2.5-6s, re-rolled on expiry or wall hit; vertical
+  probes push the drift up off floors/lava and down off ceilings), the
+  fireball attack (a player visible within `GHAST.ATTACK_RANGE` gets faced
+  — mob.yawTarget overrides the velocity-facing rule — and shot every 3s
+  from the mouth, with the shriek), and the waving-tentacle animation.
+- `src/systems/fireballs.js` — NEW (split per the ARCHITECTURE cap):
+  ghast fireball projectiles. Straight-line flight (no gravity, vanilla),
+  per-frame voxel raycast for blocks plus target test (ghast fireballs
+  test the player; PLAYER-owned fireballs test mobs), exploding on the
+  first hit with the fireball's own small blast radius; a mob hit blasts
+  at the body centre so a deflected direct hit lands full damage on the
+  ghast that fired it. Deflection (`deflect`): a melee swing reverses the
+  ball along the player's look direction at `COMBAT.FIREBALL.
+  DEFLECT_SPEED` and flips ownership. Rendered as three crossed quads
+  sampling a generated fireball blotch (no fire_charge asset ships),
+  fullbright. Frozen in unloaded chunks like every projectile; silent
+  despawn after 20s of hitting nothing.
+- `src/systems/combat.js` Phase 16 — `raycast` (the interaction bridge)
+  now returns the nearer of the mob hit and a fireball in flight, the
+  fireball wrapped `{ isFireball, fireball }`; `attack` on that wrapper
+  deflects instead of damaging (the swing still resets the charge clock).
+  `explode(centre, maxDamage, opts)` takes per-blast radii (ghast
+  fireballs crater `blockRadius` 1.6 vs the creeper's 3; flash shell
+  scales along). New sfx: the ghast shriek and the deflect thwack.
+  `swapDimensionState` stores arrows AND fireballs per dimension (accepts
+  the Phase 15 plain-array shape). The fireball machinery itself lives in
+  systems/fireballs.js (deps injected — no import cycle).
+- `src/entities/entity.js` Phase 16 — `def.flying` (the ghast): a living
+  flyer approaches wish velocity on all three axes (`wishY` joins
+  wishX/wishZ) and skips gravity entirely; fluids still register (a ghast
+  dipping into lava burns) but don't change the control model; a DEAD
+  flyer takes the normal gravity path, so corpses fall.
+- `src/entities/registry.js` Phase 16 — the ghast entry: SPEC stats
+  (10hp, gunpowder 0-2, damage = its explosion), `nether: true` (excluded
+  from the overworld pools — spawns only where a dimension def lists it),
+  `flying`, 4x4 box, `scale: 4` (model authored at 1 block like the
+  vanilla renderer's 4.5x), `minBrightness` 0.35 so the pale bulk reads
+  through the gloom.
+- `src/entities/models.js` Phase 16 — `GHAST_MODEL`: the classic 64x32
+  ghast unwrap (the shipped sheet is 2x resolution; UVs are normalised so
+  texOffs stay in model pixels) — one 16³ body plus nine 2px tentacles in
+  a 3x3 grid sharing the tentacle art at the sheet's top-left corner
+  (exactly how the vanilla model overlays them), lengths from the vanilla
+  8..14 range fixed per slot for determinism, hanging below the feet
+  origin (visual only, like vanilla).
+- `src/entities/mobs.js` Phase 16 — ghast state on the mob record
+  (wanderTimer/wanderDir/yawTarget), the ghast AI + animation dispatched
+  into entities/ghast.js, `yawTarget` override in the body-yaw ease,
+  per-type model `scale` folded into the group scale (the creeper swell
+  multiplies it), the dimension ambient floor + per-type `minBrightness`
+  in the light tint, `useOnMob` guards fireball wrappers, and the spawn
+  PROFILE plumbing: default pools exclude `nether: true` types;
+  `setSpawnProfile({hostiles, passives, hostileCap, passiveCap,
+  anyLight})` resolves a dimension def's table (dimensions.js applies it
+  on every switch).
+- `src/entities/spawning.js` Phase 16 — reads the profile via
+  `getProfile()` (pools, caps, light rule): `anyLight` skips both light
+  gates (the Nether spawns in any light — but never in unmeshed space),
+  and wide types (the ghast's 4-block box) verify their whole spawn box
+  is free of solids, chunk-loaded-gated so the check can never generate
+  chunks synchronously.
+- `src/render/lighting.js` Phase 16 — `uMinSkyLevel` joins
+  CHUNK_LIGHT_UNIFORMS: a dimension-wide floor on the effective sky level
+  applied in the fragment shader (`max(sky*15 - darken, uMinSkyLevel)`),
+  written per frame — 0 on the normal cycle, `dimSky.AMBIENT_LIGHT` (6)
+  under the Nether profile. `dayNight.ambientLight` getter exposes it for
+  the mob tint. This is what makes the SPEC "constant dim red ambient"
+  real under a bedrock ceiling where baked sky light is zero everywhere.
+- `src/world/fluids.js` Phase 16 — `setTickSeconds(seconds|null)`: a
+  per-dimension override of the lava spread tick;
+  dimensions.js applies the def's `lavaTickSeconds` on every switch
+  (Nether 0.75s — twice the overworld pace, vanilla).
+- `src/dimensions/dimensions.js` Phase 16 — defs grew `spawn` (the
+  dimension's spawn table -> mobs.setSpawnProfile) and `lavaTickSeconds`
+  (-> fluids.setTickSeconds); createDimensions takes `fluids`.
+- `src/dimensions/portals.js` Phase 16 — ceiling-aware linked-portal
+  placement: in the Nether, `createLinkedPortal` spirals columns out from
+  the scaled point (`PORTALS.NETHER_PLACE.SEARCH_RADIUS`) for the highest
+  solid NON-LAVA floor with `CLEARANCE` air above it, strictly inside the
+  bedrock shell — the old highest-solid-column rule would have built the
+  return portal on TOP of the bedrock ceiling. If the whole area offers
+  no ground (lava ocean, solid rock), a closed netherrack pocket is
+  carved around the frame at the traveller's own height (clamped above
+  the lava sea), floor flush with the bottom bar. travel() passes the
+  departure y as the hint. The overworld path is unchanged.
+- `src/world/chests.js` Phase 16 — THE CHEST LID FIX: the modern (1.15+)
+  sheet stores the box unwrap's top/bottom slot pair SWAPPED relative to
+  the classic layout (verified against the decoded pixels: the classic
+  top slot at (u+d, v) holds the dark flat UNDERSIDE art, the classic
+  bottom slot at (u+d+w, v) the wood-grain top art). The lid was
+  rendering its dark underside on its top face — the session's bug
+  report. appendBox now swaps the pair; the base top face gets the dark
+  hollow interior (what an open chest reveals, vanilla) and the Phase 10
+  bottom-face UV overwrite became obsolete and is gone.
+- `src/ui/icons.js` Phase 16 — the chest icon's top face samples the
+  wood-grain slot (28,0) to match.
+- `src/main.js` Phase 16 — the nether def: real generator, spawning on
+  with `spawn: { hostiles: ['ghast'], hostileCap: MOBS.GHAST.CAP,
+  anyLight: true }`, `lavaTickSeconds`; fluids passed to dimensions.
+- config Phase 16 — `NETHER` rebuilt: LAVA_SEA_Y, LAVA_TICK_SECONDS and
+  the `GEN` block (lattice step, density scales/octaves, the SHAPE bias
+  keyframes, bedrock jagged chances, SOUL_SAND / GLOWSTONE / QUARTZ /
+  LAVA_LEAKS) replace PLACEHOLDER; `NETHER_SKY.AMBIENT_LIGHT`;
+  `MOBS.GHAST` (cap, fly speeds, wander, probes, attack range, cooldown,
+  FIREBALL speed/damage/radius); `COMBAT.FIREBALL` (size, deflect speed,
+  despawn); `PORTALS.NETHER_PLACE`.
+
+Phase 16 verification: 10 node checks against the real modules — ghast
+registry vs SPEC, the overworld pools excluding it, every GHAST_MODEL
+unwrap region inside the sheet and >50% opaque art (PNG-decoded), flying
+entity holds altitude across 2s of steps / steers vertically / corpse
+falls / zombies still fall, the spawner honouring a profile's pools+caps
+(400 cycles: only ghasts, never past cap 2), soul sand measured at
+WALK_SPEED x SLOW_BLOCK_FACTOR against a stone control, combat pure maths
+regressions, config shape — plus the generator censuses over 144 chunks
+(~1.5ms/chunk; 23% lava at sea level; y-band openness profile 0% at the
+shells to ~80% mid-band; longest cavern runs spanning the whole region;
+floating formations present on a 16-block sample grid; standable ground
+in 68% of columns; glowstone ~16 cells/chunk; byte-identical regeneration
+from a fresh generator; heightAt never disagreeing with chunk data at 200
+random points). In headless Chromium, 23 checks, zero console errors:
+boot; the chest-lid UVs sampling exactly the wood-grain slot in the live
+geometry (plus a screenshot showing grain + rim from above); a portal
+built, lit and travelled END TO END into the REAL Nether — arrival
+standing on solid ground inside portal blocks at 5<y<122 (never the
+ceiling top); uMinSkyLevel 6 and skyDarken 5 active; the arrival-area
+census finding netherrack dominant plus lava ocean, soul sand, glowstone
+and quartz, with bedrock at exactly y=0 and y=128; a direct-spawned ghast
+drifting airborne and firing a real fireball (the player took damage
+through the fight); the deflection path end to end (crosshair raycast
+returns the wrapper, the swing flips ownership and reverses velocity); a
+NATURAL ghast spawn inside the nether spawn table (and only ghasts ever
+spawning there); the return trip through the arrival portal restoring the
+overworld and clearing the ambient floor. Screenshots verify the look:
+the corrected chest lid, the red-fogged netherrack caverns with glowstone
+specks, the portal-side purple swirl with drifting particles.
+
+Phase 15 (previous session) additions, one entry per file:
 - `src/dimensions/portals.js` — the Nether portal, four parts:
   (1) **Pure frame detection** (node-tested): `detectFrame(getBlock, x, y,
   z)` from any candidate interior cell — falls to the bottom row, slides to
@@ -2107,22 +2273,31 @@ suites + the reviewers' own probes), zero console errors.
   systems/brewing.js, dimensions/end.js, dimensions/stronghold.js
   (entities/entity.js, pathfinding.js, models.js, mobs.js are real as of
   Phase 12; systems/combat.js as of 13; dimensions/portals.js and
-  dimensions/dimensions.js as of 15 — dimensions/nether.js exists but is
-  the Phase 15 placeholder generator).
-- Phase 15 deliberate slices:
-  - **The Nether is a placeholder**: a flat netherrack plain (bedrock
-    floor, fixed red sky, no ceiling, no mobs, no natural spawning). The
-    real generation — caverns, lava oceans, soul sand, glowstone, quartz,
-    fortresses, blazes, ghasts, the widened/faster lava automaton — is the
-    next session, replacing PlaceholderNetherGenerator behind the same
-    interface. All dimensions share the overworld chunk shape (16x384x16);
-    the Nether's y 0..128 simply generates inside it (no per-dimension
-    world heights, no bedrock ceiling yet).
-  - Linked-portal placement uses the destination's highest solid column —
-    a return portal whose scaled point lands in an ocean builds on the sea
-    floor (arrive swimming), and the search ignores Y entirely (a portal
-    60 blocks below at the same x/z can win the link). Vanilla is also
-    crude here; refine with the real Nether if it grates.
+  dimensions/dimensions.js as of 15; dimensions/nether.js as of 16).
+- Phase 16 deliberate slices:
+  - **No nether fortresses yet** — and with them blazes (the blaze-rod
+    gate on brewing/eyes of ender) and nether wart. That is the next
+    Nether session: generate fortress structures (nether brick platforms,
+    corridors, blaze spawn areas, wart patches) into the real terrain,
+    and the blaze itself (the sheet ships in assets/entity/blaze.png).
+  - Ghast fireballs can be deflected by melee only — arrows pass through
+    them (vanilla lets arrows pop them; our arrows only test mobs).
+    Fireball explosions use the standard explosion (no fire blocks — fire
+    exists only as a status, as before).
+  - Ghasts don't strafe away when hit and have no separate "shooting
+    face" texture (only ghast_ghast.png ships; vanilla swaps to a
+    red-eyed variant while firing).
+  - The lava-ocean shores animate via the normal settle scan; the deep
+    ocean interior is still static source blocks (exactly like overworld
+    lakes). Nether lava spreads at the standard 3-block range — only the
+    tick doubled (a wider range needs new flow-level block ids; deferred).
+  - All dimensions still share the overworld chunk shape (16x384x16); the
+    Nether's y 0..128 generates inside it. y>128 above the ceiling is
+    empty and unreachable (bedrock is unbreakable; portals clamp below).
+  - Linked-portal placement in the OVERWORLD still uses the highest solid
+    column (an ocean-landing return portal builds on the sea floor); the
+    Nether side got the ceiling-aware ground search this phase, and the
+    link search is still Y-blind (vanilla is also crude here).
   - Portal blocks stop falling sand/gravel (they pop off as items, the
     torch rule) instead of letting them fall through like vanilla; mobs
     never use portals (nothing to travel to yet); items/arrows sitting in
@@ -2159,8 +2334,9 @@ suites + the reviewers' own probes), zero console errors.
     vanilla armour-layer textures (no armour sheets ship in assets).
 - Phase 13 deliberate slices:
   - ~~The overworld hostile roster is complete. Still to come:
-    passive herds~~ — Phase 14: the herds are in. Still to come with
-    their dimensions/phases: enderman, blaze, ghast.
+    passive herds~~ — Phase 14: the herds are in; ~~enderman, blaze,
+    ghast~~ — Phase 16: the ghast is in (Nether). Still to come:
+    enderman (End/overworld night), blaze (fortresses).
   - Armour reduces COMBAT damage (mob melee, arrows, explosions) only;
     environmental damage (falls, lava, fire, drowning, cactus, starving)
     is unreduced (vanilla reduces cactus/lava contact too — accepted
@@ -2315,16 +2491,29 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **The next session is the real Nether.** Replace
-  `PlaceholderNetherGenerator` (dimensions/nether.js) behind the same
-  generateChunk/heightAt/biomeAt interface: netherrack caverns, lava
-  oceans, soul sand, glowstone, nether quartz ore, the bedrock ceiling at
-  128, fortresses with blazes (+ ghasts, nether wart for brewing). The
-  portal side needs NOTHING new — travel, linking and the red sky all
-  already run against whatever the generator produces. Remember the
-  Phase 12 note: vanilla Nether lava spreads twice as far and ticks twice
-  as fast (widen FLUIDS.LAVA_RANGE / halve the tick per dimension — a
-  per-dimension override the fluids swap could carry).
+- **The next Nether session is fortresses**: nether-brick structures
+  generated into the real terrain (the atlas ships NETHER_BRICKS 35;
+  keep structure writes in-chunk deterministic like every other feature,
+  or generate from a region-seeded layout both chunks re-derive), blazes
+  (assets/entity/blaze.png, SPEC 20hp / 6 fireball damage / bursts of 3 —
+  systems/fireballs.js generalises: a blaze fireball is a smaller, faster
+  spawn with its own damage/radius), and nether wart for brewing. After
+  that the remaining SPEC arc is brewing, the stronghold + eyes of ender,
+  the End and the dragon.
+- Phase 16 APIs: dimension defs (main.js) carry `spawn` tables —
+  `{ hostiles: [names], passives: [names], hostileCap, passiveCap,
+  anyLight }` resolved by `mobs.setSpawnProfile` on every switch; put new
+  Nether mobs (blaze) in the nether def's list and mark their registry
+  entries `nether: true` so the overworld pools skip them. `def.flying`
+  on a registry entry makes entities/entity.js fly (wishY, no gravity
+  while alive); `type.scale` scales the whole model group; `type.
+  minBrightness` floors the light tint. `combat.spawnFireball({from, vel,
+  damage, blockRadius, fromPlayer})` (systems/fireballs.js) is the
+  exploding-projectile entry; `combat.explode(centre, damage,
+  {blockRadius})` takes per-blast radii now. `NETHER_SKY.AMBIENT_LIGHT` /
+  `dayNight.ambientLight` / `uMinSkyLevel` is the dimension ambient
+  channel (the End profile can carry its own). `fluids.setTickSeconds`
+  is the per-dimension lava pace.
 - Phase 15 APIs: `dimensions.switchTo(key)` / `activeKey`
   (dimensions/dimensions.js) is the only dimension entry point — managers
   participate via `swapDimensionState(stored)`; ANY new per-frame system
@@ -2335,10 +2524,6 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   `dayNight.setDimensionSky(profile)` takes any NETHER_SKY-shaped config
   block — the End's purple sky is the same mechanism.
   `world.swapState` is dimensions.js's tool; nothing else should call it.
-  Mob spawning per dimension: `mobs.setNaturalSpawning(bool)` today; the
-  real Nether wants per-dimension spawn TABLES instead — extend the
-  dimension defs with a mob list and teach spawning.js to read it rather
-  than hard-coding the overworld pools.
 - The skeleton report is genuinely closed this time (visible
   raise-draw-release + arrows floored at MIN_TINT 0.45, verified by
   browser sampling); if a future report contradicts PROGRESS again,
@@ -2598,3 +2783,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 13 | Hostile roster (zombie / skeleton / creeper / spider: per-type AI, daylight burning, weighted spawning, vanilla box models); combat system (weapon damage with 1.9 cooldown scaling + falling crits, player bow with draw-scaled arrows, arrow projectiles both ways, creeper explosions with block destruction); armour (four equip slots, SPEC damage reduction, durability wear, HUD bar, death drops); first-person hand split into player/hand.js | Passive herds; enderman/blaze/ghast with their dimensions; skeleton bow render + shot pacing polish; mob-vs-mob combat beyond explosions |
 | 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), mobs frozen in unloaded chunks, models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end; 5-lens adversarial review with all 11 confirmed findings fixed | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers; the skeleton "fix" proved internal-state-only — the visible cycle landed in Phase 15 |
 | 15 | Portal mechanics: obsidian frame detection (SPEC 4x5 minimum, corners optional, node-tested pure logic), flint-and-steel lighting with durability wear through the real right-click chain, animated generated-swirl portal blocks (world-space UVs, emissive light 11), purple portal particles + procedural hum/shimmer/whoosh, 3s stand-to-travel with 1:8 coordinate scaling, linked portal reuse within 32 blocks or creation flush on local ground, portal break-down via the block listener; the dimension system (dimensions/dimensions.js): one World whose backing store swaps, per-dimension scene groups, every entity manager swapping collections (items/mobs/falling/arrows/fluids/furnaces/chests — frozen + hidden while stored, furnaces provably not smelting), fixed dimension skies (setDimensionSky), Nether death respawning at the overworld spawn; the placeholder flat-netherrack Nether; water+lava -> obsidian/cobblestone (immediate on contact, fluids.js); the distinct mega-cavern pass + waterfall springs (world/noise.js split, byte-identical); the skeleton shooting fix (raise-draw-release cycle, bow-position arrows, MIN_TINT night visibility, visible arc at speed 24); MOB_TYPES -> entities/registry.js (mandated split); TEMPORARY test chest behind config TEST_CHEST; 26 node + 61 browser checks, review fixes (stale-camera travel frame, canopy chest, portal UV seam) | The real Nether generation + blazes/ghasts (placeholder replaced next session); nether portal ceiling-height placement niceties (ocean-floor return portals, Y-blind link search); mobs/items never travel portals; brewing, stronghold, End, dragon |
+| 16 | The real Nether (dimensions/nether.js): shaped 3D density field between bedrock floor and the bedrock ceiling at 128 — huge open caverns, lava oceans at/below y=31, floating netherrack formations, soul sand patches (registry `slows`), glowstone ceiling clusters, quartz veins, rare wall lava leaks; ~1.5ms/chunk, byte-deterministic; the dimension ambient floor (`NETHER_SKY.AMBIENT_LIGHT` -> `uMinSkyLevel`) making "constant dim red" real under the ceiling; Nether lava tick halved (fluids.setTickSeconds per dimension); ceiling-aware linked-portal ground search + carved-pocket fallback (arrivals can't land on the ceiling); the ghast (entities/ghast.js + registry `flying`/`scale`/`minBrightness`, GHAST_MODEL from the real 2x sheet): gravity-free wander, fireballs at a visible player every 3s, melee deflection flipping ownership (systems/fireballs.js — combat raycast wraps fireballs, explode takes per-blast radii); per-dimension spawn tables (nether: ghasts only, any light, cap 4; overworld pools exclude `nether: true` types); the chest-lid fix (modern sheet's swapped top/bottom slots — model + icon); two cap splits (ghast.js, fireballs.js); 10 node + 23 browser checks, zero console errors | Nether fortresses + blazes + nether wart; arrows don't pop fireballs; ghast shooting-face texture; wider Nether lava range (needs new flow ids); brewing, stronghold, End, dragon |

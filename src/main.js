@@ -3,7 +3,8 @@
 
 import * as THREE from 'three';
 import {
-  DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, TERRAIN, TEST_CHEST,
+  DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, NETHER, MOBS, TERRAIN,
+  TEST_CHEST,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -25,7 +26,7 @@ import { createInventory, itemMaxDurability } from './player/inventory.js';
 import { createStats } from './player/stats.js';
 import { createDimensions } from './dimensions/dimensions.js';
 import { createPortals } from './dimensions/portals.js';
-import { PlaceholderNetherGenerator } from './dimensions/nether.js';
+import { NetherGenerator } from './dimensions/nether.js';
 import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
@@ -168,20 +169,24 @@ async function init() {
   });
   mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
 
-  // Phase 15: the dimension system — the overworld and the (placeholder)
-  // Nether, each keeping its own chunks and entities, switched between by
-  // the portal system. Every entity manager above participates via the
-  // swapDimensionState protocol.
+  // Phase 15: the dimension system — the overworld and the Nether, each
+  // keeping its own chunks and entities, switched between by the portal
+  // system. Every entity manager above participates via the
+  // swapDimensionState protocol. Phase 16: the real Nether generator, its
+  // own spawn table (ghasts, any light, a small cap) and the doubled lava
+  // pace.
   const dimensions = createDimensions({
-    world, dayNight, mobs,
+    world, dayNight, mobs, fluids,
     managers: [items, mobs, falling, combat, fluids, smelting, chests],
     defs: {
       overworld: { group: overworldGroup, sky: null, spawning: true },
       nether: {
         group: netherGroup,
         sky: NETHER_SKY,
-        spawning: false, // the real Nether's mobs arrive next session
-        makeGenerator: () => new PlaceholderNetherGenerator(TERRAIN.SEED),
+        spawning: true,
+        spawn: { hostiles: ['ghast'], hostileCap: MOBS.GHAST.CAP, anyLight: true },
+        lavaTickSeconds: NETHER.LAVA_TICK_SECONDS,
+        makeGenerator: () => new NetherGenerator(TERRAIN.SEED),
       },
     },
   });

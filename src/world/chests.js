@@ -39,13 +39,18 @@ const FACING_YAW = { S: 0, E: Math.PI / 2, N: Math.PI, W: -Math.PI / 2 };
 // x0..z1 are model coordinates (block units); (u, v) is the box's texOffs in
 // sheet pixels; (w, h, d) its pixel dimensions. Every face samples its
 // unwrap region rotated 180° (the modern sheet convention). Side slots:
-// front (+z) takes the fourth slot, back (-z) the second.
+// front (+z) takes the fourth slot, back (-z) the second. The top/bottom
+// pair is also SWAPPED relative to the classic unwrap (Phase 16 fix —
+// verified against the shipped sheet's pixels: the classic top slot at
+// (u+d, v) holds the dark flat UNDERSIDE art, the classic bottom slot at
+// (u+d+w, v) the wood-grain top art; the lid rendered its dark underside
+// on top before this).
 function appendBox(arrays, x0, y0, z0, x1, y1, z1, u, v, w, h, d) {
   const FB = LIGHTING.FACE_BRIGHTNESS;
   // Region rectangles in sheet pixels: [x, y, width, height]
   const regions = {
-    top: [u + d, v, w, d],
-    bottom: [u + d + w, v, w, d],
+    top: [u + d + w, v, w, d],
+    bottom: [u + d, v, w, d],
     west: [u, v + d, d, h],          // -x
     back: [u + d, v + d, w, h],      // -z
     east: [u + d + w, v + d, d, h],  // +x
@@ -120,21 +125,12 @@ function getChestMaterial() {
 function getGeometries() {
   if (!baseGeometry) {
     // Base: 14x10x14 px from (1,0,1), texOffs (0,19). Model space is centred
-    // on the block: x/z in -0.5..0.5, y 0..1. The sheet's base-bottom region
-    // has a transparent middle, so the (never visible) bottom face reuses
-    // the base-top region instead.
+    // on the block: x/z in -0.5..0.5, y 0..1. With the swapped top/bottom
+    // slots the top face shows the dark hollow interior (what an open chest
+    // reveals, vanilla) and the never-visible bottom the wood-grain plate —
+    // the Phase 10 bottom-face UV overwrite is obsolete.
     baseGeometry = buildGeometry((a) => {
       appendBox(a, -7 * PX, 0, -7 * PX, 7 * PX, 10 * PX, 7 * PX, 0, 19, 14, 10, 14);
-      // Overwrite the bottom face's UVs with the top region (last-built box
-      // face order: east, west, top, bottom, front, back — bottom is face 3,
-      // vertices 12..15).
-      const [rx, ry, rw, rh] = [14, 19, 14, 14];
-      for (let k = 0; k < 4; k++) {
-        const s = [0, 1, 1, 0][k];
-        const t = [0, 0, 1, 1][k];
-        a.uv[(12 + k) * 2] = (rx + (1 - s) * rw) / TEX;
-        a.uv[(12 + k) * 2 + 1] = 1 - (ry + t * rh) / TEX;
-      }
     });
     // Lid (14x5x14 px, texOffs 0,0) + latch (2x4x1 px, texOffs 0,0), built
     // relative to the hinge: the lid's bottom-back edge at y=9px, z=1px.
