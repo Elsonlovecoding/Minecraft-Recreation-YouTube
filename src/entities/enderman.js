@@ -119,27 +119,40 @@ export function createEndermanBehaviour({
         mob.waterTimer = cfg.WATER_TICK_SECONDS;
         e.damage(cfg.WATER_DAMAGE);
         if (!e.dead) teleportRandom(mob, p, 4, cfg.TELEPORT_RADIUS);
+        // THAT blink was this tick's dodge: re-baseline here so the
+        // generic damage check below doesn't fire a second one on the
+        // same frame (review finding — one water tick blinked twice).
+        mob.lastHealth = e.health;
       }
     } else {
       mob.waterTimer = 0;
     }
 
-    // Any hit landed since last frame: the vanilla dodge-blink (and it
-    // remembers who did it — provoked also flips on player attacks).
+    // Any damage since last frame: the vanilla dodge-blink. Deliberately
+    // NOT an aggro trigger — a player attack already flips mob.provoked
+    // (systems/combat.js melee and arrows), and that is what angers an
+    // enderman below. Blaming every health drop on the nearest player
+    // made one standing in a pond hunt down a bystander who had never
+    // looked at it, breaking SPEC's "passive until looked at" (review
+    // finding, confirmed independently by two lenses).
     if (e.health < mob.lastHealth && !e.dead) {
       teleportRandom(mob, p, 8, cfg.TELEPORT_RADIUS);
-      if (targetable) mob.angry = true;
     }
     mob.lastHealth = e.health;
-    if (mob.provoked && targetable) mob.angry = true;
 
-    // The stare (SPEC: passive until the player looks directly at its
-    // head, then aggressive).
-    if (targetable && !mob.angry && staredAt(mob)) {
+    // Anger: the SPEC stare (the player looking directly at its head) or
+    // a real player hit. The stare raycast is skipped once angry.
+    const wasAngry = mob.angry;
+    if (targetable && !mob.angry && (mob.provoked || staredAt(mob))) {
       mob.angry = true;
-      combat.sfx.warp(0.8); // the vwoop doubles as the aggro scream
     }
     if (!targetable || dist > cfg.FORGET_RANGE) mob.angry = false;
+    if (mob.angry && !wasAngry) {
+      combat.sfx.warp(0.8); // the vwoop doubles as the aggro scream
+      // A beat before the first chase blink, so aggro reads as a stare-
+      // down rather than an instant materialisation.
+      mob.chaseTimer = cfg.CHASE_TELEPORT_SECONDS;
+    }
     mob.creepy = mob.angry && !e.dead;
 
     if (mob.angry) {

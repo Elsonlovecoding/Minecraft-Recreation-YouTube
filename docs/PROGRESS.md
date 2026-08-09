@@ -1521,6 +1521,59 @@ look: the brewing screen mid-brew, the fire-resistance HUD chip, a
 glowing lava sea against clearly visible netherrack, and the enderman's
 tall silhouette against the dusk sky.
 
+Phase 18's adversarial review (four independent lenses — fortress
+generation, brewing/potions/screens, mobs/combat, and regressions +
+session fidelity — each probing the real modules with its own node
+repros over the full diff, every finding then handed to a dedicated
+verifier told to REFUTE it) raised 8 findings, refuted 2 and confirmed 6
+(two pairs were the same defect found independently by two lenses). The
+three real defects were fixed and regression-tested:
+- **Environmental damage aggroed the enderman at an innocent player and
+  fired three teleports in one frame** (the one major finding, confirmed
+  by two lenses with independent probes): the dodge-blink branch keyed
+  off any health drop with no attribution, so the AI's OWN water-damage
+  tick — applied earlier in the same call, before `lastHealth` was
+  re-baselined — read as an attack: blink (water), blink again (dodge),
+  `angry = true`, and with `chaseTimer` starting at 0 a third blink
+  landing it 3-8 blocks from a bystander who had never looked at it,
+  melee-ing for 7. Lava burn and suffocation (ticked in mobs.js AFTER
+  the AI) did the same one frame later. SPEC is explicit — passive until
+  looked at. The water branch now re-baselines `lastHealth` right after
+  its own blink, the dodge branch no longer assigns blame (a player hit
+  already sets `mob.provoked`, which is what anger reads), and anger
+  resolves in ONE place that also charges `chaseTimer` so aggro reads as
+  a stare-down rather than an instant materialisation. 17 node checks:
+  one blink per water tick (was 3), passive through a 6s soak and through
+  external lava/suffocation damage, still angered by a real hit and by
+  the stare, never angered by 10s of being ignored.
+- **The fortress crossing-upgrade path was unreachable dead code**: the
+  new per-piece deck heights routed the merge check through
+  `pieceEdgeY`, which returns null for a bridge/corridor's SIDE face —
+  exactly the misaligned arrival the upgrade exists for — so the inner
+  axis-mismatch test could never be true. Every perpendicular same-height
+  arrival took the blocked path and capped a dead-end room against the
+  bridge's flank instead of forming the T-junction Phase 17 built. The
+  merge now compares a run's own deck height (faces still answer for
+  rooms/crossings/stairs). A/B over 289 regions: flank-jammed dead-end
+  rooms 42 -> 5 (the remainder is coincidental parallel-arm adjacency,
+  no arrival event to upgrade), crossings 1463 -> 1499, connectivity and
+  determinism unchanged.
+- **A glass bottle with no water in reach shadowed the offhand**:
+  `hasRightClickUse` returned true for it unconditionally, so a bottle in
+  the main hand made right-click completely inert whenever no pool was on
+  the crosshair — the offhand's food/bow never got the click. It now
+  resolves the same water raycast the fill uses (the shears rule).
+  Browser-verified: offhand bread eats through a held bottle with no
+  water, and the bottle still wins the click once a pool is in reach.
+Refuted: the creepy pose CAN clear on death (`e.dead` flips mid-AI when a
+water tick kills), and the healing-potion gap is the documented
+deliberate slice, not a defect. Accepted as documented rather than fixed:
+glistering melon has no source (SPEC marks healing optional; the recipe
+is registered and inert), and the two over-cap files carry mandated-split
+notes. All suites re-run green after the fixes: 680 node checks (565
+fortress + 21 emission + 63 core + 14 effects + 17 aggro) and 82 browser
+checks, zero console errors.
+
 Phase 17 (previous session) additions, one entry per file:
 - `src/dimensions/fortress.js` — NEW: nether fortresses. One fortress per
   `NETHER.FORTRESS.REGION_CHUNKS`² (12² chunks = 192 blocks) region, always
@@ -3116,11 +3169,11 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   believe the report — the Phase 14 harness proved internal state, not
   what a player sees.
 - ~~ui/screens.js (~810) is now the only file over the cap~~ — Phase 18:
-  split done (ui/containers.js; screens.js ~670). NOW over the cap:
-  `player/interaction.js` (~806 after the bottle/eye/drink chain — cut
-  the bucket/bottle fluid actions next growth) and `systems/combat.js`
-  (~803 — the arrow machinery cut is the long-mandated split). Neither
-  may grow again without its split.
+  split done (ui/containers.js; screens.js 670). NOW OVER THE CAP and
+  MUST be split before anything else is added to them:
+  `player/interaction.js` (817 after the bottle/eye/drink chain — cut the
+  bucket/bottle fluid actions) and `systems/combat.js` (808 — the arrow
+  machinery cut, mandated since Phase 17).
 - With the survival loop closed, the remaining SPEC arc is the endgame:
   the stronghold, the End and the dragon.
 - Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
@@ -3147,11 +3200,11 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
   on a cache hit, so a `const` is still in its temporal dead zone (this
   has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
-- File-size caps (ARCHITECTURE): mobs.js sits at ~787 (blaze + enderman
-  dispatches); screens.js got its Phase 18 split (~670 +
-  ui/containers.js). interaction.js (~806) and combat.js (~803) are
-  marginally over and carry mandated-split notes — see the cap bullet
-  above and ARCHITECTURE.md.
+- File-size caps (ARCHITECTURE): mobs.js sits at 787 (blaze + enderman
+  dispatches); screens.js got its Phase 18 split (670 +
+  ui/containers.js). interaction.js (817) and combat.js (808) are OVER
+  and carry mandated-split notes — see the cap bullet above and
+  ARCHITECTURE.md.
 - The mob-type registry entries for the herds reference config MOBS.PASSIVE
   at module load (chicken maxFallSpeed) — config stays import-order-safe
   as long as it has no imports of its own; keep it that way.

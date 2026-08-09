@@ -185,15 +185,15 @@ in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
 hand lives in `player/hand.js` now) but the Phase 18 bottle/eye/drink chain
-put it at ~806 — the next growth must split (the bucket/bottle fluid actions
-are the natural cut);
+put it at 817, OVER the cap — the next session must split before anything
+else lands in it (the bucket/bottle fluid actions are the natural cut);
 `entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`),
 its ghast split in Phase 16 (`entities/ghast.js`) and its mandated skeleton
-split in Phase 17 (`entities/skeleton.js`, moved verbatim) — ~787 with the
+split in Phase 17 (`entities/skeleton.js`, moved verbatim) — 787 with the
 blaze and enderman dispatches in;
 `systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`)
-and sits at ~803 after the Phase 18 strength/sfx additions — the next growth
-MUST cut the arrow machinery out (the long-standing note);
+and sits at 808 after the Phase 18 strength/sfx/fire-resistance additions —
+also OVER, and the arrow machinery is the long-standing mandated cut;
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
 `world/chunks.js` got its mandated split in Phase 17 (`world/emitters.js`:

@@ -241,7 +241,11 @@ export function createInteraction({
   function hasRightClickUse(name, mobHit) {
     if (!name) return false;
     if (name === 'bucket' || name === 'water_bucket' || name === 'lava_bucket') return true;
-    if (name === 'glass_bottle') return true; // fills at a water source (Phase 18)
+    // A glass bottle only has a use with water actually in reach — the
+    // shears rule. Claiming the click unconditionally would leave the
+    // offhand's own item unusable whenever no pool is on the crosshair
+    // (review finding).
+    if (name === 'glass_bottle') return waterSourceInReach();
     if (name === 'ender_eye') return !!onThrowEye; // thrown toward the stronghold
     if (name === 'bow') return combat ? combat.hasArrow : true;
     if (name === 'shears') return !!mobHit; // no block/air use in this game
@@ -572,14 +576,21 @@ export function createInteraction({
     return false;
   }
 
+  // Is a water SOURCE the first thing on the crosshair ray within reach?
+  // (the glass bottle's fill condition — resolved for the active-hand
+  // rule as well as the action itself; a nearer solid still wins.)
+  function waterSourceInReach() {
+    const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
+    return !!hit && hit.id === BLOCK.WATER;
+  }
+
   // Glass bottle at a water source (Phase 18): the first WATER source on
   // the crosshair ray fills the bottle — the source itself stays (vanilla,
   // unlike the bucket). A single held bottle swaps in place; from a stack,
   // one is consumed and the water bottle joins the inventory (dropping at
   // the feet when nothing fits — never silently lost).
   function tryFillBottle(hand) {
-    const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
-    if (!hit || hit.id !== BLOCK.WATER) return false;
+    if (!waterSourceInReach()) return false;
     if (hand.stack?.count === 1) {
       hand.replace('water_bottle');
     } else {

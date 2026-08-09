@@ -171,19 +171,23 @@ export class FortressGenerator {
         const existing = cells.get(nkey);
         if (existing) {
           // The run reached an existing piece. A genuine junction needs the
-          // decks to meet FLUSH: the piece's edge toward us must sit at our
-          // height. A misaligned bridge/corridor there upgrades to a
-          // crossing (its arms resolve per neighbour at emission); a
-          // height-mismatched or unconnectable face blocks the run instead
-          // (the last placed cell gets capped with a room below).
-          const edgeY = pieceEdgeY(existing, { dx: -dir.dx, dz: -dir.dz });
+          // decks to meet FLUSH: the piece must present our height where we
+          // arrive. For a bridge/corridor that means its OWN deck height,
+          // not pieceEdgeY — a side face reaches nowhere (null), which is
+          // exactly the misaligned case Phase 17 upgraded to a crossing, so
+          // asking the face would make the upgrade unreachable (review
+          // finding: every perpendicular arrival blocked instead, capping a
+          // dead-end room against the bridge's flank with no doorway).
+          // A crossing's arms resolve per neighbour at emission, so the
+          // upgrade genuinely joins the two runs. Rooms/crossings/stairs
+          // still answer through their faces; any height mismatch blocks
+          // the run (its last cell gets capped with a room below).
+          const isRun = existing.type === 'bridge' || existing.type === 'corridor';
+          const edgeY = isRun
+            ? existing.y
+            : pieceEdgeY(existing, { dx: -dir.dx, dz: -dir.dz });
           if (edgeY === y) {
-            if (
-              (existing.type === 'bridge' || existing.type === 'corridor') &&
-              existing.axis !== dir.axis
-            ) {
-              existing.type = 'crossing';
-            }
+            if (isRun && existing.axis !== dir.axis) existing.type = 'crossing';
             merged = true;
           } else {
             blocked = true;
