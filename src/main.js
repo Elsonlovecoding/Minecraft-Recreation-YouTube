@@ -24,15 +24,18 @@ import { createSpawners } from './world/spawners.js';
 import { createWart } from './world/wart.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
-import { createInventory, itemMaxDurability } from './player/inventory.js';
+import { createInventory } from './player/inventory.js';
 import { createStats } from './player/stats.js';
 import { createDimensions } from './dimensions/dimensions.js';
 import { createPortals } from './dimensions/portals.js';
 import { NetherGenerator } from './dimensions/nether.js';
+import { strongholdCenter } from './dimensions/stronghold.js';
 import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
+import { createEnderEyes } from './entities/ender_eye.js';
 import { createSmeltingSystem } from './systems/smelting.js';
+import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat } from './systems/combat.js';
 
 async function init() {
@@ -99,6 +102,10 @@ async function init() {
   // entity-textured box models with persistent contents.
   const smelting = createSmeltingSystem({ world, items });
   world.addBlockListener(smelting.onBlockChanged);
+  // Phase 18: brewing stands tick like furnaces (potions brew with the
+  // screen closed); breaking one drops its slots.
+  const brewing = createBrewingSystem({ world, items });
+  world.addBlockListener(brewing.onBlockChanged);
   const chests = createChests({ world, scene, items, player });
   world.addBlockListener(chests.onBlockChanged);
   // Phase 17: blaze spawner block entities (fortress rooms generate them —
@@ -147,6 +154,13 @@ async function init() {
     world, scene, player, stats, inventory, items, dayNight,
     getMobs: () => mobs,
   });
+  // Phase 18: thrown eyes of ender fly toward the stronghold's
+  // deterministic location (dimensions/stronghold.js — generation itself
+  // arrives next phase at exactly that point).
+  const enderEyes = createEnderEyes({
+    scene, player, items, sfx: combat.sfx,
+    getTarget: () => strongholdCenter(TERRAIN.SEED),
+  });
   let portals; // assigned below — clicks can only arrive long after init
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory, stats,
@@ -158,6 +172,8 @@ async function init() {
     onUseMob: (mob, itemName) => mobs.useOnMob(mob, itemName),
     // Flint and steel on a block face (Phase 15): light a portal frame.
     onIgnite: (target) => portals.tryIgnite(target),
+    // A held eye of ender right-clicked (Phase 18): throw it.
+    onThrowEye: () => enderEyes.throwEye(),
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -166,6 +182,13 @@ async function init() {
       if (isFurnace(target.id)) {
         screens.openFurnace(
           smelting.furnaceAt(target.x, target.y, target.z),
+          { x: target.x, y: target.y, z: target.z },
+        );
+        return true;
+      }
+      if (target.id === BLOCK.BREWING_STAND) {
+        screens.openBrewing(
+          brewing.standAt(target.x, target.y, target.z),
           { x: target.x, y: target.y, z: target.z },
         );
         return true;
@@ -187,7 +210,10 @@ async function init() {
   // pace.
   const dimensions = createDimensions({
     world, dayNight, mobs, fluids,
-    managers: [items, mobs, falling, combat, fluids, smelting, chests, spawners, wart],
+    managers: [
+      items, mobs, falling, combat, fluids, smelting, brewing, chests,
+      spawners, wart, enderEyes,
+    ],
     defs: {
       overworld: { group: overworldGroup, sky: null, spawning: true },
       nether: {
@@ -210,32 +236,63 @@ async function init() {
     `${(performance.now() - buildStart).toFixed(0)}ms`,
   );
 
-  // TEMPORARY, MUST REMOVE BEFORE PHASE 20 (config TEST_CHEST): a chest at
-  // the spawn point stocked for portal/Nether testing without a full
-  // playthrough — 10 obsidian, flint and steel, diamond pickaxe, iron sword.
+  // TEMPORARY, MUST REMOVE BEFORE PHASE 20 (config TEST_CHEST): chests at
+  // the spawn point stocked so the portal, the Nether, brewing, endermen
+  // and eyes of ender can all be tested without a full playthrough.
   if (TEST_CHEST) {
     const p = player.body.position;
+    // The kit, in slot order. Durability items (tools, armour, bow) arrive
+    // at full durability through `add`. Water bottles and buckets stack to
+    // 1, so they cost a slot each — the kit runs past one chest's 27, and
+    // the overflow fills a second chest beside the first.
+    const TEST_KIT = [
+      ['obsidian', 14],
+      ['flint_and_steel', 1],
+      ['brewing_stand', 1],
+      ['blaze_rod', 64],
+      ['blaze_powder', 8],
+      ['nether_wart', 8],
+      ['ender_pearl', 16],
+      ['ender_eye', 16],
+      ['glass_bottle', 6],
+      ['water_bottle', 6],
+      ['bucket', 3],
+      ['diamond_helmet', 1],
+      ['diamond_chestplate', 1],
+      ['diamond_leggings', 1],
+      ['diamond_boots', 1],
+      ['diamond_sword', 1],
+      ['diamond_pickaxe', 1],
+      ['diamond_axe', 1],
+      ['diamond_shovel', 1],
+      ['iron_sword', 1],
+      ['bow', 1],
+      ['arrow', 64],
+      ['torch', 64],
+      ['cobblestone', 64],
+      ['oak_planks', 64],
+    ];
     // Prefer a column whose surface is level with the player — leaves count
-    // as solid, so a bare +2 offset could sit the chest on a tree canopy.
-    let tcx = Math.floor(p.x) + 2;
-    let tcz = Math.floor(p.z);
-    let tcy = world.getHighestSolidY(tcx, tcz) + 1;
-    for (const [ox, oz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]) {
+    // as solid, so a bare offset could sit a chest on a tree canopy. The
+    // two offset lists never overlap, so the chests can't collide.
+    const placeChest = (offsets) => {
+      const level = offsets.find(([ox, oz]) => {
+        const x = Math.floor(p.x) + ox;
+        const z = Math.floor(p.z) + oz;
+        return Math.abs((world.getHighestSolidY(x, z) + 1) - p.y) <= 2;
+      });
+      const [ox, oz] = level ?? offsets[0];
       const x = Math.floor(p.x) + ox;
       const z = Math.floor(p.z) + oz;
       const y = world.getHighestSolidY(x, z) + 1;
-      if (Math.abs(y - p.y) <= 2) {
-        tcx = x;
-        tcz = z;
-        tcy = y;
-        break;
-      }
-    }
-    world.setBlock(tcx, tcy, tcz, BLOCK.CHEST);
-    const chest = chests.chestAt(tcx, tcy, tcz);
-    chest.container.addStack({ name: 'obsidian', count: 10 });
-    for (const name of ['flint_and_steel', 'diamond_pickaxe', 'iron_sword']) {
-      chest.container.addStack({ name, count: 1, durability: itemMaxDurability(name) });
+      world.setBlock(x, y, z, BLOCK.CHEST);
+      return chests.chestAt(x, y, z);
+    };
+    const chest = placeChest([[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]);
+    const spare = placeChest([[3, 0], [-3, 0], [0, 3], [0, -3], [3, 1], [-3, -1]]);
+    for (const [name, count] of TEST_KIT) {
+      const leftover = chest.container.add(name, count);
+      if (leftover > 0) spare.container.add(name, leftover);
     }
   }
 
@@ -259,6 +316,8 @@ async function init() {
   window.__combat = combat;
   window.__stats = stats;
   window.__smelting = smelting;
+  window.__brewing = brewing;
+  window.__enderEyes = enderEyes;
   window.__chests = chests;
   window.__spawners = spawners;
   window.__wart = wart;
@@ -298,7 +357,9 @@ async function init() {
   world.addBlockListener((x, y, z, id) => {
     const pos = screens.activeBlockPos;
     if (!pos || pos.x !== x || pos.y !== y || pos.z !== z) return;
-    const stillThere = pos.kind === 'furnace' ? isFurnace(id) : id === BLOCK.CHEST;
+    const stillThere = pos.kind === 'furnace' ? isFurnace(id)
+      : pos.kind === 'brewing' ? id === BLOCK.BREWING_STAND
+      : id === BLOCK.CHEST;
     if (!stillThere) screens.closeScreen();
   });
 
@@ -343,6 +404,8 @@ async function init() {
       combat.update(delta);   // arrows in flight, explosion flashes
       falling.update(delta);
       smelting.update(delta); // furnaces run with the UI closed, independently
+      brewing.update(delta);  // brewing stands too (Phase 18)
+      enderEyes.update(delta); // thrown eyes of ender in flight (Phase 18)
       chests.update(delta);   // lid animation + chunk-visibility follow
       spawners.update(delta); // blaze spawner cycles + spinning displays
       wart.update(delta);     // nether wart growth timers

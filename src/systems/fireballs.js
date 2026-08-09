@@ -83,7 +83,9 @@ function getFireballGeometry() {
 // `explode(centre, maxDamage, opts)` and `playerAABB()` are combat's;
 // `getMobs` resolves lazily; `sfx` supplies the deflect thwack; `rayAABB`
 // is combat's slab test, injected to keep the modules cycle-free.
-export function createFireballs({ world, scene, getMobs, playerAABB, explode, sfx, rayAABB }) {
+export function createFireballs({
+  world, scene, getMobs, playerAABB, explode, sfx, rayAABB, ignitePlayer,
+}) {
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
   const fireballs = [];
 
@@ -93,9 +95,11 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
   // (default the ghast's COMBAT.FIREBALL.SIZE), `damageRadius` overrides
   // the blast falloff range, `maxHardness` caps what the blast can break
   // (combat.explode opts — blockRadius 0 breaks nothing at all).
+  // Phase 18: `fireSeconds` sets the player briefly on fire on a DIRECT hit
+  // (the blaze fireball's burn — splash damage alone never ignites).
   function spawn({
     from, vel, damage, blockRadius, fromPlayer = false,
-    size, damageRadius, maxHardness,
+    size, damageRadius, maxHardness, fireSeconds,
   }) {
     const mesh = new THREE.Mesh(
       getFireballGeometry(),
@@ -116,6 +120,7 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
       blockRadius,
       damageRadius,
       maxHardness,
+      fireSeconds,
       size: size ?? COMBAT.FIREBALL.SIZE,
       fromPlayer,
       mesh,
@@ -211,6 +216,8 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
             z: (box.minZ + box.maxZ) / 2,
           };
           knock = dir; // shoved along the flight line, away from the shooter
+          // The brief burn lands only on a direct body hit (Phase 18).
+          if (fb.fireSeconds) ignitePlayer?.(fb.fireSeconds);
         }
       }
       if (!burstAt && blockHit) {
@@ -228,6 +235,10 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
           maxHardness: fb.maxHardness,
           knockX: knock?.x,
           knockZ: knock?.z,
+          // A fire projectile (fireSeconds set — the blaze's) deals FIRE
+          // damage: fire resistance negates it for the player entirely,
+          // like vanilla (mobs in the blast still take it).
+          fireDamage: fb.fireSeconds != null,
         });
         continue;
       }

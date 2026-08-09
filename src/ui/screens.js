@@ -1,26 +1,32 @@
 // ui/screens.js — Screens over the running game. Phase 7 shipped the
-// inventory screen, Phase 8 added crafting, Phase 10 adds generic container
-// screens (a container = any SlotContainer bound to a block):
+// inventory screen, Phase 8 added crafting, Phase 10 generic container
+// screens, Phase 18 the brewing stand (and the mandated split: the
+// chest/furnace/brewing container SECTIONS live in ui/containers.js now —
+// this file keeps the panel, cursor and slot machinery, the craft grids,
+// the equip row and the open/close flow):
 //   - the inventory screen (E) carries a 2x2 craft grid with a result slot
 //   - right-clicking a crafting table opens the same panel with a 3x3 grid
 //   - right-clicking a chest opens its persistent 27-slot grid
 //   - right-clicking a furnace opens input/fuel/output with a progress
-//     arrow (smelt fraction) and flame indicator (fuel unit remaining),
-//     polled per frame via update(dt)
+//     arrow and flame indicator, polled per frame via update(dt)
+//   - right-clicking a brewing stand (Phase 18) opens ingredient over three
+//     bottle slots with a downward progress arrow and blaze-powder bar
 //   - the result slot previews the recipe match live; clicking it crafts
 //     once onto the cursor, shift-clicking crafts as many as possible
 //     straight into the inventory
 //   - closing a screen returns craft-grid contents to the inventory (drops
-//     what doesn't fit), then the cursor stack the same way; chest and
-//     furnace contents STAY in their container — that's the point of them
+//     what doesn't fit), then the cursor stack the same way; chest, furnace
+//     and brewing-stand contents STAY in their container — that's the point
 // Slot interactions are the vanilla ones from player/inventory.js,
-// systems/crafting.js and systems/smelting.js:
+// systems/crafting.js, systems/smelting.js and systems/brewing.js:
 //   - left click: pick up / put down / swap / merge (and press-drag-release
 //     moves a stack in one gesture)
 //   - right click: pick up half / place one
 //   - shift click: between hotbar and main — or, with a container open,
 //     between the inventory and the container (furnace routes smeltables
-//     to input and fuel to the fuel slot; its output slot never accepts)
+//     to input and fuel to the fuel slot; the brewing stand routes bottles
+//     to bottle slots, powder to fuel, ingredients to the ingredient slot;
+//     gated output/ingredient slots never accept what they shouldn't)
 // E or Esc closes. Phase 11 additions:
 //   - clicking the dark backdrop OUTSIDE the panel with a stack on the
 //     cursor throws it into the world along the camera direction (left
@@ -33,86 +39,20 @@ import * as THREE from 'three';
 import { INVENTORY, UI, CRAFTING, ITEMS } from '../config.js';
 import { renderSlotContent } from './icons.js';
 import { createPlayerPreview } from './player_preview.js';
+import { createContainerSections } from './containers.js';
 import { CraftingGrid } from '../systems/crafting.js';
-import {
-  SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT, isFuel, smeltResult,
-} from '../systems/smelting.js';
-import { CHEST_SLOTS } from '../world/chests.js';
-
-// Furnace indicator pixel art (inline like the other generated art):
-// a 14x14 flame and a 22x15 progress arrow, each drawn dim as background
-// with a bright fill revealed by fuel/progress fraction.
-const FLAME_ART = [
-  '......oo......',
-  '.....oooo.....',
-  '.....oooo.....',
-  '....oooooo....',
-  '....oooooo....',
-  '...oooyyooo...',
-  '...ooyyyyoo...',
-  '..ooyyyyyyoo..',
-  '..ooyyyyyyoo..',
-  '.ooyyyyyyyyoo.',
-  '.oyyyyyyyyyyo.',
-  '.oyyyyyyyyyyo.',
-  '..oyyyyyyyyo..',
-  '...oyyyyyyo...',
-];
-const FLAME_COLORS = {
-  lit: { o: '#d96415', y: '#ffc12b' },
-  dim: { o: '#3b3b3b', y: '#4a4a4a' },
-};
-const ARROW_W = 22;
-const ARROW_H = 15;
-const ARROW_SHAFT = { X1: 14, Y0: 5, Y1: 9 };
-
-function flameDataUrl(variant) {
-  const scale = 3;
-  const canvas = document.createElement('canvas');
-  canvas.width = FLAME_ART[0].length * scale;
-  canvas.height = FLAME_ART.length * scale;
-  const ctx = canvas.getContext('2d');
-  const colors = FLAME_COLORS[variant];
-  for (let y = 0; y < FLAME_ART.length; y++) {
-    for (let x = 0; x < FLAME_ART[y].length; x++) {
-      const c = FLAME_ART[y][x];
-      if (c === '.') continue;
-      ctx.fillStyle = colors[c];
-      ctx.fillRect(x * scale, y * scale, scale, scale);
-    }
-  }
-  return canvas.toDataURL();
-}
-
-function arrowInShape(x, y) {
-  if (x < ARROW_SHAFT.X1) return y >= ARROW_SHAFT.Y0 && y <= ARROW_SHAFT.Y1;
-  const half = Math.floor((ARROW_H - 1) / 2);
-  return x - ARROW_SHAFT.X1 <= half - Math.abs(y - half);
-}
-
-function arrowDataUrl(color) {
-  const scale = 3;
-  const canvas = document.createElement('canvas');
-  canvas.width = ARROW_W * scale;
-  canvas.height = ARROW_H * scale;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = color;
-  for (let y = 0; y < ARROW_H; y++) {
-    for (let x = 0; x < ARROW_W; x++) {
-      if (arrowInShape(x, y)) ctx.fillRect(x * scale, y * scale, scale, scale);
-    }
-  }
-  return canvas.toDataURL();
-}
+import { isFuel, smeltResult } from '../systems/smelting.js';
+import { routableInBrewing } from '../systems/brewing.js';
 
 export function createScreens({ inventory, canvas, items, player, camera, onRespawn }) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
-  let mode = 'inventory'; // 'inventory' | 'table' | 'chest' | 'furnace'
+  let mode = 'inventory'; // 'inventory' | 'table' | 'chest' | 'furnace' | 'brewing'
   let cursor = null;      // stack picked up onto the mouse cursor
   let downRef = null;     // { container, index } the current left press started on
   let activeChest = null;   // chest state (world/chests.js) while mode==='chest'
   let activeFurnace = null; // Furnace (systems/smelting.js) while mode==='furnace'
+  let activeBrewing = null; // BrewingStand (systems/brewing.js) while mode==='brewing'
   let containerUnsub = null; // active container subscription teardown
   let activeBlockPos = null; // { x, y, z, kind } of the open container's block —
                              // main.js closes the screen if that block goes away
@@ -127,6 +67,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   const activeExternal = () =>
     mode === 'chest' ? activeChest?.container
       : mode === 'furnace' ? activeFurnace
+      : mode === 'brewing' ? activeBrewing
       : null;
 
   // --- DOM
@@ -151,7 +92,6 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     }
     .screen-grid { display: grid; grid-template-columns: repeat(${INVENTORY.HOTBAR_SIZE}, ${UI.SCREEN_SLOT_PX}px); }
     .screen-hotbar { margin-top: 10px; }
-    .screen-chest { margin-bottom: 14px; }
     .screen-slot {
       position: relative; box-sizing: border-box;
       width: ${UI.SCREEN_SLOT_PX}px; height: ${UI.SCREEN_SLOT_PX}px;
@@ -201,37 +141,6 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       color: #6f6f6f; font: bold 30px/1 monospace;
       text-shadow: 1px 1px 0 #ffffff;
     }
-    .screen-furnace {
-      display: flex; align-items: center; justify-content: center;
-      gap: 16px; margin-bottom: 14px;
-    }
-    .screen-furnace-col {
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
-    }
-    .screen-flame {
-      position: relative; width: 42px; height: 42px;
-      image-rendering: pixelated;
-    }
-    .screen-flame img {
-      position: absolute; left: 0; bottom: 0; width: 42px; height: 42px;
-      image-rendering: pixelated;
-    }
-    .screen-flame-fill {
-      position: absolute; left: 0; bottom: 0; width: 42px; height: 0;
-      overflow: hidden;
-    }
-    .screen-progress {
-      position: relative; width: 66px; height: 45px;
-      image-rendering: pixelated;
-    }
-    .screen-progress img {
-      position: absolute; left: 0; top: 0; width: 66px; height: 45px;
-      image-rendering: pixelated;
-    }
-    .screen-progress-fill {
-      position: absolute; left: 0; top: 0; width: 0; height: 45px;
-      overflow: hidden;
-    }
     #screen-cursor {
       position: fixed; z-index: 11; pointer-events: none; display: none;
       width: ${UI.SCREEN_SLOT_PX}px; height: ${UI.SCREEN_SLOT_PX}px;
@@ -268,9 +177,9 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   // --- slot interactions
 
   // A container is the inventory, a CraftingGrid or a block container
-  // (chest SlotContainer, Furnace) — all share the same click semantics.
-  // `getContainer` resolves at event time so one set of chest/furnace slot
-  // elements can serve whichever chest/furnace is currently open.
+  // (chest SlotContainer, Furnace, BrewingStand) — all share the same click
+  // semantics. `getContainer` resolves at event time so one set of DOM slot
+  // elements can serve whichever chest/furnace/stand is currently open.
   function attachSlotEvents(el, getContainer, i) {
     el.addEventListener('mousedown', (e) => {
       const container = getContainer();
@@ -309,10 +218,11 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
 
   // Shift-click routing. With a block container open, stacks move between
   // it and the inventory (the furnace's addStack routes smeltables to the
-  // input and fuel to the fuel slot). Vanilla details: an item the furnace
-  // takes no interest in at all falls back to the hotbar <-> main move; a
-  // chest accepts anything, and a FULL chest leaves the stack where it is.
-  // Otherwise the Phase 7/8 semantics: hotbar <-> main, craft grid -> out.
+  // input and fuel to the fuel slot; the brewing stand routes bottles,
+  // powder and ingredients to their slots). Vanilla details: an item the
+  // container takes no interest in at all falls back to the hotbar <-> main
+  // move; a chest accepts anything, and a FULL chest leaves the stack where
+  // it is. Otherwise the Phase 7/8 semantics: hotbar <-> main, grid -> out.
   function shiftMove(container, i) {
     const external = activeExternal();
     if (container === inventory.armour) {
@@ -330,7 +240,10 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
         if (s) inventory.shiftClick(i);
         return;
       }
-      if (mode === 'furnace' && !smeltResult(s.name) && !isFuel(s.name)) {
+      const uninterested =
+        (mode === 'furnace' && !smeltResult(s.name) && !isFuel(s.name)) ||
+        (mode === 'brewing' && !routableInBrewing(s.name));
+      if (uninterested) {
         inventory.shiftClick(i);
       } else {
         inventory.moveSlotTo(i, external);
@@ -423,70 +336,16 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
   equipRow.appendChild(craftSections[0].section);
   panel.insertBefore(equipRow, craftSections[1].section);
 
-  // Chest section: a 9-wide grid of CHEST rows, rebound to whichever chest
-  // is open.
-  const chestSection = document.createElement('div');
-  chestSection.className = 'screen-grid screen-chest';
-  const chestCellEls = [];
-  {
-    for (let i = 0; i < CHEST_SLOTS; i++) {
-      const el = document.createElement('div');
-      el.className = 'screen-slot';
-      attachSlotEvents(el, () => activeChest?.container, i);
-      chestSection.appendChild(el);
-      chestCellEls.push(el);
-    }
-  }
-  panel.appendChild(chestSection);
-
-  // Furnace section: input over flame over fuel, progress arrow, output.
-  const furnaceSection = document.createElement('div');
-  furnaceSection.className = 'screen-furnace';
-  const furnaceSlotEls = [];
-  let flameFillEl = null;
-  let arrowFillEl = null;
-  {
-    const col = document.createElement('div');
-    col.className = 'screen-furnace-col';
-    const makeSlot = (slotIndex) => {
-      const el = document.createElement('div');
-      el.className = 'screen-slot';
-      attachSlotEvents(el, () => activeFurnace, slotIndex);
-      furnaceSlotEls[slotIndex] = el;
-      return el;
-    };
-    col.appendChild(makeSlot(SLOT_INPUT));
-    const flame = document.createElement('div');
-    flame.className = 'screen-flame';
-    const flameBg = document.createElement('img');
-    flameBg.src = flameDataUrl('dim');
-    flame.appendChild(flameBg);
-    flameFillEl = document.createElement('div');
-    flameFillEl.className = 'screen-flame-fill';
-    const flameLit = document.createElement('img');
-    flameLit.src = flameDataUrl('lit');
-    flameFillEl.appendChild(flameLit);
-    flame.appendChild(flameFillEl);
-    col.appendChild(flame);
-    col.appendChild(makeSlot(SLOT_FUEL));
-    furnaceSection.appendChild(col);
-
-    const progress = document.createElement('div');
-    progress.className = 'screen-progress';
-    const arrowBg = document.createElement('img');
-    arrowBg.src = arrowDataUrl('#5a5a5a');
-    progress.appendChild(arrowBg);
-    arrowFillEl = document.createElement('div');
-    arrowFillEl.className = 'screen-progress-fill';
-    const arrowLit = document.createElement('img');
-    arrowLit.src = arrowDataUrl('#ffffff');
-    arrowFillEl.appendChild(arrowLit);
-    progress.appendChild(arrowFillEl);
-    furnaceSection.appendChild(progress);
-
-    furnaceSection.appendChild(makeSlot(SLOT_OUTPUT));
-  }
-  panel.appendChild(furnaceSection);
+  // Container screen sections (Phase 18 split — ui/containers.js): the
+  // chest grid, the furnace and the brewing stand, bound to whichever
+  // container is open at event time.
+  const containers = createContainerSections({
+    panel,
+    attachSlotEvents,
+    getChest: () => activeChest,
+    getFurnace: () => activeFurnace,
+    getBrewing: () => activeBrewing,
+  });
 
   // Main slots (9..35) above, hotbar slots (0..8) below, like vanilla.
   const slotEls = new Array(INVENTORY.SIZE).fill(null);
@@ -552,12 +411,6 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
 
   // --- rendering
 
-  function updateIndicators() {
-    if (!activeFurnace) return;
-    flameFillEl.style.height = `${(activeFurnace.fuelFraction * 100).toFixed(1)}%`;
-    arrowFillEl.style.width = `${(activeFurnace.progressFraction * 100).toFixed(1)}%`;
-  }
-
   function refresh() {
     for (let i = 0; i < INVENTORY.SIZE; i++) {
       renderSlotContent(slotEls[i], inventory.get(i), iconPx);
@@ -581,19 +434,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       const result = s.grid.result;
       renderSlotContent(s.resultEl, result, iconPx);
     }
-    chestSection.style.display = mode === 'chest' ? 'grid' : 'none';
-    if (mode === 'chest' && activeChest) {
-      for (let i = 0; i < chestCellEls.length; i++) {
-        renderSlotContent(chestCellEls[i], activeChest.container.get(i), iconPx);
-      }
-    }
-    furnaceSection.style.display = mode === 'furnace' ? 'flex' : 'none';
-    if (mode === 'furnace' && activeFurnace) {
-      for (const idx of [SLOT_INPUT, SLOT_FUEL, SLOT_OUTPUT]) {
-        renderSlotContent(furnaceSlotEls[idx], activeFurnace.get(idx), iconPx);
-      }
-      updateIndicators();
-    }
+    containers.refresh(mode, iconPx);
     renderSlotContent(cursorEl, cursor, iconPx);
     cursorEl.style.display = cursor ? 'flex' : 'none';
   }
@@ -675,6 +516,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       mode === 'table' ? 'Crafting'
         : mode === 'chest' ? 'Chest'
         : mode === 'furnace' ? 'Furnace'
+        : mode === 'brewing' ? 'Brewing Stand'
         : 'Inventory';
     document.body.classList.add('mc-screen-open');
     root.style.display = 'flex';
@@ -712,6 +554,18 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     openScreen('furnace');
   }
 
+  // Right-clicking a brewing stand (Phase 18): `stand` is the
+  // systems/brewing.js BrewingStand, `pos` its block position.
+  function openBrewing(stand, pos) {
+    if (open || !stand) return;
+    activeBrewing = stand;
+    activeBlockPos = pos ? { x: pos.x, y: pos.y, z: pos.z, kind: 'brewing' } : null;
+    containerUnsub = stand.subscribe(() => {
+      if (open) refresh();
+    });
+    openScreen('brewing');
+  }
+
   function dropAtFeet(name, count, durability) {
     if (!items) return;
     const p = player.position;
@@ -727,7 +581,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     // Craft-grid contents go back into the inventory (vanilla), then the
     // cursor stack; anything that truly doesn't fit drops at the player's
     // feet instead of vanishing — worn tools keep their durability through
-    // the drop and back. Chest and furnace contents stay where they are.
+    // the drop and back. Chest, furnace and brewing contents stay put.
     for (const grid of [invGrid, tableGrid]) {
       for (const o of grid.drainInto(inventory)) {
         dropAtFeet(o.name, o.count, o.durability ?? undefined);
@@ -747,6 +601,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       activeChest = null;
     }
     activeFurnace = null;
+    activeBrewing = null;
     activeBlockPos = null;
     cursorEl.style.display = 'none'; // never leave the ghost over gameplay
     document.body.classList.remove('mc-screen-open');
@@ -758,11 +613,13 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     if (req && typeof req.catch === 'function') req.catch(() => {});
   }
 
-  // Per frame from main.js: the furnace indicators move continuously (slot
-  // changes emit and re-render, but burn/progress only tick), and the
-  // player preview renders while the inventory screen is up (Phase 14).
+  // Per frame from main.js: the furnace/brewing indicators move
+  // continuously (slot changes emit and re-render, but burn/progress only
+  // tick), and the player preview renders while the inventory screen is up.
   function update(dt) {
-    if (open && mode === 'furnace') updateIndicators();
+    if (open && (mode === 'furnace' || mode === 'brewing')) {
+      containers.updateIndicators(mode);
+    }
     if (open && mode === 'inventory') preview.update(dt ?? 0);
   }
 
@@ -787,6 +644,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     openCrafting,
     openChest,
     openFurnace,
+    openBrewing,
     closeScreen,
     showDeath,
     refresh,

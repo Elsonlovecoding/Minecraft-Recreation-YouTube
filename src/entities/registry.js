@@ -9,7 +9,7 @@ import { MOBS } from '../config.js';
 import {
   HUMANOID_MODEL, SKELETON_MODEL, CREEPER_MODEL, SPIDER_MODEL,
   COW_MODEL, PIG_MODEL, SHEEP_MODEL, SHEEP_WOOL_MODEL, CHICKEN_MODEL,
-  GHAST_MODEL, BLAZE_MODEL,
+  GHAST_MODEL, BLAZE_MODEL, ENDERMAN_MODEL,
 } from './models.js';
 
 export const MOB_TYPES = {
@@ -90,6 +90,30 @@ export const MOB_TYPES = {
     drops: [{ item: 'string', count: [0, 2] }],
   },
 
+  // The enderman (Phase 18 — SPEC: 40hp, 7 damage, passive until looked
+  // at, teleports, damaged by water, drops ender pearls). A rare overworld
+  // night spawn (the pearl source for eyes of ender); the End's islands
+  // fill with them next phase. Behaviour in entities/enderman.js.
+  enderman: {
+    name: 'enderman',
+    ai: 'enderman',
+    anim: 'enderman',          // biped walk + the creepy head-lift layer
+    hostile: true,
+    spawnWeight: 20,           // rare beside the 100-weight regulars, but
+                               // findable — the run needs its pearls
+    texture: 'assets/entity/enderman_enderman.png',
+    textureSize: [64, 32],
+    model: ENDERMAN_MODEL,
+    width: 0.6,
+    height: 2.9,               // vanilla hitbox — genuinely tall
+    clearance: 3,              // needs 3 blocks of standing room
+    maxHealth: 40,             // SPEC
+    speed: 3.5,                // fast once angry (wandering ambles slower)
+    attackDamage: 7,           // SPEC
+    headHeightFraction: 0.9,
+    drops: [{ item: 'ender_pearl', count: [0, 1] }], // SPEC (vanilla roll)
+  },
+
   // --- the Nether roster (Phase 16). `nether: true` keeps a type out of
   // the default overworld spawn pools — it spawns only where a dimension
   // def's spawn table lists it (entities/spawning.js reads the profile).
@@ -134,10 +158,17 @@ export const MOB_TYPES = {
     clearance: 2,
     maxHealth: 20,             // SPEC
     speed: MOBS.BLAZE.FLY_SPEED,
-    attackDamage: MOBS.BLAZE.FIREBALL.DAMAGE, // SPEC: 6 (fireball)
+    attackDamage: MOBS.BLAZE.FIREBALL.DAMAGE, // 5 per fireball + brief fire
+                               // (Phase 18: the real Minecraft values)
     minBrightness: 0.9,        // a creature of fire renders near-fullbright
     headHeightFraction: 0.85,
-    drops: [{ item: 'blaze_rod', count: [0, 1] }], // SPEC blaze_rod (vanilla roll)
+    drops: [
+      { item: 'blaze_rod', count: [0, 1] }, // SPEC blaze_rod (vanilla roll)
+      // Phase 18: magma cream rides along occasionally — it's the fire
+      // resistance ingredient (SPEC critical path) and its vanilla sources
+      // (magma cubes, bartering) are out of scope. Documented deviation.
+      { item: 'magma_cream', count: 1, chance: 0.25 },
+    ],
   },
 
   // --- the passive herds (Phase 14). Stats from the SPEC passive table;

@@ -34,6 +34,7 @@ import { createPassiveBehaviour } from './passive.js';
 import { createGhastBehaviour } from './ghast.js';
 import { createBlazeBehaviour } from './blaze.js';
 import { createSkeletonBehaviour } from './skeleton.js';
+import { createEndermanBehaviour } from './enderman.js';
 import { rayAABB } from '../systems/combat.js';
 import { createExtrudedItemMesh } from './items.js';
 import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
@@ -118,6 +119,15 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       blazeBurst: 0,
       blazeTimer: 0,
       blazeSpin: 0,
+      // enderman state (Phase 18, entities/enderman.js): the stare-aggro
+      // flag, the creepy head-lift blend, and the blink timers
+      angry: false,
+      creepy: false,
+      creepyBlend: 0,
+      lastHealth: null,
+      waterTimer: 0,
+      chaseTimer: 0,
+      headBaseY: null,
       // passive state (entities/passive.js attaches lazily)
       passive: null,
       sheared: false,
@@ -397,6 +407,10 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   const blaze = createBlazeBehaviour({
     world, player, combat, playerTargetable, playerDistance,
   });
+  const enderman = createEndermanBehaviour({
+    world, player, combat, playerTargetable, playerDistance,
+    steerToward, tryMelee,
+  });
 
   const AI = {
     zombie: zombieAI,
@@ -405,6 +419,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     spider: spiderAI,
     ghast: ghast.ghastAI,
     blaze: blaze.blazeAI,
+    enderman: enderman.endermanAI,
     passive: passive.passiveAI,
   };
 
@@ -536,7 +551,11 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     else if (type.anim === 'blaze') blaze.animateBlazeLimbs(mob);
     else if (type.anim === 'quadruped') passive.animateQuadruped(mob, swing);
     else if (type.anim === 'chicken') passive.animateChicken(mob, swing);
-    else animateBipedLimbs(mob, swing, dt);
+    else if (type.anim === 'enderman') {
+      // The biped walk plus the creepy head-lift layer (Phase 18).
+      animateBipedLimbs(mob, swing, dt);
+      enderman.animateCreepy(mob, dt);
+    } else animateBipedLimbs(mob, swing, dt);
 
     // The head tracks the player inside HEAD_TRACK_RANGE, clamped to the
     // neck's limits, and returns to forward otherwise. The part's YXZ
@@ -614,12 +633,22 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     mob.brightness += (target - mob.brightness) *
       (1 - Math.exp(-MOBS.LIGHT_TINT_RATE * dt));
     const b = mob.brightness;
+    // The blaze's wind-up flare (Phase 18 — the visible tell before a
+    // volley): the body pulses toward hot orange as the charge fills.
+    const chargeFrac = mob.type.ai === 'blaze' && mob.blazeCharge > 0
+      ? clamp(mob.blazeCharge / MOBS.BLAZE.CHARGE_SECONDS, 0, 1)
+      : 0;
     for (const material of mob.materials) {
       if (e.hurtTimer > 0) {
         material.color.setRGB(b, b * 0.35, b * 0.35);
       } else if (fuseFrac > 0 &&
         Math.sin(mob.fuse * Math.PI * 2 * MOBS.CREEPER.FLASH_HZ) > 0) {
         material.color.setRGB(1, 1, 1); // the warning blink
+      } else if (chargeFrac > 0) {
+        const pulse = 0.5 + 0.5 *
+          Math.sin(e.age * Math.PI * 2 * MOBS.BLAZE.CHARGE_FLASH_HZ);
+        const hot = chargeFrac * pulse;
+        material.color.setRGB(1, 1 - 0.45 * hot, 1 - 0.85 * hot);
       } else if (mob.onFire || e.inLava) {
         const flicker = 0.55 + 0.45 * Math.sin(e.age * 21);
         material.color.setRGB(b, b * (0.35 + 0.25 * flicker), b * 0.15);

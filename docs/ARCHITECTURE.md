@@ -88,16 +88,27 @@ src/
                          of mobs.js per the size cap, moved verbatim — the
                          injection pattern)
     blaze.js             blaze behaviour (Phase 17): hover, the
-                         charge/burst-of-3 fireball cycle, the orbiting
+                         charge/volley-of-3 fireball cycle (Phase 18
+                         retuned to the real values), the orbiting
                          rod-ring animation (the injection pattern)
+    enderman.js          enderman behaviour (Phase 18): stare-to-aggro,
+                         blink teleports, water damage, the creepy pose
+                         (the injection pattern)
+    ender_eye.js         thrown eyes of ender (Phase 18): fly toward the
+                         stronghold, hover, drop back or shatter
     dragon.js            ender dragon fight
-    items.js             dropped item entities, pickup
+    items.js             dropped item entities, pickup; item visuals
+                         (mini-blocks, sprites, extruded slabs, Phase 18
+                         tinted potion bottles)
     falling.js           falling sand/gravel entities (Phase 9 addition)
 
   systems/
     crafting.js          recipes, grid matching
     smelting.js          furnace logic, fuel
-    brewing.js           brewing stand
+    brewing.js           brewing stand (Phase 18): the 5-slot BrewingStand
+                         state machine (bottles/ingredient/blaze-powder
+                         fuel), the SPEC potion recipe table, the
+                         per-position stand map (the smelting.js shape)
     combat.js            damage, knockback, armour (Phase 13): player
                          melee with weapon cooldowns and crits, the
                          armour damage pipeline, bow + arrow projectiles,
@@ -123,19 +134,33 @@ src/
                          caverns, lava oceans, floating formations, soul
                          sand, glowstone, quartz; Phase 17 runs the
                          fortress pass last
-    fortress.js          nether fortresses (Phase 17): region-seeded
-                         blueprints (heart blaze room, bridge/corridor
-                         runs, crossings, terminal blaze towers and wart
-                         rooms) emitted per chunk deterministically, with
-                         support piers down to ground/lava
+    fortress.js          nether fortresses (Phase 17; Phase 18 grown to
+                         the real sprawling scale): region-seeded
+                         blueprints — an enclosed keep of rooms around
+                         the heart, long bridge/corridor runs, crossings,
+                         staircase galleries between deck levels, tall
+                         terminal blaze towers and wart rooms — emitted
+                         per chunk deterministically, with support piers
+                         down to ground/lava
     end.js               end island, pillars, crystals
-    stronghold.js        stronghold generation, end portal room
+    stronghold.js        stronghold generation, end portal room; Phase 18
+                         placed the deterministic LOCATION only
+                         (strongholdCenter — the eye-of-ender target;
+                         generation next phase anchors to it)
 
   ui/
-    hud.js               hotbar, health, hunger, crosshair
-    screens.js           inventory, crafting, furnace, death, victory
+    hud.js               hotbar, health, hunger, crosshair, potion-effect
+                         indicator (Phase 18)
+    screens.js           the screen panel/cursor/slot machinery, the
+                         inventory + crafting screens, death, victory;
+                         opens the container screens below
+    containers.js        the block-container screen SECTIONS — chest,
+                         furnace, brewing stand — and their indicator art
+                         (Phase 18 split out of screens.js per the size
+                         cap)
     icons.js             item icons for hud/screens: assets/items sprites,
-                         isometric atlas-rendered block cubes (Phase 7 split)
+                         isometric atlas-rendered block cubes (Phase 7
+                         split), tinted potion bottles (Phase 18)
     debug.js             fps, coords, chunk count
 
 assets/
@@ -159,22 +184,25 @@ not wherever is convenient.
 in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
-hand lives in `player/hand.js` now; ~760 after the Phase 17 planting path);
+hand lives in `player/hand.js` now) but the Phase 18 bottle/eye/drink chain
+put it at 817, OVER the cap — the next session must split before anything
+else lands in it (the bucket/bottle fluid actions are the natural cut);
 `entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`),
 its ghast split in Phase 16 (`entities/ghast.js`) and its mandated skeleton
-split in Phase 17 (`entities/skeleton.js`, moved verbatim) — ~760 now with
-the blaze dispatch in;
-`systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`;
-combat is ~785 after the Phase 17 explode/sfx additions — the next growth
-should cut the arrow machinery out);
+split in Phase 17 (`entities/skeleton.js`, moved verbatim) — 787 with the
+blaze and enderman dispatches in;
+`systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`)
+and sits at 808 after the Phase 18 strength/sfx/fire-resistance additions —
+also OVER, and the arrow machinery is the long-standing mandated cut;
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
 `world/chunks.js` got its mandated split in Phase 17 (`world/emitters.js`:
 the per-block mesher tables, the FACES geometry table and the special-shape
 emitters — torch/lava/portal/wart; moved with a byte-identical A/B check;
 chunks.js is ~495 now);
-`ui/screens.js` sits at ~810 as of Phase 14 (preview + offhand slot) — the
-brewing-stand screen should split the container screens out.
+`ui/screens.js` got its mandated split in Phase 18 (`ui/containers.js`:
+the chest/furnace/brewing container sections + indicator art; screens.js
+keeps the panel/cursor/slot machinery and is ~670 now).
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.

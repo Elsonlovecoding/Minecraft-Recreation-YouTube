@@ -26,7 +26,7 @@
 // slightly-inset box (must really be in it), cactus with a slightly-inflated
 // one (the 1/16-inset cactus box hurts on touch, including standing on top).
 
-import { PLAYER, STATS } from '../config.js';
+import { PLAYER, STATS, EFFECTS } from '../config.js';
 import { BLOCK, isLava } from '../world/blocks.js';
 import { findSpawnPosition } from './controller.js';
 
@@ -38,6 +38,11 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   let dead = false;
   let burnSeconds = 0;   // fire time left (set by lava, cleared by water)
   let poisonSeconds = 0; // hunger-poison time left (rotten flesh, Phase 14)
+  // Potion effects (Phase 18, systems/brewing.js): seconds remaining per
+  // effect type. Fire resistance suppresses ALL fire/lava damage (the one
+  // that matters for the run); strength adds melee damage (combat reads
+  // strengthBonus); healing is instant on drink (no entry here).
+  const effects = { fire_resistance: 0, strength: 0 };
   let flash = 0;         // damage screen-flash countdown
   let contactTimer = 0;  // countdown until the next contact damage tick
   let fireTimer = STATS.FIRE_TICK_SECONDS;
@@ -148,6 +153,8 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     exhaustion = 0;
     burnSeconds = 0;
     poisonSeconds = 0;
+    effects.fire_resistance = 0;
+    effects.strength = 0;
     flash = 0;
     contactTimer = 0;
     regenTimer = STATS.REGEN_INTERVAL_SECONDS;
@@ -157,16 +164,38 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     dead = false;
   }
 
-  // Eating (interaction.js calls this when the hold-to-eat completes).
-  // `food` is a { hunger, saturation, poisonChance? } entry from the
-  // inventory registry. Rotten flesh (Phase 14): poisonChance rolls the
+  // Eating/drinking (interaction.js calls this when the hold completes).
+  // `food` is a { hunger, saturation, poisonChance?, potion? } entry from
+  // the inventory registry. Rotten flesh (Phase 14): poisonChance rolls the
   // vanilla Hunger effect — for its duration exhaustion accrues by itself.
+  // Potions (Phase 18): `potion` carries the effect the drink applies —
+  // fire_resistance/strength timers, or the instant heal.
   function eat(food) {
     hunger = Math.min(PLAYER.MAX_HUNGER, hunger + food.hunger);
     saturation = Math.min(hunger, saturation + food.saturation);
     if (food.poisonChance && Math.random() < food.poisonChance) {
       poisonSeconds = STATS.HUNGER_POISON.SECONDS;
     }
+    const potion = food.potion;
+    if (potion) {
+      if (potion.effect === 'fire_resistance') {
+        effects.fire_resistance = Math.max(
+          effects.fire_resistance, EFFECTS.FIRE_RESISTANCE_SECONDS,
+        );
+      } else if (potion.effect === 'strength') {
+        effects.strength = Math.max(effects.strength, EFFECTS.STRENGTH_SECONDS);
+      } else if (potion.effect === 'healing') {
+        health = Math.min(PLAYER.MAX_HEALTH, health + EFFECTS.HEALING_AMOUNT);
+      }
+    }
+  }
+
+  // External fire (Phase 18 — a blaze fireball's brief burn; combat routes
+  // it here). Never shortens a burn already running; fire resistance still
+  // lets the flames show, it only suppresses the damage ticks below.
+  function igniteFire(seconds) {
+    if (dead || player.mode === 'fly') return;
+    burnSeconds = Math.max(burnSeconds, seconds);
   }
 
   // Exhaustion from movement and jumps, measured from the body's actual
@@ -223,13 +252,21 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     }
     if (dead) return;
 
-    // --- contact damage (lava first — it dominates — then cactus)
+    // --- potion effect timers (Phase 18)
+    for (const key of Object.keys(effects)) {
+      if (effects[key] > 0) effects[key] = Math.max(0, effects[key] - dt);
+    }
+    const fireProof = effects.fire_resistance > 0;
+
+    // --- contact damage (lava first — it dominates — then cactus). Fire
+    // resistance (the run-critical potion) suppresses lava AND fire damage
+    // entirely for its duration — swimming the lava sea is the point.
     contactTimer = Math.max(0, contactTimer - dt);
     const inLava = touchesLava();
     if (inLava) burnSeconds = STATS.LAVA_BURN_SECONDS; // (re)ignite
     if (contactTimer === 0) {
       if (inLava) {
-        damage(STATS.LAVA_DAMAGE);
+        if (!fireProof) damage(STATS.LAVA_DAMAGE);
         contactTimer = STATS.DAMAGE_TICK_SECONDS;
       } else {
         const cactus = touchesCactus();
@@ -248,14 +285,15 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     }
     if (dead) return;
 
-    // --- burning (fire damage-over-time; water puts it out)
+    // --- burning (fire damage-over-time; water puts it out; fire
+    // resistance suppresses the ticks while the flames run out)
     if (body.touchingWater) burnSeconds = 0;
     if (burnSeconds > 0) {
       burnSeconds = Math.max(0, burnSeconds - dt);
       fireTimer -= dt;
       if (fireTimer <= 0) {
         fireTimer = STATS.FIRE_TICK_SECONDS;
-        damage(STATS.FIRE_DAMAGE);
+        if (!fireProof) damage(STATS.FIRE_DAMAGE);
       }
     } else {
       fireTimer = STATS.FIRE_TICK_SECONDS;
@@ -327,6 +365,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     damage,
     applyKnockback,
     eat,
+    igniteFire,
     exhaust,
     canEatFood,
     respawn,
@@ -356,6 +395,14 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     },
     get poisoned() {
       return poisonSeconds > 0;
+    },
+    // Potion effects (Phase 18): seconds remaining per type (HUD indicator,
+    // tests). Strength's melee bonus is read by systems/combat.js.
+    get effects() {
+      return { ...effects };
+    },
+    get strengthBonus() {
+      return effects.strength > 0 ? EFFECTS.STRENGTH_BONUS_DAMAGE : 0;
     },
     get dead() {
       return dead;

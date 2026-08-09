@@ -154,6 +154,7 @@ export function createBlazeBehaviour({ world, player, combat, playerTargetable, 
       blockRadius: 0,                       // small fireballs never crater
       damageRadius: B.FIREBALL.DAMAGE_RADIUS,
       size: B.FIREBALL.SIZE,
+      fireSeconds: B.FIREBALL.FIRE_SECONDS, // Phase 18: brief burn on a hit
       fromPlayer: false,
     });
     combat.sfx.flame(Math.max(0.2, 1 - dist / B.ATTACK_RANGE));

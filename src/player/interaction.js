@@ -29,7 +29,7 @@ import {
 import {
   BLOCK, blockDef, blockIdByName, placementVariant, PLANTABLE,
 } from '../world/blocks.js';
-import { foodValue, armourSlotIndex } from './inventory.js';
+import { consumableValue, armourSlotIndex } from './inventory.js';
 import { createHand } from './hand.js';
 
 const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
@@ -181,9 +181,14 @@ function loadCrackTextures(stages) {
 // Phase 15: `onIgnite(target)` (main.js -> dimensions/portals.js) handles a
 // flint-and-steel right click on a block face — lighting a valid obsidian
 // frame into a portal; a successful ignition wears the tool 1 durability.
+// Phase 18: `onThrowEye()` (main.js -> entities/ender_eye.js) launches a
+// thrown eye of ender toward the stronghold, returning true when thrown —
+// the click consumes one eye. Glass bottles fill into water bottles at a
+// water source on the crosshair ray (the bucket-scoop pattern; the source
+// block is NOT consumed, vanilla). Potions drink through the eating hold.
 export function createInteraction({
   world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
-  onUseMob, onIgnite, combat,
+  onUseMob, onIgnite, onThrowEye, combat,
 }) {
   // --- targeting state
   let target = null;
@@ -211,6 +216,7 @@ export function createInteraction({
   const mainHand = {
     key: 'main',
     get name() { return inventory.selectedName; },
+    get stack() { return inventory.selectedStack; },
     get slotKey() { return `m${inventory.selected}`; },
     consume: (n) => inventory.consumeSelected(n),
     replace: (name) => inventory.replaceSelected(name),
@@ -220,6 +226,7 @@ export function createInteraction({
   const offHand = {
     key: 'off',
     get name() { return inventory.offhandName; },
+    get stack() { return inventory.offhandStack; },
     get slotKey() { return 'off'; },
     consume: (n) => inventory.consumeOffhand(n),
     replace: (name) => inventory.replaceOffhand(name),
@@ -234,11 +241,18 @@ export function createInteraction({
   function hasRightClickUse(name, mobHit) {
     if (!name) return false;
     if (name === 'bucket' || name === 'water_bucket' || name === 'lava_bucket') return true;
+    // A glass bottle only has a use with water actually in reach — the
+    // shears rule. Claiming the click unconditionally would leave the
+    // offhand's own item unusable whenever no pool is on the crosshair
+    // (review finding).
+    if (name === 'glass_bottle') return waterSourceInReach();
+    if (name === 'ender_eye') return !!onThrowEye; // thrown toward the stronghold
     if (name === 'bow') return combat ? combat.hasArrow : true;
     if (name === 'shears') return !!mobHit; // no block/air use in this game
     if (name === 'flint_and_steel') return true; // portal lighting (Phase 15)
     if (armourSlotIndex(name) !== null) return true;
-    const food = foodValue(name);
+    // Food, or a potion (always drinkable — Phase 18).
+    const food = consumableValue(name);
     if (food) return stats ? stats.canEatFood(food) : true;
     // Placeable block, or a plantable item (nether wart on soul sand).
     return blockIdByName(name) !== null || PLANTABLE[name] !== undefined;
@@ -562,6 +576,33 @@ export function createInteraction({
     return false;
   }
 
+  // Is a water SOURCE the first thing on the crosshair ray within reach?
+  // (the glass bottle's fill condition — resolved for the active-hand
+  // rule as well as the action itself; a nearer solid still wins.)
+  function waterSourceInReach() {
+    const hit = raycastVoxel(getBlock, rayOrigin, rayDir, PLAYER.REACH, fluidOrTargetable);
+    return !!hit && hit.id === BLOCK.WATER;
+  }
+
+  // Glass bottle at a water source (Phase 18): the first WATER source on
+  // the crosshair ray fills the bottle — the source itself stays (vanilla,
+  // unlike the bucket). A single held bottle swaps in place; from a stack,
+  // one is consumed and the water bottle joins the inventory (dropping at
+  // the feet when nothing fits — never silently lost).
+  function tryFillBottle(hand) {
+    if (!waterSourceInReach()) return false;
+    if (hand.stack?.count === 1) {
+      hand.replace('water_bottle');
+    } else {
+      hand.consume(1);
+      if (inventory.add('water_bottle', 1) > 0) {
+        const p = player.body.position;
+        items.spawn('water_bottle', 1, { x: p.x, y: p.y + 1, z: p.z });
+      }
+    }
+    return true;
+  }
+
   function updatePlacing(dt, hand) {
     if (!mouseRight) return;
     placeTimer -= dt;
@@ -634,6 +675,11 @@ export function createInteraction({
       } else if (useHand.name === 'bucket' && tryScoopFluid(useHand)) {
         mouseRight = false;
         startSwing(useHand.key);
+      } else if (useHand.name === 'glass_bottle' && tryFillBottle(useHand)) {
+        // A nearer water source wins over a usable block behind it, the
+        // bucket-scoop rule (Phase 18).
+        mouseRight = false;
+        startSwing(useHand.key);
       } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
         mouseRight = false;
         startSwing();
@@ -647,6 +693,13 @@ export function createInteraction({
         mouseRight = false;
         startSwing(useHand.key);
       } else if (tryBucketPlace(useHand)) {
+        mouseRight = false;
+        startSwing(useHand.key);
+      } else if (useHand.name === 'ender_eye' && onThrowEye && onThrowEye()) {
+        // Throwing an eye of ender (Phase 18): it flies toward the
+        // stronghold. One eye per press; the entity itself may drop back
+        // as an item or shatter (entities/ender_eye.js).
+        useHand.consume(1);
         mouseRight = false;
         startSwing(useHand.key);
       } else if (useHand.equip()) {
@@ -679,12 +732,13 @@ export function createInteraction({
       }
     }
 
-    // Eating: hold right click with food in the acting hand while hunger
-    // is missing (the golden apple's `always` flag bypasses the full gate —
-    // stats.canEatFood). Releasing the button or any change of the acting
-    // slot — including to another slot holding the SAME food — restarts
-    // from zero (vanilla resets item use on any slot change).
-    const heldFood = stats ? foodValue(useHand.name) : null;
+    // Eating/drinking: hold right click with food (or a potion — Phase 18,
+    // always drinkable, no hunger gate) in the acting hand. Releasing the
+    // button or any change of the acting slot — including to another slot
+    // holding the SAME food — restarts from zero (vanilla resets item use
+    // on any slot change). A drained potion leaves its glass bottle via
+    // the same container path stew uses for its bowl.
+    const heldFood = stats ? consumableValue(useHand.name) : null;
     if (mouseRight && heldFood && stats.canEatFood(heldFood)) {
       if (
         !eating || eating.name !== useHand.name ||

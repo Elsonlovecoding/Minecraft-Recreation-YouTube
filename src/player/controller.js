@@ -759,6 +759,14 @@ export function createPlayerController({ world, camera, canvas }) {
       return body.maxBreath;
     },
     toggleFly,
+    // The look angles (Phase 18 — the enderman's stare check derives the
+    // exact camera-forward vector from them; radians, YXZ like the camera).
+    get yaw() {
+      return yaw;
+    },
+    get pitch() {
+      return pitch;
+    },
     // Dev scaffolding (console/tests): aim the view; accept input without
     // pointer lock so a headless harness can drive the keys.
     setView(newYaw, newPitch) {
