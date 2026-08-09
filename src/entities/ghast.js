@@ -103,6 +103,7 @@ export function createGhastBehaviour({ world, player, combat, playerTargetable, 
       },
       damage: G.FIREBALL.DAMAGE,
       blockRadius: G.FIREBALL.BLOCK_RADIUS,
+      maxHardness: G.FIREBALL.MAX_BLAST_HARDNESS,
       fromPlayer: false,
     });
     combat.sfx.shriek(Math.max(0.15, 1 - dist / G.ATTACK_RANGE));

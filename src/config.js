@@ -81,6 +81,39 @@ export const NETHER = {
     // with a drop below it; the fluids automaton pours it on first sight.
     LAVA_LEAKS: { ATTEMPTS_PER_CHUNK: 2, CHANCE: 0.35, MIN_Y: 44, MAX_Y: 110 },
   },
+
+  // Phase 17 — nether fortresses (dimensions/fortress.js). One fortress per
+  // REGION_CHUNKS² chunk region, always (findable within reasonable
+  // exploration of any portal): a region-seeded blueprint of pieces on a
+  // CELL-sized grid — a central blaze room, straight bridge/corridor runs,
+  // crossings, and terminal rooms (blaze spawner towers and wart rooms) —
+  // that every intersecting chunk re-derives and emits deterministically.
+  // Geometry offsets within a cell (deck strip, doorways) are derived from
+  // CELL in fortress.js; these are the layout/growth tunables.
+  FORTRESS: {
+    REGION_CHUNKS: 12,      // one fortress per 12x12-chunk (192-block) region
+    CELL: 8,                // piece footprint (blocks); rooms fill a cell
+    ORIGIN_JITTER: 40,      // fortress origin scatter around the region centre
+                            // (extent + jitter stays inside the region, so a
+                            // chunk only ever consults its OWN region)
+    DECK_MIN_Y: 54,         // deck height rolled per fortress — inside the
+    DECK_MAX_Y: 64,         // big-cavern band, well above the lava sea
+    MAX_PIECES: 34,         // blueprint growth budget
+    MAX_RADIUS_CELLS: 5,    // extent cap in cells from the origin
+    MAX_DEPTH: 3,           // junctions chained per arm before it must end
+    ARM_MIN_CELLS: 2,       // straight run length between junctions
+    ARM_MAX_CELLS: 4,
+    CORRIDOR_CHANCE: 0.4,   // a run is a walled corridor instead of open bridge
+    CONTINUE_CHANCE: 0.7,   // a run ends in a crossing (vs a terminal room)
+    BRANCH_CHANCE: 0.6,     // each side of a crossing sprouts a new arm
+    CLEAR_HEIGHT: 4,        // air cleared above every deck/walkway
+    WALL_HEIGHT: 5,         // wart-room walls (roof sits one above)
+    TOWER_WALL_HEIGHT: 6,   // blaze-tower walls (open top, merlons above)
+    DOOR_HEIGHT: 3,         // doorway cut height (width derives from CELL)
+    WINDOW_EVERY: 3,        // corridor wall slit spacing (columns)
+    PIER_MAX_DROP: 40,      // support piers descend at most this far
+    PIER_LAVA_DEPTH: 3,     // ...and at most this deep into the lava sea
+  },
 };
 
 export const END = {
@@ -726,6 +759,14 @@ export const SHAPES = {
     WALL_ANGLE: Math.PI / 8,      // wall torch lean out of the wall (22.5°)
     WALL_BASE_Y: 3.5 / 16,        // wall torch pivot height above the cell floor
   },
+  // Nether wart crop shape (Phase 17): the vanilla crop model — four
+  // DoubleSide planes in a # arrangement, two per horizontal axis, inset
+  // PLANE_INSET from the cell edges. Younger stages render shorter, the
+  // quad sampling the bottom band of the (fully grown) atlas tile.
+  WART: {
+    PLANE_INSET: 4 / 16,          // planes sit at 4/16 and 12/16 of the cell
+    STAGE_HEIGHTS: [6 / 16, 10 / 16, 1], // quad height per growth stage 0..2
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -896,7 +937,52 @@ export const MOBS = {
       DAMAGE: 12,                 // explosion damage at the centre
       BLOCK_RADIUS: 1.6,          // crater radius (vanilla ghast power ~1 —
                                   // far smaller than a creeper's 3)
+      MAX_BLAST_HARDNESS: 1.5,    // Phase 17: a ghast fireball breaks
+                                  // netherrack (0.4) but not nether brick
+                                  // (2.0) or cobble — the fortress survives
+                                  // a ghast siege, the vanilla proportions
     },
+  },
+
+  // Blaze (Phase 17 — the fortress guardian, SPEC: 20hp, 6 fireball damage,
+  // bursts of 3, drops blaze rods). Spawned by fortress spawner blocks
+  // (world/spawners.js), never by the natural spawner. Hovers on the flying
+  // entity model: floor probes keep it a couple of blocks up; with a visible
+  // player in range it faces them, winds up, and fires a burst of three
+  // small fast fireballs (systems/fireballs.js — no crater, vanilla), then
+  // cools down. Rod-ring geometry lives in entities/models.js (BLAZE_RINGS);
+  // these are the behaviour/animation tunables.
+  BLAZE: {
+    FLY_SPEED: 1.6,               // attack drift blocks/s
+    IDLE_SPEED_FACTOR: 0.4,       // idle wander as a fraction of FLY_SPEED
+    WANDER_MIN_SECONDS: 2,        // one idle drift leg lasts this range
+    WANDER_MAX_SECONDS: 5,
+    HOVER_MIN_BLOCKS: 1,          // rises when the floor is closer than this
+    HOVER_MAX_BLOCKS: 3,          // sinks when it is farther than this
+    HOVER_PROBE_BLOCKS: 6,        // how far down the floor probe looks
+    ATTACK_RANGE: 16,             // engages a visible player inside this
+    PREFERRED_RANGE: 9,           // approaches until inside this
+    CLOSE_RANGE: 4,               // backs away when the player is closer
+    ATTACK_HOVER_ABOVE: 1,        // floats this far above the player's eye
+    VERTICAL_RESPONSE: 1.2,       // wishY per block of height error (clamped)
+    CHARGE_SECONDS: 0.7,          // visible wind-up before a burst
+    BURST_COUNT: 3,               // SPEC: bursts of 3
+    BURST_INTERVAL_SECONDS: 0.3,  // gap between the burst's fireballs
+    COOLDOWN_SECONDS: 3.0,        // rest after a burst
+    MOUTH_HEIGHT_FRACTION: 0.7,   // fireballs leave this far up the body
+    INACCURACY: 0.6,              // blocks/s of random spread on each shot
+    FIREBALL: {
+      SPEED: 16,                  // fast and small, unlike the ghast's
+      DAMAGE: 6,                  // SPEC: 6 fireball damage
+      SIZE: 0.4,                  // rendered/hitbox edge (blocks)
+      DAMAGE_RADIUS: 2,           // burst hurts only right at the impact
+    },
+    // Rod-ring animation: rad/s per ring (signs alternate the directions),
+    // sped up while charging/bursting; rods bob gently on offset phases.
+    ROD_SPIN: [-5, 3.8, -5.8],
+    ROD_SPIN_ATTACK_FACTOR: 2.2,
+    ROD_BOB_PX: 1.2,
+    ROD_BOB_HZ: 0.8,
   },
 
   // Passive herds (Phase 14 — cow/pig/sheep/chicken, entities/passive.js).
@@ -960,6 +1046,47 @@ export const MOBS = {
     DROP_COST_PER_BLOCK: 0.5,     // extra cost per block of a ledge drop
     HEURISTIC_Y_WEIGHT: 0.5,      // vertical distance weight in the A* heuristic
   },
+};
+
+// ---------------------------------------------------------------------------
+// Blaze spawners (world/spawners.js) — Phase 17: the spawner blocks fortress
+// blaze rooms generate. The cage block renders through the normal cutout
+// pass (the SPAWNER atlas tile); this system owns the spinning miniature
+// blaze inside and the spawning itself. A spawner only runs with a player
+// nearby, spawns in open cells around itself, and stops while enough blazes
+// already crowd it (vanilla shape, simplified).
+// ---------------------------------------------------------------------------
+
+export const SPAWNER = {
+  ACTIVATE_RANGE: 16,             // runs only with the player inside this
+  FIRST_DELAY_SECONDS: 2,         // a freshly discovered spawner fires fast
+  DELAY_MIN_SECONDS: 8,           // then every roll in this range
+  DELAY_MAX_SECONDS: 20,
+  SPAWN_ATTEMPTS: 8,              // random cells tried per cycle
+  MAX_SPAWNS_PER_CYCLE: 2,        // successful spawns per cycle cap
+  SPAWN_RADIUS: 3.5,              // horizontal spawn offset range (blocks)
+  SPAWN_Y_RANGE: 1,               // vertical spawn offset range (cells up)
+  MAX_NEARBY: 6,                  // stops while this many blazes are within...
+  NEARBY_RADIUS: 9,               // ...this range of the spawner
+  SPIN_IDLE: 0.6,                 // display spin rad/s with no player near
+  SPIN_ACTIVE: 6,                 // ...and while active (eased between)
+  SPIN_RESPONSE: 2.5,             // 1/s ease between the spin rates
+  MINI_SCALE: 0.4,                // the miniature blaze display's scale
+  SCAN_CHUNKS_PER_FRAME: 1,       // generated-spawner discovery pace (the
+                                  // fluids settle-scan pattern)
+};
+
+// ---------------------------------------------------------------------------
+// Nether wart (world/wart.js) — Phase 17: grows on soul sand through three
+// stages (block ids in world/blocks.js; the crop shape in SHAPES.WART).
+// Fortress wart rooms generate it fully grown; harvesting a grown wart
+// drops 2-4, replanting one on soul sand starts a new plant that this
+// system grows on a timer.
+// ---------------------------------------------------------------------------
+
+export const WART = {
+  GROW_MIN_SECONDS: 50,           // one stage advances after a roll in this
+  GROW_MAX_SECONDS: 110,          // range (two stages to full growth)
 };
 
 // ---------------------------------------------------------------------------

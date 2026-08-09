@@ -30,6 +30,7 @@ import { BLOCK } from '../world/blocks.js';
 import {
   mulberry32, hash2, hash01, lerp, bilerp, fbm2, SimplexNoise, Field3D,
 } from '../world/noise.js';
+import { FortressGenerator } from './fortress.js';
 
 const STEP = NETHER.GEN.LATTICE_STEP;
 
@@ -47,6 +48,10 @@ export class NetherGenerator {
     const D = NETHER.GEN.DENSITY;
     this.density = new Field3D(rand(0x4e7e0001), D.SCALE_XZ, D.SCALE_Y, D.OCTAVES);
     this.soulMask = new SimplexNoise(rand(0x4e7e0002));
+    // Phase 17: nether fortresses (dimensions/fortress.js) — region-seeded
+    // blueprints emitted per chunk as the LAST generation pass, so fortress
+    // blocks win over every decoration.
+    this.fortress = new FortressGenerator(this.seed);
 
     // The vertical bias per block y, pre-lerped from the SHAPE keyframes.
     this.bias = new Float64Array(NETHER.MAX_Y + 1);
@@ -177,6 +182,7 @@ export class NetherGenerator {
     this._placeQuartz(chunk);
     this._placeGlowstone(chunk);
     this._placeLavaLeaks(chunk);
+    this.fortress.emitChunk(chunk); // last — structure writes win
   }
 
   // Surface height for debug tooling: the topmost solid cell below the

@@ -20,6 +20,8 @@ import { BLOCK, isFurnace, isTorch, torchSupportCell, isSolid } from './world/bl
 import { createChunkMaterials } from './world/chunks.js';
 import { createFluids } from './world/fluids.js';
 import { createChests } from './world/chests.js';
+import { createSpawners } from './world/spawners.js';
+import { createWart } from './world/wart.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
 import { createInventory, itemMaxDurability } from './player/inventory.js';
@@ -99,6 +101,14 @@ async function init() {
   world.addBlockListener(smelting.onBlockChanged);
   const chests = createChests({ world, scene, items, player });
   world.addBlockListener(chests.onBlockChanged);
+  // Phase 17: blaze spawner block entities (fortress rooms generate them —
+  // discovered by chunk scan; the listener handles break/teardown) and the
+  // nether wart lifecycle (growth timers, soil-break pops). `mobs` is
+  // assigned below; spawner cycles can only fire frames later.
+  const spawners = createSpawners({ world, scene, player, getMobs: () => mobs });
+  world.addBlockListener(spawners.onBlockChanged);
+  const wart = createWart({ world, items });
+  world.addBlockListener(wart.onBlockChanged);
   // Phase 11: torches pop off as items when their support goes — the block
   // below a floor torch, the wall behind a wall torch. Cascades (a pillar of
   // sand under a torch collapsing) ride the listener chain naturally.
@@ -177,7 +187,7 @@ async function init() {
   // pace.
   const dimensions = createDimensions({
     world, dayNight, mobs, fluids,
-    managers: [items, mobs, falling, combat, fluids, smelting, chests],
+    managers: [items, mobs, falling, combat, fluids, smelting, chests, spawners, wart],
     defs: {
       overworld: { group: overworldGroup, sky: null, spawning: true },
       nether: {
@@ -250,6 +260,8 @@ async function init() {
   window.__stats = stats;
   window.__smelting = smelting;
   window.__chests = chests;
+  window.__spawners = spawners;
+  window.__wart = wart;
   window.__dimensions = dimensions;
   window.__portals = portals;
 
@@ -332,6 +344,8 @@ async function init() {
       falling.update(delta);
       smelting.update(delta); // furnaces run with the UI closed, independently
       chests.update(delta);   // lid animation + chunk-visibility follow
+      spawners.update(delta); // blaze spawner cycles + spinning displays
+      wart.update(delta);     // nether wart growth timers
       stats.update(delta);
       screens.update(delta);  // furnace flame/arrow indicators
       fluids.update(delta);   // lava spread steps + new-chunk settling

@@ -19,10 +19,12 @@
 //             flies on a gravity-free wander, lobs slow exploding
 //             fireballs at a visible player; a melee swing on a fireball
 //             deflects it back (combat owns the projectile)
-// (enderman and blaze arrive with their phases.)
+//   blaze     Phase 17, fortress spawner blocks only (world/spawners.js):
+//             hovers, fires bursts of three small fireballs, drops rods
+// (enderman arrives with the End phase.) Phase 17 splits: skeleton AI in
+// entities/skeleton.js, blaze in entities/blaze.js (the injection pattern).
 
-import * as THREE from 'three';
-import { MOBS, COMBAT, LIGHTING, PLAYER, CHUNK } from '../config.js';
+import { MOBS, LIGHTING, PLAYER, CHUNK } from '../config.js';
 import { Entity } from './entity.js';
 import { findPath } from './pathfinding.js';
 import { createMobModel, attachOverlayModel, SPIDER_LEG_POSE } from './models.js';
@@ -30,7 +32,9 @@ import { MOB_TYPES } from './registry.js';
 import { createSpawner } from './spawning.js';
 import { createPassiveBehaviour } from './passive.js';
 import { createGhastBehaviour } from './ghast.js';
-import { rayAABB, lineOfSight } from '../systems/combat.js';
+import { createBlazeBehaviour } from './blaze.js';
+import { createSkeletonBehaviour } from './skeleton.js';
+import { rayAABB } from '../systems/combat.js';
 import { createExtrudedItemMesh } from './items.js';
 import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
 import { blockDef } from '../world/blocks.js';
@@ -108,6 +112,12 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       wanderTimer: 0,
       wanderDir: { x: 1, y: 0, z: 0 },
       yawTarget: null,
+      // blaze state (Phase 17): the burst-of-three cycle and the rod-ring
+      // spin phase (entities/blaze.js)
+      blazeCharge: 0,
+      blazeBurst: 0,
+      blazeTimer: 0,
+      blazeSpin: 0,
       // passive state (entities/passive.js attaches lazily)
       passive: null,
       sheared: false,
@@ -313,107 +323,12 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     tryMelee(mob, dt);
   }
 
-  function skeletonAI(mob, dt) {
-    const e = mob.entity;
-    const S = MOBS.SKELETON;
-    const dist = playerDistance(mob);
-    mob.shootCooldown = Math.max(0, mob.shootCooldown - dt);
-    if (!playerTargetable() || dist > MOBS.AGGRO_RADIUS) {
-      e.wishX = 0;
-      e.wishZ = 0;
-      mob.aiming = false;
-      mob.drawTime = Math.max(0, mob.drawTime - dt * S.DRAW_DECAY_RATE);
-      return;
-    }
-    const p = e.position;
-    const t = player.body.position;
-    const eye = { x: p.x, y: p.y + S.EYE_HEIGHT, z: p.z };
-    const playerEye = { x: t.x, y: t.y + PLAYER.EYE_HEIGHT, z: t.z };
-    const los = lineOfSight(getBlock, eye, playerEye);
-
-    if (dist < S.RETREAT_RANGE) {
-      // Too close: back straight away, still aiming.
-      const dx = p.x - t.x;
-      const dz = p.z - t.z;
-      const h = Math.hypot(dx, dz) || 1;
-      e.wishX = (dx / h) * mob.type.speed;
-      e.wishZ = (dz / h) * mob.type.speed;
-      mob.aiming = los;
-    } else if (dist > S.PREFERRED_RANGE || !los) {
-      // Out of range or no shot: close in.
-      steerToward(mob, dt);
-      mob.aiming = false;
-    } else {
-      // In the sweet spot with a clear shot: stand and aim.
-      e.wishX = 0;
-      e.wishZ = 0;
-      mob.aiming = true;
-    }
-
-    // The Phase 14 firing cycle: once the cooldown has passed, an aiming
-    // skeleton DRAWS for S.DRAW_SECONDS (the visible wind-up — the draw
-    // animation reads mob.drawTime) and releases the arrow at full draw,
-    // then cools down for S.SHOOT_COOLDOWN_SECONDS. Losing the aim
-    // mid-draw lets the draw down without firing. Sum: one arrow every
-    // 2 seconds flat out, never a snap shot.
-    if (mob.aiming && mob.shootCooldown === 0) {
-      mob.drawTime += dt;
-      if (mob.drawTime >= S.DRAW_SECONDS) {
-        mob.drawTime = 0;
-        mob.shootCooldown = S.SHOOT_COOLDOWN_SECONDS;
-        skeletonShoot(mob, eye);
-      }
-    } else {
-      mob.drawTime = Math.max(0, mob.drawTime - dt * S.DRAW_DECAY_RATE);
-    }
-  }
-
-  // Fire an arrow with lead: aim where the player is heading, lifted for
-  // the gravity arc over the flight time. The arrow leaves from the BOW in
-  // the skeleton's hand (Phase 15 — it used to pop out of the eye centre),
-  // falling back to the eye until the async bow mesh exists.
-  const bowWorldPos = new THREE.Vector3();
-  function skeletonShoot(mob, eye) {
-    const S = MOBS.SKELETON;
-    let from = eye;
-    if (mob.bowGroup) {
-      // getWorldPosition refreshes the ancestor matrices itself, so this is
-      // the bow's exact position under the current draw pose.
-      mob.bowGroup.getWorldPosition(bowWorldPos);
-      from = { x: bowWorldPos.x, y: bowWorldPos.y, z: bowWorldPos.z };
-    }
-    const t = player.body.position;
-    const v = player.body.velocity;
-    const target = {
-      x: t.x, y: t.y + PLAYER.HEIGHT * S.AIM_HEIGHT_FRACTION, z: t.z,
-    };
-    const flight = Math.hypot(
-      target.x - from.x, target.y - from.y, target.z - from.z,
-    ) / S.ARROW_SPEED;
-    const lead = S.AIM_LEAD_FACTOR * flight;
-    const aim = {
-      x: target.x + v.x * lead - from.x,
-      y: target.y - from.y + 0.5 * COMBAT.ARROW.GRAVITY * flight * flight,
-      z: target.z + v.z * lead - from.z,
-    };
-    const len = Math.hypot(aim.x, aim.y, aim.z) || 1;
-    const jitter = () => (Math.random() * 2 - 1) * S.ARROW_INACCURACY;
-    const dir = { x: aim.x / len, y: aim.y / len, z: aim.z / len };
-    combat.spawnArrow({
-      from: {
-        x: from.x + dir.x * COMBAT.ARROW.SPAWN_FORWARD,
-        y: from.y + dir.y * COMBAT.ARROW.SPAWN_FORWARD,
-        z: from.z + dir.z * COMBAT.ARROW.SPAWN_FORWARD,
-      },
-      vel: {
-        x: dir.x * S.ARROW_SPEED + jitter(),
-        y: dir.y * S.ARROW_SPEED + jitter(),
-        z: dir.z * S.ARROW_SPEED + jitter(),
-      },
-      damage: mob.type.attackDamage,
-      fromPlayer: false,
-    });
-  }
+  // Skeleton behaviour (Phase 17: moved to entities/skeleton.js per the
+  // ARCHITECTURE size cap — the injection pattern; the draw/aim animation
+  // below still reads the mob fields it writes).
+  const skeleton = createSkeletonBehaviour({
+    player, combat, getBlock, playerTargetable, playerDistance, steerToward,
+  });
 
   function creeperAI(mob, dt) {
     const e = mob.entity;
@@ -474,17 +389,22 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   }
 
   // Ghast behaviour (Phase 16) lives in entities/ghast.js per the
-  // ARCHITECTURE size cap — the passive.js injection pattern.
+  // ARCHITECTURE size cap — the passive.js injection pattern; the blaze
+  // (Phase 17) follows it in entities/blaze.js.
   const ghast = createGhastBehaviour({
+    world, player, combat, playerTargetable, playerDistance,
+  });
+  const blaze = createBlazeBehaviour({
     world, player, combat, playerTargetable, playerDistance,
   });
 
   const AI = {
     zombie: zombieAI,
-    skeleton: skeletonAI,
+    skeleton: skeleton.skeletonAI,
     creeper: creeperAI,
     spider: spiderAI,
     ghast: ghast.ghastAI,
+    blaze: blaze.blazeAI,
     passive: passive.passiveAI,
   };
 
@@ -613,6 +533,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     if (type.anim === 'spider') animateSpiderLimbs(mob);
     else if (type.anim === 'creeper') animateCreeperLimbs(mob, swing);
     else if (type.anim === 'ghast') ghast.animateGhastLimbs(mob);
+    else if (type.anim === 'blaze') blaze.animateBlazeLimbs(mob);
     else if (type.anim === 'quadruped') passive.animateQuadruped(mob, swing);
     else if (type.anim === 'chicken') passive.animateChicken(mob, swing);
     else animateBipedLimbs(mob, swing, dt);

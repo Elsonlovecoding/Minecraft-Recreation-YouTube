@@ -8,7 +8,28 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 16 — the real Nether: the placeholder
+Phase last completed: **Phase 17 — nether fortresses: region-seeded
+nether-brick fortress generation in the real Nether (a guaranteed fortress
+per 192-block region — always findable within reasonable exploration of a
+portal — grown as a deterministic blueprint: a central blaze-spawner room,
+bridge and corridor runs, crossings, terminal blaze towers and wart rooms,
+all connected with doorways and support piers down to ground or the lava
+sea; every intersecting chunk re-derives the same blueprint and writes only
+its own columns), the blaze (SPEC 20hp, hovers, fires bursts of 3 small
+fast fireballs for 6, drops blaze rods; the real blaze.png model with three
+counter-rotating rod rings; spawner-only, like vanilla), blaze spawner
+block entities (the caged SPAWNER tile with a spinning miniature blaze
+inside; player-proximity activation, timed spawn cycles with a nearby-blaze
+cap; generated spawners discovered by the fluids-style chunk scan), nether
+wart (three growth-stage crop blocks on soul sand — fortress gardens
+generate them grown, harvest drops 2-4, replanting grows on timers, soil
+break pops the plant), fireball options (per-fireball size/damage-radius/
+blast-hardness — ghast fireballs now break netherrack but not nether
+brick, so fortresses survive sieges), and two mandated size-cap splits
+(world/emitters.js out of chunks.js with a byte-identical A/B proof;
+entities/skeleton.js out of mobs.js, moved verbatim)**
+
+Previous phase: **Phase 16 — the real Nether: the placeholder
 generator replaced by genuine generation (netherrack between a bedrock
 floor and the bedrock ceiling at 128, huge open caverns from a shaped 3D
 density field, lava oceans flooding every open cell at/below y=31,
@@ -1249,7 +1270,232 @@ Phase 14 (this session) additions, one entry per file:
   constants); MOBS.PASSIVE added; LIGHTING.HELD_LIGHT/HELD_LIGHT_TINT;
   INTERACTION.HAND.OFFHAND_*; UI.PLAYER_PREVIEW.
 
-Phase 16 (this session) additions, one entry per file:
+Phase 17 (this session) additions, one entry per file:
+- `src/dimensions/fortress.js` — NEW: nether fortresses. One fortress per
+  `NETHER.FORTRESS.REGION_CHUNKS`² (12² chunks = 192 blocks) region, always
+  — the region-seeded BLUEPRINT (cached per region) grows from a central
+  blaze-spawner room (the heart) by a bounded FIFO walk: straight
+  bridge/corridor runs of 2-4 cells (CELL 8), crossings that branch,
+  terminal rooms. Structural guarantees: every run ends in a room, merges
+  into an existing piece (a misaligned merge upgrades that piece to a
+  crossing so the junction genuinely joins), or branches at a crossing — no
+  isolated fragments; rooms cut doorways toward every neighbour that
+  connects back, so no sealed rooms; one deck height per fortress so decks
+  meet flush; support piers (2x2 under every other run cell and every
+  crossing, corners under rooms) descend through open air until ground, or
+  three blocks into the lava sea. Terminals alternate wart room / blaze
+  tower (heart guarantees >= 1 spawner; growth guarantees >= 1 terminal).
+  Pieces: open bridges (6-wide deck, railings), corridors (walls with
+  window slits every 3rd column, roofed), crossings (plus-shaped deck with
+  railings ringing the unconnected sides), blaze towers (open-top, merlons,
+  spawner on the floor centre), wart rooms (roofed, glowstone lamp in the
+  ceiling centre, two 3x2 sunken soul-sand beds with grown wart).
+  Everything derives from (seed, region) plus the owning chunk's own
+  already-generated columns (piers), so generation order can never change
+  the world; the fortress extent + origin jitter stays strictly inside its
+  region, so a chunk consults exactly ONE region's blueprint. `heartOf(rx,
+  rz)` is the tooling/test entry.
+- `src/dimensions/nether.js` Phase 17 — the fortress pass runs LAST in
+  generateChunk (structure writes win over soul sand/glowstone/quartz/leak
+  decorations).
+- `src/world/emitters.js` — NEW (the mandated chunks.js split, byte-
+  identical A/B-verified over a synthetic world exercising every pass):
+  the mesher's flattened per-block tables (IS_TRANSPARENT/OCCLUDES_AO/
+  SELF_CULL/INSET/PASS/TILES, the lava family tables), the FACES geometry
+  table with AO precomputation, the tileUV cache, and
+  `createSpecialEmitters(ctx)` — the per-mesh torch/lava-flow/portal
+  emitters moved verbatim, plus the NEW nether wart crop emitter: the
+  vanilla crop model (four DoubleSide planes in a # arrangement at 4/16
+  and 12/16) in the cutout pass, lit flat by the crop's own cell at full
+  brightness; younger stages render shorter quads sampling the bottom band
+  of the grown NETHER_WART_STAGE2 tile (only that stage's art ships).
+- `src/world/chunks.js` Phase 17 — consumes the split (imports the tables,
+  calls createSpecialEmitters per mesh, dispatches wart ids by
+  WART_HEIGHT); down from exactly-at-cap ~800 to ~495. `Chunk` gains
+  `_spawnerScanned` (the spawner discovery flag, cleared on the same
+  world.js unload paths as `_fluidScanned`).
+- `src/world/blocks.js` Phase 17 — NETHER_WART_0/1/2 (ids 65-67, appended):
+  walk-through instant-break crops, `special: 'wart'`, stage 2 drops 2-4
+  nether_wart, younger stages return the 1 planted; `WART_STAGE`/
+  `WART_STAGE_BLOCKS`/`isWart` helpers and the `PLANTABLE` table
+  (nether_wart -> stage-0 block on SOUL_SAND) the interaction placement
+  path and active-hand gate consult.
+- `src/world/spawners.js` — NEW: blaze spawner block entities (the chests.js
+  state pattern). The SPAWNER block renders as the normal caged cutout cube
+  (atlas tile 47); this system owns the spinning miniature blaze inside
+  (createMobModel(blaze) scaled 0.4, spin easing between idle and active
+  rates as the player comes and goes) and the spawning: with a player
+  inside ACTIVATE_RANGE (16), every 8-20s roll it tries up to 8 cells
+  within ±3.5 blocks (feet+head open, never in lava), spawning at most 2
+  per cycle and none while 6 blazes already sit within 9 blocks. Fortress
+  generation writes spawner blocks straight into chunk data (no block
+  events), so spawners are DISCOVERED by scanning each newly meshed
+  chunk's Uint8Array once (the fluids settle-scan pattern, budgeted 1
+  chunk/frame; rescans after an unload find existing states by key).
+  States follow their chunk's mesh visibility, freeze with unloaded
+  chunks, swap per dimension, and tear down (no drops) when the block is
+  broken.
+- `src/world/wart.js` — NEW: the nether wart lifecycle. Planted stage-0/1
+  warts register growth timers (WART.GROW_MIN/MAX 50-110s per stage, so
+  ~2-4 minutes to full growth); expiry advances the stage through
+  world.setBlock (remeshing + re-registration ride the normal listener
+  chain); growth freezes in unloaded chunks (the universal rule); breaking
+  the SOUL SAND under any wart pops the plant with its stage's registry
+  drops (the torch support rule); dimension-swapped like every
+  world-coordinate system.
+- `src/entities/blaze.js` — NEW (the ghast.js injection pattern): blaze
+  behaviour. Hovers on the flying entity model — floor probes hold it 1-3
+  blocks up while idle on a slow drifting wander; a visible player inside
+  ATTACK_RANGE (16) gets faced (yawTarget), the blaze climbs to float just
+  above the player's eye line, holds its ring (drift in past 9, back off
+  inside 4), and runs the SPEC firing cycle: 0.7s charge wind-up (the rod
+  rings visibly spin 2.2x faster), a burst of THREE small fast fireballs
+  0.3s apart (damage 6, size 0.4, speed 16, blockRadius 0 — no crater,
+  damage radius 2), then a 3s cooldown. Line of sight gates STARTING a
+  cycle (losing it lets the charge down), but a burst already begun always
+  finishes — dodging behind cover eats the remaining fireballs on the wall
+  (vanilla), and the cooldown charges at the end of every burst. The
+  rod animation re-positions the twelve rods from BLAZE_RINGS (radii
+  9/7/5px at 26/22/13px) each frame — three counter-rotating orbits with
+  per-rod bobbing, spin phase accumulated in the AI so it freezes with
+  unloaded chunks.
+- `src/entities/skeleton.js` — NEW: skeletonAI + skeletonShoot moved
+  VERBATIM out of mobs.js (the mandated split; the injection pattern —
+  steerToward/playerTargetable/playerDistance injected). The draw/aim
+  animation stays in mobs.js's biped animator, reading the same mob
+  fields. Regression-tested: the 2s draw-and-release cadence measured
+  unchanged.
+- `src/entities/models.js` Phase 17 — `BLAZE_MODEL`/`BLAZE_RINGS`: the 8px
+  head at pivot 24px (the vanilla rotation point) plus twelve 2x8x2 rods
+  in three rings, rest positions derived from the ring parameters the
+  animation also uses; every unwrap region verified inside blaze.png over
+  >50% opaque art (the sheet is 4-bit palette — the test decoder grew
+  PLTE/tRNS support).
+- `src/entities/registry.js` Phase 17 — the blaze entry: SPEC stats (20hp,
+  attackDamage = fireball 6, drops blaze_rod 0-1 — the vanilla roll; the
+  spawner makes farming practical), `nether: true` AND spawnWeight 0 with
+  no nether-def listing — blazes come ONLY from fortress spawner blocks,
+  like vanilla; `flying`, 0.6x1.8 vanilla hitbox, minBrightness 0.9 (a
+  creature of fire reads near-fullbright).
+- `src/entities/mobs.js` Phase 17 — the skeleton AI dispatched into
+  entities/skeleton.js and the blaze into entities/blaze.js; blaze state
+  fields (blazeCharge/blazeBurst/blazeTimer/blazeSpin) on the mob record;
+  the blaze animation dispatch. Down to ~760 (was ~840 over-cap).
+- `src/systems/fireballs.js` Phase 17 — spawn() options for the blaze's
+  small fireballs: `size` (render scale AND the deflection raycast hitbox
+  — nearestOnRay is per-fireball now), `damageRadius`, `maxHardness`, all
+  passed through to explode() on impact. Ghast fireballs unchanged by
+  default.
+- `src/systems/combat.js` Phase 17 — `explode` opts.maxHardness caps what a
+  blast can break below the global MAX_BLAST_HARDNESS (ghast fireballs now
+  pass 1.5: netherrack 0.4 breaks, nether brick 2.0 and cobble survive —
+  the vanilla proportions, and fortresses survive a ghast siege);
+  `sfx.flame` (the blaze's firing huff).
+- `src/entities/ghast.js` Phase 17 — passes the new
+  GHAST.FIREBALL.MAX_BLAST_HARDNESS through spawnFireball.
+- `src/player/interaction.js` Phase 17 — the planting path in tryPlace: a
+  held PLANTABLE item (nether wart) with no block id places its crop on
+  the soil's TOP face only, into air only (never displacing a fluid, never
+  sideways); `hasRightClickUse` counts plantables so the active-hand rule
+  lets the main hand plant.
+- `src/world/world.js` Phase 17 — both unload paths clear
+  `_spawnerScanned` alongside `_fluidScanned`.
+- `src/main.js` Phase 17 — spawners + wart systems wired: block listeners,
+  the pause-gated update ticks, the dimension managers list, `__spawners`/
+  `__wart` dev handles.
+- config Phase 17 — `NETHER.FORTRESS` (region/cell/growth/geometry/pier
+  tunables), `MOBS.BLAZE` (hover, ranges, the charge/burst/cooldown cycle,
+  FIREBALL, rod-ring animation), `MOBS.GHAST.FIREBALL.MAX_BLAST_HARDNESS`,
+  `SPAWNER` (activation, delays, attempts, caps, spin rates, scan pace),
+  `WART` (growth roll), `SHAPES.WART` (crop plane inset, per-stage
+  heights).
+
+Phase 17 verification: 23 node checks against the real modules — 20
+fortress regions all fully connected (BFS over mutually-connecting pieces)
+with >= 1 blaze room and >= 1 wart room each, bounded to their regions;
+blueprint + emission determinism across generator instances and reversed
+chunk orders; every emitted spawner standing on brick with 2 air above and
+every wart on soul sand (census: 4 spawners, 36 wart over one fortress); a
+WALKABILITY BFS from the heart's floor reaching both a spawner and wart on
+foot (1490 standable cells — doors and decks genuinely connect); the
+emitter split proven byte-identical (old chunks.js from git HEAD vs new,
+every attribute of every pass over a synthetic world with torches, flows,
+a portal, water, leaves, cactus); the wart emitter's 4 crop quads at the
+per-stage heights; every BLAZE_MODEL unwrap region inside the decoded
+blaze.png over >50% opaque art; blaze registry vs SPEC; the mocked blaze
+AI firing bursts of exactly 3 at the configured cadence with SPEC fireball
+parameters, never STARTING a burst without line of sight (a begun burst
+runs out through cover, then cools down), and hovering off floors;
+the mocked skeleton cycle unchanged after the move; wart growth
+0 -> 1 -> 2 on timers, frozen in unloaded chunks, soil-break pops with
+stage drops; config shape. In headless Chromium, 17 checks, zero console
+errors: boot; dimension switch + teleport to the region (0,0) fortress
+heart; the fortress census live (3835 bricks, 4 spawners, 27 wart around
+the heart); spawner states discovered by the chunk scan; the caged
+miniature blaze spinning (rate ramped to 6 rad/s with the player near);
+blazes spawning from the spawner (player nearby); an isolated blaze firing
+bursts of exactly [3,3] through the real combat pipeline (damage 6, size
+0.4) with the damage reaching the player; the heart room's brick intact
+through the fireball fight (the maxHardness cap); 10 direct-spawned blazes
+killed dropping 4 blaze rods as item entities; nether wart planted through
+the REAL right-click path (aim at soul sand, held button, stack consumed)
+and grown 0 -> 1 -> 2 by shortening the live timers; a generated wart room
+found with grown wart; mining the soul sand popping the wart with a drop
+through the listener chain; the overworld switch swapping out every
+spawner/timer/blaze. Screenshots verify the look: the spawner cage with
+the glowing mini blaze beside a live blaze (head + orbiting golden rod
+rings against dark brick), a hovering blaze in a fortress gallery, the
+wart-room beds glowing under the ceiling lamp, and the crenellated tower
+silhouette in the red fog.
+
+Phase 17's adversarial review (four independent lenses — fortress
+generation, blaze combat + spawners, wart/planting/mesher split, and
+regressions + session fidelity — each probing the real modules with its
+own node repros over the full diff, findings verified before they
+counted) confirmed and fixed five findings:
+- **Planting at the world ceiling ate the item**: soul sand placeable at
+  the top layer (y=319), the plant branch's air check passed on the
+  out-of-range read and `setBlock` silently no-opped while `consume(1)`
+  ran — the branch now carries the same vertical-range guard as regular
+  placement.
+- **A direct blaze fireball hit could never deal its SPEC 6** (typical
+  3-5): the burst point was the player-AABB entry, and explode() measures
+  falloff to MID-BODY — the surface-to-centre offset alone eats a sixth
+  of the blaze's 2-block damage radius. Direct player hits now burst at
+  the body centre, exactly the rule the mob-hit branch always used.
+- **Direct-hit knockback then degenerated** (the blast centred ON the
+  body has a zero radial direction, so square hits stopped shoving while
+  near-misses still did): explode() takes an explicit knock direction
+  now, and fireballs pass their flight line — shoved away from the
+  shooter, as documented since Phase 13.
+- **A burst abandoned on line-of-sight loss skipped its cooldown**, so a
+  corner-peeking player faced a fresh burst per ~0.7s of exposure. The
+  first fix (abort + charge the cooldown) then collapsed real fights to
+  single-shot bursts under knockback LOS flicker — the shipped shape is
+  the vanilla one: a begun burst always finishes (cover eats the
+  remainder), the cooldown charges at every burst end, and only STARTING
+  a cycle needs a clear shot.
+- **~27% of crossings were dead-end balconies** (their queued
+  continuations aborted on the piece budget or radius cap — a railed pad
+  to nowhere, breaking the every-arm-ends-in-a-room guarantee): a
+  deterministic post-growth pass caps every ≤1-link crossing as a
+  terminal room. Census over 2,700 regions: zero dead ends, connectivity
+  intact, and every fortress now carries >= 2 wart and >= 2 blaze rooms.
+Everything else surveyed clean with probes: chunk-locality and blueprint
+lifecycle (no post-emission mutation), 10,000-blueprint sealing/
+connectivity sweeps, pier grounding and bedrock safety, region
+containment (worst case 12 blocks inside the region border), the
+skeleton move byte-fidelity, mobs.js declaration order, spawner index
+maths/dimension swaps/leak paths/`_spawnerScanned` lifecycle, creeper
+explosions untouched by the maxHardness plumbing, wart listener
+reentrancy and both drop paths, the crop emitter's UV band maths and
+culling interplay, config import safety, and the docs' line-count
+claims. (Harness note: the burst-cadence browser check must group shots
+by GAME time — wall-clock gaps stretch arbitrarily under SwiftShader,
+the standing PROGRESS trap, and masqueraded as single-shot bursts twice
+during the review.)
+
+Phase 16 (previous session) additions, one entry per file:
 - `src/dimensions/nether.js` — the REAL Nether generator, replacing the
   Phase 15 placeholder behind the same generateChunk/heightAt/biomeAt
   interface. One seeded 3D density field (world-aligned lattice every
@@ -2274,12 +2520,31 @@ suites + the reviewers' own probes), zero console errors.
   (entities/entity.js, pathfinding.js, models.js, mobs.js are real as of
   Phase 12; systems/combat.js as of 13; dimensions/portals.js and
   dimensions/dimensions.js as of 15; dimensions/nether.js as of 16).
+- Phase 17 deliberate slices:
+  - Blazes are SPAWNER-ONLY (vanilla also natural-spawns them around
+    fortresses); the spawner keeps the fight going, and rods farm fine.
+  - Blazes count toward the Nether's hostile cap (GHAST.CAP 4), so a
+    fortress fight suppresses natural ghast spawns until the blazes die
+    or despawn — accepted pacing, self-healing (hostiles despawn at 128).
+  - A blaze fireball's small blast (damage radius 2) hurts every mob in
+    range — blazes can chip each other in a crossfire, like ghast blasts
+    always could. No fire blocks: fireballs still ignite nothing (fire
+    exists only as a status).
+  - Fortresses are single-level (one deck height per fortress); vanilla
+    stacks levels. Spawners drop nothing and give no XP (no XP system).
+  - Only the grown wart texture ships; younger stages render shorter
+    crop quads sampling the bottom band of the same art (reads as red
+    sprouts). No trampling; a falling block landing in a wart cell
+    overwrites it silently (unreachable in practice — the Nether
+    generates no sand/gravel).
+  - Wart growth timers are runtime-random (like sheep wool regrowth),
+    not seeded — only world GENERATION is deterministic.
+  - The spawner's discovery scan runs 1 chunk/frame — a spawner can
+    take a second or two to grow its display after its chunk first
+    meshes (spawning needs the player within 16 blocks anyway).
 - Phase 16 deliberate slices:
-  - **No nether fortresses yet** — and with them blazes (the blaze-rod
-    gate on brewing/eyes of ender) and nether wart. That is the next
-    Nether session: generate fortress structures (nether brick platforms,
-    corridors, blaze spawn areas, wart patches) into the real terrain,
-    and the blaze itself (the sheet ships in assets/entity/blaze.png).
+  - ~~No nether fortresses yet~~ — Phase 17: fortresses, blazes and
+    nether wart are in (see above).
   - Ghast fireballs can be deflected by melee only — arrows pass through
     them (vanilla lets arrows pop them; our arrows only test mobs).
     Fireball explosions use the standard explosion (no fire blocks — fire
@@ -2491,15 +2756,31 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **The next Nether session is fortresses**: nether-brick structures
-  generated into the real terrain (the atlas ships NETHER_BRICKS 35;
-  keep structure writes in-chunk deterministic like every other feature,
-  or generate from a region-seeded layout both chunks re-derive), blazes
-  (assets/entity/blaze.png, SPEC 20hp / 6 fireball damage / bursts of 3 —
-  systems/fireballs.js generalises: a blaze fireball is a smaller, faster
-  spawn with its own damage/radius), and nether wart for brewing. After
-  that the remaining SPEC arc is brewing, the stronghold + eyes of ender,
-  the End and the dragon.
+- **The Nether arc is complete**: portal -> real generation -> fortresses
+  with blazes and wart. Blaze rods now feed the EXISTING Phase 8 recipes
+  (blaze powder x2, brewing stand, eye of ender). The remaining SPEC arc:
+  **brewing** (systems/brewing.js stub; nether wart + blaze powder are
+  obtainable — the Furnace/SlotContainer + screens pattern is the
+  template, and ui/screens.js must split its container screens first, per
+  the cap note), the **enderman** (the pearl source for eyes of ender —
+  sheet ships at assets/entity/enderman_enderman.png, 64x32; SPEC 40hp /
+  7dmg / passive-until-looked-at / teleports / water damage), the
+  **stronghold + eye throwing**, the **End and the dragon**.
+- Phase 17 APIs: `world.generator.fortress` (Nether dimension) —
+  `blueprint(rx, rz)` and `heartOf(rx, rz)` locate fortresses for
+  tooling/tests. `PLANTABLE` (world/blocks.js) is the crop-planting hook
+  (a future wheat only needs an entry + a growth system like
+  world/wart.js). `combat.spawnFireball` takes per-fireball `size`
+  (render + deflection hitbox), `damageRadius` and `maxHardness`;
+  `combat.explode` takes opts.maxHardness. The spawner discovery scan
+  (`chunk._spawnerScanned`, world/spawners.js) is the pattern for ANY
+  block entity a structure generates into chunk data (the stronghold's
+  loot chests will need exactly this — chests.js currently only creates
+  state on block events or first use).
+- The blaze's firing cycle state lives on the mob record
+  (blazeCharge/blazeBurst/blazeTimer/blazeSpin); the rod-ring animation
+  reads BLAZE_RINGS from models.js — keep geometry there, behaviour
+  tunables in MOBS.BLAZE.
 - Phase 16 APIs: dimension defs (main.js) carry `spawn` tables —
   `{ hostiles: [names], passives: [names], hostileCap, passiveCap,
   anyLight }` resolved by `mobs.setSpawnProfile` on every switch; put new
@@ -2529,12 +2810,12 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   browser sampling); if a future report contradicts PROGRESS again,
   believe the report — the Phase 14 harness proved internal state, not
   what a player sees.
-- world/chunks.js is exactly AT the ~800 cap — the next session that
-  grows it must split the special-shape emitters (torch/lava/portal) out
-  first (see ARCHITECTURE.md).
+- ~~world/chunks.js is exactly AT the ~800 cap~~ — Phase 17: split done
+  (world/emitters.js, byte-identical A/B). ui/screens.js (~810) is now
+  the only file over the cap — the brewing screen must split it first.
 - With the survival loop closed, the remaining SPEC arc is the endgame:
-  the Nether (now: generation + its mobs), brewing, the stronghold + eyes
-  of ender, the End and the dragon.
+  brewing, the enderman, the stronghold + eyes of ender, the End and the
+  dragon.
 - Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
   right-click-on-mob hook (extend for wheat-luring/breeding). Passive
   types: `ai: 'passive'` + optional `wool`/`laysEggs`/`maxFallSpeed`/
@@ -2559,11 +2840,12 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
   on a cache hit, so a `const` is still in its temporal dead zone (this
   has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
-- File-size caps (ARCHITECTURE): mobs.js is OVER the cap at ~910 even
-  after the spawning split (the herd registry entries) — the next session
-  that touches it must first move the MOB_TYPES registry into its own
-  entities/registry.js. screens.js is at ~810; the brewing-stand screen
-  should trigger a split (container screens vs the inventory screen).
+- File-size caps (ARCHITECTURE): ~~mobs.js is OVER the cap~~ — the
+  registry split (Phase 15), ghast split (Phase 16) and skeleton split
+  (Phase 17) have it at ~760. screens.js is at ~810; the brewing-stand
+  screen should trigger a split (container screens vs the inventory
+  screen). combat.js is at ~785 — the next growth should cut the arrow
+  machinery out.
 - The mob-type registry entries for the herds reference config MOBS.PASSIVE
   at module load (chicken maxFallSpeed) — config stays import-order-safe
   as long as it has no imports of its own; keep it that way.
@@ -2784,3 +3066,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 14 | Passive herds (cow/pig/sheep/chicken): SPEC stats/drops, wander + panic-flee AI (entities/passive.js), daylight-grass spawning with the no-despawn cap rule (entities/spawning.js split), mobs frozen in unloaded chunks, models verified against the shipped temperate sheets (multi-box parts, wool overlay, quadruped body roll — entities/models.js), sheep shearing + wool regrowth, chicken eggs + slow fall; the exact vanilla food table audited + golden-apple/rotten-flesh (80% Hunger) rules; hunger pacing halved (EXHAUSTION_SCALE); real 20-min day/night phase timing (10/1.5/7/1.5); cave spawn pressure quartered + hostile cap halved; skeleton visible bow (left hand) + 2s draw-and-release cycle + drop census verified; inventory-screen 3D player preview (generated neutral skin, live armour overlays, mouse follow); offhand slot (F swap, left-hand first-person render, right-click active-hand fallback, offhand bow/bucket/food/armour); held-torch dynamic light level 14 from either hand (render-time per-fragment, verified zero remeshing); armour re-verified live; the full early game verified end to end; 5-lens adversarial review with all 11 confirmed findings fixed | Nether/End dimensions + their mobs, brewing, stronghold, dragon; breeding/luring; held-light spawn-gate interaction (render-only by design); water flow; rivers; the skeleton "fix" proved internal-state-only — the visible cycle landed in Phase 15 |
 | 15 | Portal mechanics: obsidian frame detection (SPEC 4x5 minimum, corners optional, node-tested pure logic), flint-and-steel lighting with durability wear through the real right-click chain, animated generated-swirl portal blocks (world-space UVs, emissive light 11), purple portal particles + procedural hum/shimmer/whoosh, 3s stand-to-travel with 1:8 coordinate scaling, linked portal reuse within 32 blocks or creation flush on local ground, portal break-down via the block listener; the dimension system (dimensions/dimensions.js): one World whose backing store swaps, per-dimension scene groups, every entity manager swapping collections (items/mobs/falling/arrows/fluids/furnaces/chests — frozen + hidden while stored, furnaces provably not smelting), fixed dimension skies (setDimensionSky), Nether death respawning at the overworld spawn; the placeholder flat-netherrack Nether; water+lava -> obsidian/cobblestone (immediate on contact, fluids.js); the distinct mega-cavern pass + waterfall springs (world/noise.js split, byte-identical); the skeleton shooting fix (raise-draw-release cycle, bow-position arrows, MIN_TINT night visibility, visible arc at speed 24); MOB_TYPES -> entities/registry.js (mandated split); TEMPORARY test chest behind config TEST_CHEST; 26 node + 61 browser checks, review fixes (stale-camera travel frame, canopy chest, portal UV seam) | The real Nether generation + blazes/ghasts (placeholder replaced next session); nether portal ceiling-height placement niceties (ocean-floor return portals, Y-blind link search); mobs/items never travel portals; brewing, stronghold, End, dragon |
 | 16 | The real Nether (dimensions/nether.js): shaped 3D density field between bedrock floor and the bedrock ceiling at 128 — huge open caverns, lava oceans at/below y=31, floating netherrack formations, soul sand patches (registry `slows`), glowstone ceiling clusters, quartz veins, rare wall lava leaks; ~1.5ms/chunk, byte-deterministic; the dimension ambient floor (`NETHER_SKY.AMBIENT_LIGHT` -> `uMinSkyLevel`) making "constant dim red" real under the ceiling; Nether lava tick halved (fluids.setTickSeconds per dimension); ceiling-aware linked-portal ground search + carved-pocket fallback (arrivals can't land on the ceiling); the ghast (entities/ghast.js + registry `flying`/`scale`/`minBrightness`, GHAST_MODEL from the real 2x sheet): gravity-free wander, fireballs at a visible player every 3s, melee deflection flipping ownership (systems/fireballs.js — combat raycast wraps fireballs, explode takes per-blast radii); per-dimension spawn tables (nether: ghasts only, any light, cap 4; overworld pools exclude `nether: true` types); the chest-lid fix (modern sheet's swapped top/bottom slots — model + icon); two cap splits (ghast.js, fireballs.js); 10 node + 23 browser checks, zero console errors | Nether fortresses + blazes + nether wart; arrows don't pop fireballs; ghast shooting-face texture; wider Nether lava range (needs new flow ids); brewing, stronghold, End, dragon |
+| 17 | Nether fortresses (dimensions/fortress.js): a guaranteed fortress per 192-block region — region-seeded blueprints (heart blaze room, 6-wide bridge/corridor runs with railings/windows, crossings, terminal blaze towers with merlons and roofed wart rooms with glowstone lamps), fully connected with doorways, one deck height, support piers to ground/lava; deterministic per-chunk emission (fortress pass last). The blaze (entities/blaze.js + BLAZE_MODEL/BLAZE_RINGS): hovers, holds its ring, charge -> burst of 3 small fast fireballs (6 dmg, no crater) -> cooldown, drops blaze rods 0-1, spawner-only. Blaze spawner block entities (world/spawners.js): spinning caged mini blaze, proximity-gated timed spawn cycles with a nearby cap, fluids-style chunk-scan discovery of generated spawners. Nether wart (blocks 65-67 + world/wart.js + the emitters crop model): fortress gardens generate it grown, harvest drops 2-4, PLANTABLE replant on soul sand grows on timers, soil break pops. Fireball opts (size/damageRadius/maxHardness — ghast blasts spare nether brick). Two mandated cap splits: world/emitters.js (byte-identical A/B) and entities/skeleton.js (verbatim). 23 node + 17 browser checks, zero console errors | Blazes spawner-only (no natural fortress spawns); single-level fortresses; no fire blocks from fireballs; no spawner XP; wart stages reuse the grown art cropped; brewing, enderman, stronghold, End, dragon |
