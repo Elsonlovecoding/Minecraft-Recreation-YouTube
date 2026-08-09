@@ -383,6 +383,24 @@ export const BLAZE_MODEL = [
     })),
 ];
 
+// Enderman (enderman_enderman.png, 64x32 — Phase 18): the vanilla model,
+// converted with the same rules (rotation points -13/-14/-12/-5 with the
+// humanoid mesh shifted -14). A 2.9-block rig: 8px head at 37..45px, the
+// JAW as a separate deflated box on the same pivot (vanilla's "hat" layer —
+// the open-mouth art at texOffs 0,16; the creepy pose lifts the head off
+// it, entities/enderman.js), 8x12x4 body, and 2x30x2 arms and legs (legs
+// pivoted at 30 so the feet land exactly on the ground plane; vanilla's
+// 29 sinks them 1px under it).
+export const ENDERMAN_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 37, 0], offset: [-4, 0, -4] },
+  { name: 'jaw', texOffs: [0, 16], size: [8, 8, 8], pivot: [0, 37, 0], offset: [-4, 0, -4], inflate: -0.5 },
+  { name: 'body', texOffs: [32, 16], size: [8, 12, 4], pivot: [0, 38, 0], offset: [-4, -12, -2] },
+  { name: 'rightArm', texOffs: [56, 0], size: [2, 30, 2], pivot: [5, 36, 0], offset: [-1, -28, -1] },
+  { name: 'leftArm', texOffs: [56, 0], size: [2, 30, 2], pivot: [-5, 36, 0], offset: [-1, -28, -1], mirror: true },
+  { name: 'rightLeg', texOffs: [56, 0], size: [2, 30, 2], pivot: [2, 30, 0], offset: [-1, -30, -1] },
+  { name: 'leftLeg', texOffs: [56, 0], size: [2, 30, 2], pivot: [-2, 30, 0], offset: [-1, -30, -1], mirror: true },
+];
+
 // Chicken (chicken_temperate_chicken.png, 64x32): 4x6x3 head with beak and
 // wattle, 6x8x6 body, 3x5x3 legs, 1x4x6 wings (flap while falling).
 export const CHICKEN_MODEL = [

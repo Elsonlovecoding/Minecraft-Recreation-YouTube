@@ -246,7 +246,7 @@ Passive mobs spawn on grass in daylight, do not despawn.
 | creeper | 20 | 22 (explosion) | approaches, hisses, explodes after 1.5s | gunpowder |
 | spider | 16 | 2 | fast, climbs walls, neutral in daylight | string |
 | enderman | 40 | 7 | passive until looked at, teleports, damaged by water | ender_pearl |
-| blaze | 20 | 6 (fireball) | flies, shoots fire in bursts of 3 | blaze_rod |
+| blaze | 20 | 5 (fireball) + brief fire | flies, volley of 3 fireballs then ~5s cooldown, visible wind-up | blaze_rod |
 | ghast | 10 | explosion | flies, shoots slow fireballs, deflectable | gunpowder |
 
 ### Passive

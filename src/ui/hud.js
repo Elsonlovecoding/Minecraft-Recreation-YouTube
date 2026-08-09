@@ -12,7 +12,7 @@
 // under pointer lock, leaving the box on the old slot.
 
 import { PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS, COMBAT } from '../config.js';
-import { renderSlotContent } from './icons.js';
+import { renderSlotContent, createItemIcon } from './icons.js';
 import { getAtlasTexture, TILE } from '../render/atlas.js';
 
 let breathRow = null;
@@ -34,6 +34,8 @@ let selectEl = null;     // the hotbar selection highlight box
 let lastSelected = -1;
 let syncSelection = null; // repositions selectEl; also guarded per frame
 let lavaEl = null;       // fullscreen overlay while the eye is in lava
+let effectsRow = null;   // active potion effects, top-right (Phase 18)
+let lastEffectsKey = ''; // rebuilt only when the countdowns change
 
 // The lava overlay art: the real still-lava atlas tile, darkened, tiled
 // across the screen (vanilla draws the block texture over the whole view).
@@ -281,6 +283,23 @@ export function initHud(inventory) {
       position: fixed; inset: 0; pointer-events: none; z-index: 4;
       background: rgba(190, 0, 0, 0.30); opacity: 0;
     }
+    #hud-effects {
+      /* active potion effects (Phase 18): tinted bottle + countdown,
+         top-right like vanilla */
+      position: fixed; top: 10px; right: 10px; z-index: 5;
+      display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+      pointer-events: none;
+    }
+    .hud-effect {
+      display: flex; align-items: center; gap: 7px;
+      background: rgba(12, 12, 12, 0.6); padding: 4px 9px 4px 5px;
+      border: 2px solid rgba(0, 0, 0, 0.8); border-radius: 3px;
+      box-shadow: 0 0 0 1px rgba(190, 190, 190, 0.3);
+    }
+    .hud-effect span {
+      color: #fff; font: bold 13px/1 monospace;
+      text-shadow: 1.5px 1.5px 0 #3f3f3f;
+    }
   `;
   document.head.appendChild(style);
 
@@ -403,6 +422,42 @@ export function initHud(inventory) {
   lavaEl.id = 'hud-lava-overlay';
   lavaEl.style.backgroundImage = `url(${lavaOverlayDataUrl()})`;
   document.body.appendChild(lavaEl);
+
+  // --- active potion effects (Phase 18)
+  effectsRow = document.createElement('div');
+  effectsRow.id = 'hud-effects';
+  document.body.appendChild(effectsRow);
+  lastEffectsKey = '';
+}
+
+// The potion item whose tinted-bottle icon stands for each effect.
+const EFFECT_ICON_ITEM = {
+  fire_resistance: 'fire_resistance_potion',
+  strength: 'strength_potion',
+};
+
+// Rebuilt only when the whole-second countdowns change (cheap, and the
+// icons are cached data URLs after first build).
+function updateEffects(stats) {
+  if (!effectsRow || !stats?.effects) return;
+  const active = Object.entries(stats.effects)
+    .filter(([, s]) => s > 0)
+    .map(([type, s]) => [type, Math.ceil(s)]);
+  const key = active.map(([t, s]) => `${t}:${s}`).join(',');
+  if (key === lastEffectsKey) return;
+  lastEffectsKey = key;
+  effectsRow.textContent = '';
+  for (const [type, seconds] of active) {
+    const el = document.createElement('div');
+    el.className = 'hud-effect';
+    el.appendChild(createItemIcon(EFFECT_ICON_ITEM[type] ?? 'potion', 26));
+    const label = document.createElement('span');
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    label.textContent = `${m}:${String(s).padStart(2, '0')}`;
+    el.appendChild(label);
+    effectsRow.appendChild(el);
+  }
 }
 
 // Call once per frame with the player controller and (Phase 9) the stats.
@@ -425,6 +480,7 @@ export function updateHud(player, stats) {
       bubbles[i].style.visibility = i < shown ? 'visible' : 'hidden';
     }
   }
+  updateEffects(stats);
 
   if (!stats || !heartEls.length) return;
   if (stats.health !== lastHealth) {

@@ -251,6 +251,16 @@ export function createCombat({
       seconds: 0.35, volume: 0.45 * volume, filterType: 'bandpass',
       frequency: 2400, attack: 0.01,
     }),
+    // The enderman's teleport vwoop (Phase 18).
+    warp: (volume) => noiseBurst({
+      seconds: 0.4, volume: 0.4 * volume, filterType: 'bandpass',
+      frequency: 700, attack: 0.05,
+    }),
+    // An eye of ender shattering (Phase 18) — a short glassy crack.
+    shatter: (volume) => noiseBurst({
+      seconds: 0.2, volume: 0.5 * volume, filterType: 'highpass',
+      frequency: 2600, attack: 0.005,
+    }),
   };
 
   // Baked-light brightness at a point (the mob tint formula) for arrows —
@@ -277,6 +287,9 @@ export function createCombat({
     world, scene, getMobs, sfx, rayAABB,
     playerAABB: (...args) => playerAABB(...args),
     explode: (...args) => explode(...args),
+    // Phase 18: a fireball with `fireSeconds` (the blaze's) sets the player
+    // briefly on fire on a direct hit — the vanilla burn-after-the-hit.
+    ignitePlayer: (seconds) => stats.igniteFire(seconds),
   });
 
   // --- player melee ---------------------------------------------------------
@@ -310,7 +323,10 @@ export function createCombat({
     const name = inventory.selectedName;
     const body = player.body;
     const falling = body.velocity.y < 0 && !body.onGround && !body.touchingWater;
-    let damage = (WEAPON_DAMAGE[name] ?? WEAPON_DAMAGE.fist) *
+    // Strength (Phase 18 — the potion) adds to the base like the vanilla
+    // attribute, so the charge curve scales it too.
+    let damage = ((WEAPON_DAMAGE[name] ?? WEAPON_DAMAGE.fist) +
+      (stats.strengthBonus ?? 0)) *
       attackChargeFactor(since, name);
     if (falling) damage *= COMBAT.CRIT_MULTIPLIER;
     mob.provoked = true; // neutral mobs (daylight spiders) fight back

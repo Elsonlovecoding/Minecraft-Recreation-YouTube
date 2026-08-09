@@ -46,6 +46,8 @@ const SPECIAL_DURABILITY = { bow: 384, flint_and_steel: 64, shears: 238 };
 const SPECIAL_MAX_STACK = {
   bucket: 1, water_bucket: 1, lava_bucket: 1, milk_bucket: 1,
   mushroom_stew: 1, potion: 1,
+  water_bottle: 1, awkward_potion: 1, fire_resistance_potion: 1,
+  strength_potion: 1, healing_potion: 1,
   ender_pearl: 16, egg: 16,
 };
 
@@ -97,6 +99,44 @@ const FOODS = {
 // { hunger, saturation, container? } for an edible item name, else null.
 export function foodValue(name) {
   return FOODS[name] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Potion registry (Phase 18 — systems/brewing.js brews them, stats.js
+// applies the effects). Per potion: the liquid colour (the bottle art is
+// tinted with it everywhere the item shows — entities/items.js builds the
+// canvas) and the effect drinking applies. SPEC potions: awkward (the
+// base), fire resistance (the one that matters), healing, strength.
+// Colours are the vanilla liquid colours; awkward gets a murky violet so
+// it reads distinct from water in a game with no item tooltips.
+// ---------------------------------------------------------------------------
+
+export const POTIONS = {
+  water_bottle:           { color: 0x385dc6 },
+  awkward_potion:         { color: 0x7a6f9e },
+  fire_resistance_potion: { color: 0xe49a3a, effect: 'fire_resistance' },
+  strength_potion:        { color: 0x932423, effect: 'strength' },
+  healing_potion:         { color: 0xf82423, effect: 'healing' },
+};
+
+export function potionInfo(name) {
+  return POTIONS[name] ?? null;
+}
+
+// Anything consumable by the hold-right-click flow: food, or a potion
+// (always drinkable, no hunger gate, leaves the glass bottle behind —
+// player/interaction.js drives both through the same hold).
+export function consumableValue(name) {
+  const food = FOODS[name];
+  if (food) return food;
+  const potion = POTIONS[name];
+  if (potion) {
+    return {
+      hunger: 0, saturation: 0, always: true,
+      container: 'glass_bottle', potion,
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

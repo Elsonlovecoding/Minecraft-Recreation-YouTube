@@ -82,36 +82,51 @@ export const NETHER = {
     LAVA_LEAKS: { ATTEMPTS_PER_CHUNK: 2, CHANCE: 0.35, MIN_Y: 44, MAX_Y: 110 },
   },
 
-  // Phase 17 — nether fortresses (dimensions/fortress.js). One fortress per
-  // REGION_CHUNKS² chunk region, always (findable within reasonable
-  // exploration of any portal): a region-seeded blueprint of pieces on a
-  // CELL-sized grid — a central blaze room, straight bridge/corridor runs,
-  // crossings, and terminal rooms (blaze spawner towers and wart rooms) —
-  // that every intersecting chunk re-derives and emits deterministically.
+  // Phase 17 — nether fortresses (dimensions/fortress.js), Phase 18 grown to
+  // the real sprawling scale ("fortresses are too small" report): one
+  // fortress per REGION_CHUNKS² chunk region, always, spanning up to
+  // ~300 blocks — genuinely long bridges (runs of dozens of cells),
+  // multiple blaze towers, staircase galleries connecting decks at
+  // different heights, and an enclosed KEEP of interconnected rooms and
+  // corridors around the heart. Region-seeded blueprint on a CELL grid;
+  // every intersecting chunk re-derives it and emits deterministically.
   // Geometry offsets within a cell (deck strip, doorways) are derived from
   // CELL in fortress.js; these are the layout/growth tunables.
   FORTRESS: {
-    REGION_CHUNKS: 12,      // one fortress per 12x12-chunk (192-block) region
+    REGION_CHUNKS: 24,      // one fortress per 24x24-chunk (384-block) region
+                            // (Phase 18: doubled — the fortress itself spans
+                            // most of the region, so it stays findable)
     CELL: 8,                // piece footprint (blocks); rooms fill a cell
     ORIGIN_JITTER: 40,      // fortress origin scatter around the region centre
                             // (extent + jitter stays inside the region, so a
                             // chunk only ever consults its OWN region)
-    DECK_MIN_Y: 54,         // deck height rolled per fortress — inside the
-    DECK_MAX_Y: 64,         // big-cavern band, well above the lava sea
-    MAX_PIECES: 34,         // blueprint growth budget
-    MAX_RADIUS_CELLS: 5,    // extent cap in cells from the origin
-    MAX_DEPTH: 3,           // junctions chained per arm before it must end
-    ARM_MIN_CELLS: 2,       // straight run length between junctions
-    ARM_MAX_CELLS: 4,
-    CORRIDOR_CHANCE: 0.4,   // a run is a walled corridor instead of open bridge
-    CONTINUE_CHANCE: 0.7,   // a run ends in a crossing (vs a terminal room)
+    DECK_MIN_Y: 48,         // base deck height rolled per fortress — inside
+    DECK_MAX_Y: 58,         // the big-cavern band, above the lava sea
+    MAX_PIECES: 110,        // blueprint growth budget (Phase 18: was 34)
+    MAX_RADIUS_CELLS: 18,   // extent cap in cells from the origin (144
+                            // blocks — up to ~290 blocks across; jitter +
+                            // extent stays strictly inside the region)
+    MAX_DEPTH: 6,           // junctions chained per arm before it must end
+    BRIDGE_MIN_CELLS: 4,    // open-bridge run length range — LONG spans
+    BRIDGE_MAX_CELLS: 14,   // (up to 112 blocks in one straight run)
+    CORRIDOR_MIN_CELLS: 2,  // walled-corridor runs stay shorter
+    CORRIDOR_MAX_CELLS: 5,
+    CORRIDOR_CHANCE: 0.35,  // a run is a walled corridor instead of open bridge
+    CONTINUE_CHANCE: 0.75,  // a run ends in a crossing (vs a terminal room)
     BRANCH_CHANCE: 0.6,     // each side of a crossing sprouts a new arm
+    STAIR_CHANCE: 0.4,      // a continuing run inserts a staircase gallery
+                            // before its junction, shifting the deck level
+    LEVEL_STEP: 6,          // blocks of height one staircase cell climbs
+    LEVEL_RANGE: 12,        // deck levels stay within base deckY ± this
+    KEEP_RADIUS_CELLS: 1,   // the enclosed keep spans (2R+1)² cells around
+                            // the heart (1 = a 3x3 block of rooms, 24x24)
     CLEAR_HEIGHT: 4,        // air cleared above every deck/walkway
-    WALL_HEIGHT: 5,         // wart-room walls (roof sits one above)
-    TOWER_WALL_HEIGHT: 6,   // blaze-tower walls (open top, merlons above)
+    WALL_HEIGHT: 5,         // roofed-room walls (roof sits one above)
+    TOWER_WALL_HEIGHT: 10,  // blaze-tower walls (Phase 18: tall, open-top,
+                            // merlons above — reads as a tower from afar)
     DOOR_HEIGHT: 3,         // doorway cut height (width derives from CELL)
     WINDOW_EVERY: 3,        // corridor wall slit spacing (columns)
-    PIER_MAX_DROP: 40,      // support piers descend at most this far
+    PIER_MAX_DROP: 48,      // support piers descend at most this far
     PIER_LAVA_DEPTH: 3,     // ...and at most this deep into the lava sea
   },
 };
@@ -783,6 +798,45 @@ export const SMELTING = {
 };
 
 // ---------------------------------------------------------------------------
+// Brewing (systems/brewing.js — Phase 18: the brewing stand. The potion and
+// ingredient tables are registries in that file and player/inventory.js,
+// like smelting recipes; these are the global tunables.)
+// ---------------------------------------------------------------------------
+
+export const BREWING = {
+  BREW_SECONDS: 20,               // one brewing operation (vanilla 20s)
+  BREWS_PER_FUEL: 20,             // operations one blaze powder fuels (vanilla)
+};
+
+// Potion effect strengths/durations (player/stats.js applies them on drink).
+export const EFFECTS = {
+  FIRE_RESISTANCE_SECONDS: 180,   // vanilla 3:00 — no fire or lava damage
+  STRENGTH_SECONDS: 180,          // vanilla 3:00
+  STRENGTH_BONUS_DAMAGE: 3,       // vanilla Strength I: +3 melee damage
+  HEALING_AMOUNT: 4,              // vanilla Instant Health I: 2 hearts
+};
+
+// ---------------------------------------------------------------------------
+// Eyes of ender (entities/ender_eye.js — Phase 18: thrown eyes fly toward
+// the stronghold, hover, then drop back as an item or shatter). The
+// stronghold's deterministic location comes from dimensions/stronghold.js
+// using PORTALS.STRONGHOLD_MIN/MAX_DISTANCE; the shatter roll is
+// PORTALS.EYE_SHATTER_CHANCE (both SPEC numbers).
+// ---------------------------------------------------------------------------
+
+export const ENDER_EYE = {
+  TRAVEL_BLOCKS: 16,              // the eye glides this far toward the target
+  RISE_BLOCKS: 9,                 // ...climbing this high above the throw
+  FLY_SECONDS: 2.2,               // glide duration (eased out)
+  HOVER_SECONDS: 1.1,             // float at the signal point before resolving
+  SPRITE_SIZE: 0.45,              // rendered slab edge (blocks)
+  SPIN_RATE: 3.0,                 // rad/s idle spin
+  BOB_HZ: 1.6,                    // hover bob rate
+  BOB_BLOCKS: 0.12,               // hover bob amplitude
+  SHATTER_FLASH_SECONDS: 0.35,    // the little burst when an eye breaks
+};
+
+// ---------------------------------------------------------------------------
 // Mobs
 // ---------------------------------------------------------------------------
 
@@ -944,14 +998,15 @@ export const MOBS = {
     },
   },
 
-  // Blaze (Phase 17 — the fortress guardian, SPEC: 20hp, 6 fireball damage,
-  // bursts of 3, drops blaze rods). Spawned by fortress spawner blocks
-  // (world/spawners.js), never by the natural spawner. Hovers on the flying
-  // entity model: floor probes keep it a couple of blocks up; with a visible
-  // player in range it faces them, winds up, and fires a burst of three
-  // small fast fireballs (systems/fireballs.js — no crater, vanilla), then
-  // cools down. Rod-ring geometry lives in entities/models.js (BLAZE_RINGS);
-  // these are the behaviour/animation tunables.
+  // Blaze (Phase 17 — the fortress guardian; Phase 18 retuned to the real
+  // Minecraft pacing after the "blazes kill almost instantly" report:
+  // a volley of 3 fireballs in quick succession, then a clear ~5s cooldown
+  // before the next, each fireball 5 damage on a direct hit plus a brief
+  // burn — and a LONG, clearly visible wind-up (the rod rings spin up and
+  // the body flares) so the player can take cover). Spawned by fortress
+  // spawner blocks (world/spawners.js), never by the natural spawner.
+  // Hovers on the flying entity model. Rod-ring geometry lives in
+  // entities/models.js (BLAZE_RINGS); these are the behaviour tunables.
   BLAZE: {
     FLY_SPEED: 1.6,               // attack drift blocks/s
     IDLE_SPEED_FACTOR: 0.4,       // idle wander as a fraction of FLY_SPEED
@@ -965,24 +1020,56 @@ export const MOBS = {
     CLOSE_RANGE: 4,               // backs away when the player is closer
     ATTACK_HOVER_ABOVE: 1,        // floats this far above the player's eye
     VERTICAL_RESPONSE: 1.2,       // wishY per block of height error (clamped)
-    CHARGE_SECONDS: 0.7,          // visible wind-up before a burst
-    BURST_COUNT: 3,               // SPEC: bursts of 3
-    BURST_INTERVAL_SECONDS: 0.3,  // gap between the burst's fireballs
-    COOLDOWN_SECONDS: 3.0,        // rest after a burst
+    CHARGE_SECONDS: 1.2,          // visible wind-up before a volley (the rod
+                                  // rings spin up and the body flares — long
+                                  // enough to read and duck behind cover)
+    BURST_COUNT: 3,               // real Minecraft: volleys of 3
+    BURST_INTERVAL_SECONDS: 0.3,  // gap between the volley's fireballs
+    COOLDOWN_SECONDS: 5.0,        // rest after a volley (real Minecraft ~5s —
+                                  // the window to close in or take cover)
     MOUTH_HEIGHT_FRACTION: 0.7,   // fireballs leave this far up the body
     INACCURACY: 0.6,              // blocks/s of random spread on each shot
     FIREBALL: {
       SPEED: 16,                  // fast and small, unlike the ghast's
-      DAMAGE: 6,                  // SPEC: 6 fireball damage
+      DAMAGE: 5,                  // real Minecraft: 5 on a direct hit...
+      FIRE_SECONDS: 4,            // ...plus a brief burn (1 damage/s DoT)
       SIZE: 0.4,                  // rendered/hitbox edge (blocks)
       DAMAGE_RADIUS: 2,           // burst hurts only right at the impact
     },
     // Rod-ring animation: rad/s per ring (signs alternate the directions),
     // sped up while charging/bursting; rods bob gently on offset phases.
+    // CHARGE_FLASH_HZ pulses the body toward hot orange during the wind-up
+    // (the visible tell, on top of the ring spin-up).
     ROD_SPIN: [-5, 3.8, -5.8],
     ROD_SPIN_ATTACK_FACTOR: 2.2,
     ROD_BOB_PX: 1.2,
     ROD_BOB_HZ: 0.8,
+    CHARGE_FLASH_HZ: 7,
+  },
+
+  // Enderman (Phase 18 — SPEC: 40hp, 7 damage, passive until the player
+  // looks directly at its head, teleports, damaged by water, drops ender
+  // pearls). Overworld night spawns (rare), and the End next phase.
+  ENDERMAN: {
+    STARE_RANGE: 40,              // a stare registers within this distance
+    STARE_DOT_SLACK: 0.025,       // vanilla: seen when lookDir · dirTo >
+                                  // 1 - SLACK/dist (tighter with distance)
+    FORGET_RANGE: 48,             // calms down beyond this distance
+    WANDER_SPEED_FACTOR: 0.35,    // idle amble as a fraction of chase speed
+    WANDER_MIN_SECONDS: 2,        // one idle leg lasts this range
+    WANDER_MAX_SECONDS: 5,
+    IDLE_MIN_SECONDS: 2,          // pause between idle legs
+    IDLE_MAX_SECONDS: 7,
+    WATER_DAMAGE: 1,              // per tick while touching water (vanilla)
+    WATER_TICK_SECONDS: 1.0,
+    TELEPORT_RADIUS: 24,          // random blink offset range (hit / water)
+    TELEPORT_ATTEMPTS: 16,        // candidate columns tried per blink
+    TELEPORT_Y_RANGE: 8,          // vertical search span around the target y
+    CHASE_TELEPORT_RANGE: 14,     // while angry and farther than this...
+    CHASE_TELEPORT_SECONDS: 4,    // ...blink near the player about this often
+    CHASE_ARRIVE_RADIUS: [3, 8],  // ...landing this far from them
+    CREEPY_HEAD_RAISE_PX: 3,      // the head lifts while angry (the vanilla
+                                  // "creepy" pose, sized for the tall rig)
   },
 
   // Passive herds (Phase 14 — cow/pig/sheep/chicken, entities/passive.js).
@@ -1375,20 +1462,24 @@ export const LAVA_VIEW = {
 };
 
 export const NETHER_SKY = {
-  FOG_COLOR: 0x330808,            // thick red, close
-  FOG_NEAR: 5,
-  FOG_FAR: 60,
+  FOG_COLOR: 0x4a1006,            // thick warm red, close (Phase 18: lifted
+                                  // from near-black 0x330808 — the Nether
+                                  // should read dimly lit, not dark)
+  FOG_NEAR: 8,
+  FOG_FAR: 72,
   // SPEC "ambient light: constant dim red" — while in the Nether the
   // day/night cycle's sky writes are overridden with these fixed values
   // (render/lighting.js setDimensionSky): skylight held at a permanent dusk
   // and tinted red, block light (glowstone, lava, the portal) unaffected.
   SKY_DARKEN: 5,
-  SKY_TINT: 0xff9a80,
+  SKY_TINT: 0xffa075,             // the warm red-orange cast
   // Phase 16: with the bedrock ceiling the real Nether has NO sky light at
   // all inside — this floors the effective sky level per fragment (and the
   // mob tint) so enclosed netherrack reads as the dim red glow instead of
   // pitch black. 0 in dimensions without the field (the overworld cycle).
-  AMBIENT_LIGHT: 6,
+  // Phase 18: 6 -> 9 ("the Nether is too dark" report — dimly lit but
+  // clearly visible; lava and glowstone still dominate up close).
+  AMBIENT_LIGHT: 9,
 };
 
 export const END_SKY = {

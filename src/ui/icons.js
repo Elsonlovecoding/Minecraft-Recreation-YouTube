@@ -16,7 +16,7 @@
 import { ATLAS, UI } from '../config.js';
 import { getAtlasTexture } from '../render/atlas.js';
 import { faceTiles } from '../world/blocks.js';
-import { itemVisualInfo, atlasSpriteCanvas } from '../entities/items.js';
+import { itemVisualInfo, atlasSpriteCanvas, getPotionCanvas } from '../entities/items.js';
 import { itemMaxDurability } from '../player/inventory.js';
 import { CHEST_TEXTURE_PATH } from '../world/chests.js';
 
@@ -217,6 +217,8 @@ export function createItemIcon(name, sizePx) {
   if (info.model === 'chest') {
     img.style.height = `${Math.round(sizePx * BLOCK_ICON_ASPECT)}px`;
     setChestIcon(img);
+  } else if (info.potion) {
+    setPotionIcon(img, info.sprite);
   } else if (info.blockId !== undefined) {
     img.style.height = `${Math.round(sizePx * BLOCK_ICON_ASPECT)}px`;
     img.src = blockIconDataURL(info.blockId);
@@ -226,6 +228,27 @@ export function createItemIcon(name, sizePx) {
     img.src = `assets/items/${info.sprite}.png`;
   }
   return img;
+}
+
+// Potion icons (Phase 18): the tinted-bottle canvas from entities/items.js,
+// cached as a data URL per potion; the canvas builds async off the shared
+// bottle art (the chest-icon pattern).
+const potionIconUrlCache = new Map();
+
+function setPotionIcon(imgEl, name) {
+  const cached = potionIconUrlCache.get(name);
+  if (cached) {
+    imgEl.src = cached;
+    return;
+  }
+  getPotionCanvas(name).then((canvas) => {
+    let url = potionIconUrlCache.get(name);
+    if (!url) {
+      url = canvas.toDataURL();
+      potionIconUrlCache.set(name, url);
+    }
+    imgEl.src = url;
+  });
 }
 
 const atlasSpriteUrlCache = new Map(); // item name -> data URL

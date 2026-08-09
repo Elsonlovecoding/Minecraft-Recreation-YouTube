@@ -13,6 +13,7 @@ import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK, ATLAS } from '../con
 import { BLOCK, blockIdByName, faceTiles, isSolid, isLava } from '../world/blocks.js';
 import { getUV, getAtlasTexture, TILE } from '../render/atlas.js';
 import { createChestMesh } from '../world/chests.js';
+import { POTIONS } from '../player/inventory.js';
 
 const EPS = 1e-5;
 const TAU = Math.PI * 2;
@@ -52,6 +53,90 @@ export function atlasSpriteCanvas(name) {
   ctx.drawImage(getAtlasTexture().image, sx, sy, P, P, 0, 0, P, P);
   atlasSpriteCanvases.set(name, canvas);
   return canvas;
+}
+
+// ---------------------------------------------------------------------------
+// Potion visuals (Phase 18): every potion item renders as the shipped bottle
+// art (assets/items/potion.png — the empty bottle) FILLED with the potion's
+// tinted liquid, generated once per potion onto a 16x16 canvas. Dropped
+// slabs, the held hand and the UI icons (ui/icons.js) all draw from it.
+// The fill is a scanline interior pass over the bottle's lower half, so it
+// tracks the actual art instead of a hard-coded mask.
+// ---------------------------------------------------------------------------
+
+const POTION_LIQUID_TOP = 6;   // liquid fills the bottle from this row down
+const potionCanvasCache = new Map(); // potion name -> canvas
+let potionBasePromise = null;        // shared bottle-art load
+
+function buildPotionCanvas(img, colorHex) {
+  const P = 16;
+  const canvas = document.createElement('canvas');
+  canvas.width = P;
+  canvas.height = P;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  if (!img) {
+    // Missing bottle art (broken install): a plain tinted square beats
+    // rendering nothing at all.
+    ctx.fillStyle = `#${colorHex.toString(16).padStart(6, '0')}`;
+    ctx.fillRect(4, 6, 8, 8);
+    return canvas;
+  }
+  ctx.drawImage(img, 0, 0, P, P);
+  const data = ctx.getImageData(0, 0, P, P);
+  const px = data.data;
+  const r = (colorHex >> 16) & 0xff;
+  const g = (colorHex >> 8) & 0xff;
+  const b = colorHex & 0xff;
+  for (let y = POTION_LIQUID_TOP; y < P; y++) {
+    // Scanline interior: transparent pixels between the row's outermost
+    // opaque (glass) pixels become liquid; the glass shine stays on top.
+    let lo = -1;
+    let hi = -1;
+    for (let x = 0; x < P; x++) {
+      if (px[(y * P + x) * 4 + 3] >= 128) {
+        if (lo < 0) lo = x;
+        hi = x;
+      }
+    }
+    if (lo < 0) continue;
+    // The liquid darkens slightly toward the bottom (reads as depth).
+    const shade = 1 - 0.18 * ((y - POTION_LIQUID_TOP) / (P - POTION_LIQUID_TOP));
+    for (let x = lo + 1; x < hi; x++) {
+      const o = (y * P + x) * 4;
+      if (px[o + 3] >= 128) continue;
+      px[o] = Math.round(r * shade);
+      px[o + 1] = Math.round(g * shade);
+      px[o + 2] = Math.round(b * shade);
+      px[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  return canvas;
+}
+
+// The tinted bottle canvas for a potion item name, async (the bottle art
+// loads once, shared). Resolves to a 16x16 canvas; cached per name.
+export function getPotionCanvas(name) {
+  const cached = potionCanvasCache.get(name);
+  if (cached) return Promise.resolve(cached);
+  potionBasePromise ??= new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      console.warn('[items] missing texture assets/items/potion.png');
+      resolve(null);
+    };
+    img.src = 'assets/items/potion.png';
+  });
+  return potionBasePromise.then((img) => {
+    let canvas = potionCanvasCache.get(name);
+    if (!canvas) {
+      canvas = buildPotionCanvas(img, POTIONS[name]?.color ?? 0xffffff);
+      potionCanvasCache.set(name, canvas);
+    }
+    return canvas;
+  });
 }
 
 // Mesh for a { model } visual — dropped items, the held hand and any future
@@ -177,6 +262,7 @@ function getSpriteMaterial(name) {
 // a flat texture from assets/items/ ({ sprite }).
 export function itemVisualInfo(name) {
   if (MODEL_ITEMS[name]) return { model: MODEL_ITEMS[name] };
+  if (POTIONS[name]) return { sprite: name, potion: true };
   if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
     return { sprite: name, atlas: true };
   }
@@ -320,6 +406,19 @@ export function createExtrudedItemMesh(name, size, onReady) {
     extrudedCache.set(name, built);
     group.add(new THREE.Mesh(built.geometry, built.material));
     onReady?.();
+    return group;
+  }
+  // Potions (Phase 18): the tinted-bottle canvas, async like the image path.
+  if (POTIONS[name]) {
+    getPotionCanvas(name).then((canvas) => {
+      let built = extrudedCache.get(name);
+      if (!built) {
+        built = buildExtrudedGeometry(canvas);
+        extrudedCache.set(name, built);
+      }
+      group.add(new THREE.Mesh(built.geometry, built.material));
+      onReady?.();
+    });
     return group;
   }
   const img = new Image();
