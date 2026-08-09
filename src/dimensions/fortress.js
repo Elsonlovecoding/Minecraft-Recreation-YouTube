@@ -178,6 +178,27 @@ export class FortressGenerator {
       }
     }
 
+    // A crossing whose queued continuations all aborted (budget or radius
+    // exhausted before they dequeued) would be a railed balcony to nowhere
+    // — cap every crossing with at most one linked neighbour as a terminal
+    // room instead, so every arm genuinely ends in a room. Deterministic:
+    // Map iteration is insertion order, the check uses no rng, and a
+    // conversion never changes any other cell's link count (rooms connect
+    // back on every side, exactly like crossings).
+    for (const [key, piece] of cells) {
+      if (piece.type !== 'crossing') continue;
+      const [cx, cz] = key.split(',').map(Number);
+      let links = 0;
+      for (const d of DIRS) {
+        const n = cells.get(keyOf(cx + d.dx, cz + d.dz));
+        if (n && connects(n, d.axis)) links++;
+      }
+      if (links <= 1) {
+        piece.type = 'room';
+        terminals.push(key);
+      }
+    }
+
     // Terminal roles: the heart is already a blaze room, so the wart room
     // comes first, then alternate. Growth always yields at least one
     // terminal (the very first arm can neither merge nor be blocked), but

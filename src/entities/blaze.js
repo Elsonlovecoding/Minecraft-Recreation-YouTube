@@ -57,6 +57,22 @@ export function createBlazeBehaviour({ world, player, combat, playerTargetable, 
     const engaged = playerTargetable() && dist <= B.ATTACK_RANGE &&
       lineOfSight(getBlock, mouth, target);
 
+    // A burst already begun always FINISHES (vanilla): dodging behind
+    // cover eats the remaining fireballs on the wall, and the cooldown
+    // charges at the end of every burst — so a corner-peeking player faces
+    // one full cycle per exposure, never a fresh charge per peek (Phase 17
+    // review fix; the first cut aborted the burst, which under knockback
+    // LOS flicker collapsed every burst to a single shot).
+    if (mob.blazeBurst > 0) {
+      mob.blazeTimer -= dt;
+      if (mob.blazeTimer <= 0) {
+        blazeShoot(mob, mouth, target, dist);
+        mob.blazeBurst--;
+        mob.blazeTimer = B.BURST_INTERVAL_SECONDS;
+        if (mob.blazeBurst === 0) mob.shootCooldown = B.COOLDOWN_SECONDS;
+      }
+    }
+
     if (engaged) {
       mob.yawTarget = Math.atan2(-(t.x - p.x), -(t.z - p.z));
 
@@ -73,16 +89,9 @@ export function createBlazeBehaviour({ world, player, combat, playerTargetable, 
       const wantY = t.y + PLAYER.EYE_HEIGHT + B.ATTACK_HOVER_ABOVE;
       e.wishY = clampSpeed((wantY - p.y) * B.VERTICAL_RESPONSE, B.FLY_SPEED);
 
-      // The firing cycle: cooldown -> charge (wind-up) -> burst of three.
-      if (mob.blazeBurst > 0) {
-        mob.blazeTimer -= dt;
-        if (mob.blazeTimer <= 0) {
-          blazeShoot(mob, mouth, target, dist);
-          mob.blazeBurst--;
-          mob.blazeTimer = B.BURST_INTERVAL_SECONDS;
-          if (mob.blazeBurst === 0) mob.shootCooldown = B.COOLDOWN_SECONDS;
-        }
-      } else if (mob.shootCooldown === 0) {
+      // Starting a new cycle needs the cooldown spent and a clear shot:
+      // charge the wind-up, then launch the burst above.
+      if (mob.blazeBurst === 0 && mob.shootCooldown === 0) {
         mob.blazeCharge += dt;
         if (mob.blazeCharge >= B.CHARGE_SECONDS) {
           mob.blazeCharge = 0;
@@ -95,16 +104,10 @@ export function createBlazeBehaviour({ world, player, combat, playerTargetable, 
 
     // Idle: a slow drifting wander (re-rolled on expiry or a wall), the
     // hover controller keeping it a couple of blocks off the floor. Losing
-    // the target mid-wind-up lets the charge down; a burst already begun
-    // is abandoned (no blind-firing through walls) — but still charges the
-    // full cooldown, or a corner-peeking player would face a fresh burst
-    // per ~0.7s of exposure instead of one per cycle (Phase 17 review fix).
+    // the target mid-wind-up lets the charge down (a burst in progress
+    // still runs out above).
     mob.yawTarget = null;
     mob.blazeCharge = 0;
-    if (mob.blazeBurst > 0) {
-      mob.blazeBurst = 0;
-      mob.shootCooldown = B.COOLDOWN_SECONDS;
-    }
     mob.wanderTimer -= dt;
     if (mob.wanderTimer <= 0 || e.horizontalCollision) {
       mob.wanderTimer = B.WANDER_MIN_SECONDS +
