@@ -194,12 +194,18 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
           burstAt = { x: mp.x, y: mp.y + mob.entity.def.height / 2, z: mp.z };
         }
       } else {
-        const t = rayAABB(fb.pos, dir, playerAABB(), range);
+        const box = playerAABB();
+        const t = rayAABB(fb.pos, dir, box, range);
         if (t !== null) {
+          // Blast centred on the body, exactly like the mob branch above —
+          // a direct hit lands the fireball's full damage. Bursting at the
+          // AABB entry point instead left the surface-to-mid-body offset
+          // inside the falloff, so a blaze's 2-radius fireball could never
+          // deal its SPEC 6 (Phase 17 review fix).
           burstAt = {
-            x: fb.pos.x + dir.x * t,
-            y: fb.pos.y + dir.y * t,
-            z: fb.pos.z + dir.z * t,
+            x: (box.minX + box.maxX) / 2,
+            y: (box.minY + box.maxY) / 2,
+            z: (box.minZ + box.maxZ) / 2,
           };
         }
       }

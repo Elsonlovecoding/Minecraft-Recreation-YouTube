@@ -96,10 +96,15 @@ export function createBlazeBehaviour({ world, player, combat, playerTargetable, 
     // Idle: a slow drifting wander (re-rolled on expiry or a wall), the
     // hover controller keeping it a couple of blocks off the floor. Losing
     // the target mid-wind-up lets the charge down; a burst already begun
-    // is abandoned (no blind-firing through walls).
+    // is abandoned (no blind-firing through walls) — but still charges the
+    // full cooldown, or a corner-peeking player would face a fresh burst
+    // per ~0.7s of exposure instead of one per cycle (Phase 17 review fix).
     mob.yawTarget = null;
     mob.blazeCharge = 0;
-    mob.blazeBurst = 0;
+    if (mob.blazeBurst > 0) {
+      mob.blazeBurst = 0;
+      mob.shootCooldown = B.COOLDOWN_SECONDS;
+    }
     mob.wanderTimer -= dt;
     if (mob.wanderTimer <= 0 || e.horizontalCollision) {
       mob.wanderTimer = B.WANDER_MIN_SECONDS +
