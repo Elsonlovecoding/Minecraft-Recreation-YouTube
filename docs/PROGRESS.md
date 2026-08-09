@@ -84,11 +84,19 @@ art on top; model + icon both corrected against the decoded pixels)**
 
 ## TEMPORARY, MUST REMOVE (before Phase 20)
 
-- **The spawn test chest** (`TEST_CHEST` in config.js, default true;
-  placement in main.js right after prebuild): a chest at the player's spawn
-  point holding 10 obsidian, 1 flint and steel, 1 diamond pickaxe and
-  1 iron sword, so the portal and Nether can be tested without a full
-  playthrough. Delete the config flag and the main.js block together.
+- **The spawn test chests** (`TEST_CHEST` in config.js, default true;
+  placement in main.js right after prebuild): TWO chests beside the
+  player's spawn point (the kit is 32 slots, past one chest's 27, so the
+  overflow fills a second chest one block further out), stocked so the
+  portal, the Nether, brewing, endermen and eyes of ender can all be
+  tested without a full playthrough. Contents (Phase 18 expansion):
+  14 obsidian, 1 flint and steel, 1 brewing stand, 64 blaze rods,
+  8 blaze powder, 8 nether wart, 16 ender pearls, 16 eyes of ender,
+  6 glass bottles, 6 water bottles, 3 buckets, a full diamond armour set,
+  a diamond sword/pickaxe/axe/shovel, 1 iron sword, 1 bow, 64 arrows,
+  64 torches, 64 cobblestone, 64 oak planks (tools, armour and the bow
+  arrive at full durability through `container.add`). Delete the config
+  flag and the main.js block together.
 
 ---
 
