@@ -655,9 +655,13 @@ export function createCombat({
       p.x - centre.x, p.y + PLAYER.HEIGHT / 2 - centre.y, p.z - centre.z,
     );
     if (pd < damageRadius) {
+      // opts.knockX/knockZ override the radial shove for blasts centred ON
+      // the player (a direct fireball hit bursts at the body centre, where
+      // the radial direction is zero — Phase 17 review fix: the caller
+      // passes the flight direction instead, so square hits still shove).
       damagePlayer(
         Math.round(maxDamage * (1 - pd / damageRadius)),
-        p.x - centre.x, p.z - centre.z,
+        opts.knockX ?? (p.x - centre.x), opts.knockZ ?? (p.z - centre.z),
       );
     }
     const mobs = getMobs();

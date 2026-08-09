@@ -9,3 +9,6 @@ package-lock.json
 # Dev-harness browser entry (index.html with the importmap pointed at the
 # local three copy — the sandbox blocks unpkg.com; production is untouched)
 test.html
+# Dev-harness mesher A/B snapshot (the pre-split Phase 16 chunks.js; the
+# node suite regenerates it from git history and it must never ship)
+src/world/chunks_head.js

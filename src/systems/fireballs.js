@@ -185,6 +185,9 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
 
       // Entity hit inside the range wins over the block behind it.
       let burstAt = null;
+      let knock = null; // explicit player knockback direction — a direct
+                        // hit bursts at the body centre, where the blast's
+                        // own radial direction degenerates to zero
       if (fb.fromPlayer) {
         const mob = getMobs()?.raycast(fb.pos, dir, range) ?? null;
         if (mob) {
@@ -207,6 +210,7 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
             y: (box.minY + box.maxY) / 2,
             z: (box.minZ + box.maxZ) / 2,
           };
+          knock = dir; // shoved along the flight line, away from the shooter
         }
       }
       if (!burstAt && blockHit) {
@@ -222,6 +226,8 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
           blockRadius: fb.blockRadius,
           damageRadius: fb.damageRadius,
           maxHardness: fb.maxHardness,
+          knockX: knock?.x,
+          knockZ: knock?.z,
         });
         continue;
       }

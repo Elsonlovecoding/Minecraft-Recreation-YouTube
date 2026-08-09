@@ -1351,8 +1351,10 @@ Phase 17 (this session) additions, one entry per file:
   inside 4), and runs the SPEC firing cycle: 0.7s charge wind-up (the rod
   rings visibly spin 2.2x faster), a burst of THREE small fast fireballs
   0.3s apart (damage 6, size 0.4, speed 16, blockRadius 0 — no crater,
-  damage radius 2), then a 3s cooldown. Losing line of sight lets the
-  charge down and abandons the burst (no blind-firing through walls). The
+  damage radius 2), then a 3s cooldown. Line of sight gates STARTING a
+  cycle (losing it lets the charge down), but a burst already begun always
+  finishes — dodging behind cover eats the remaining fireballs on the wall
+  (vanilla), and the cooldown charges at the end of every burst. The
   rod animation re-positions the twelve rods from BLAZE_RINGS (radii
   9/7/5px at 26/22/13px) each frame — three counter-rotating orbits with
   per-rod bobbing, spin phase accumulated in the AI so it freezes with
@@ -1422,7 +1424,8 @@ a portal, water, leaves, cactus); the wart emitter's 4 crop quads at the
 per-stage heights; every BLAZE_MODEL unwrap region inside the decoded
 blaze.png over >50% opaque art; blaze registry vs SPEC; the mocked blaze
 AI firing bursts of exactly 3 at the configured cadence with SPEC fireball
-parameters, never firing without line of sight, and hovering off floors;
+parameters, never STARTING a burst without line of sight (a begun burst
+runs out through cover, then cools down), and hovering off floors;
 the mocked skeleton cycle unchanged after the move; wart growth
 0 -> 1 -> 2 on timers, frozen in unloaded chunks, soil-break pops with
 stage drops; config shape. In headless Chromium, 17 checks, zero console
@@ -1444,6 +1447,53 @@ the glowing mini blaze beside a live blaze (head + orbiting golden rod
 rings against dark brick), a hovering blaze in a fortress gallery, the
 wart-room beds glowing under the ceiling lamp, and the crenellated tower
 silhouette in the red fog.
+
+Phase 17's adversarial review (four independent lenses — fortress
+generation, blaze combat + spawners, wart/planting/mesher split, and
+regressions + session fidelity — each probing the real modules with its
+own node repros over the full diff, findings verified before they
+counted) confirmed and fixed five findings:
+- **Planting at the world ceiling ate the item**: soul sand placeable at
+  the top layer (y=319), the plant branch's air check passed on the
+  out-of-range read and `setBlock` silently no-opped while `consume(1)`
+  ran — the branch now carries the same vertical-range guard as regular
+  placement.
+- **A direct blaze fireball hit could never deal its SPEC 6** (typical
+  3-5): the burst point was the player-AABB entry, and explode() measures
+  falloff to MID-BODY — the surface-to-centre offset alone eats a sixth
+  of the blaze's 2-block damage radius. Direct player hits now burst at
+  the body centre, exactly the rule the mob-hit branch always used.
+- **Direct-hit knockback then degenerated** (the blast centred ON the
+  body has a zero radial direction, so square hits stopped shoving while
+  near-misses still did): explode() takes an explicit knock direction
+  now, and fireballs pass their flight line — shoved away from the
+  shooter, as documented since Phase 13.
+- **A burst abandoned on line-of-sight loss skipped its cooldown**, so a
+  corner-peeking player faced a fresh burst per ~0.7s of exposure. The
+  first fix (abort + charge the cooldown) then collapsed real fights to
+  single-shot bursts under knockback LOS flicker — the shipped shape is
+  the vanilla one: a begun burst always finishes (cover eats the
+  remainder), the cooldown charges at every burst end, and only STARTING
+  a cycle needs a clear shot.
+- **~27% of crossings were dead-end balconies** (their queued
+  continuations aborted on the piece budget or radius cap — a railed pad
+  to nowhere, breaking the every-arm-ends-in-a-room guarantee): a
+  deterministic post-growth pass caps every ≤1-link crossing as a
+  terminal room. Census over 2,700 regions: zero dead ends, connectivity
+  intact, and every fortress now carries >= 2 wart and >= 2 blaze rooms.
+Everything else surveyed clean with probes: chunk-locality and blueprint
+lifecycle (no post-emission mutation), 10,000-blueprint sealing/
+connectivity sweeps, pier grounding and bedrock safety, region
+containment (worst case 12 blocks inside the region border), the
+skeleton move byte-fidelity, mobs.js declaration order, spawner index
+maths/dimension swaps/leak paths/`_spawnerScanned` lifecycle, creeper
+explosions untouched by the maxHardness plumbing, wart listener
+reentrancy and both drop paths, the crop emitter's UV band maths and
+culling interplay, config import safety, and the docs' line-count
+claims. (Harness note: the burst-cadence browser check must group shots
+by GAME time — wall-clock gaps stretch arbitrarily under SwiftShader,
+the standing PROGRESS trap, and masqueraded as single-shot bursts twice
+during the review.)
 
 Phase 16 (previous session) additions, one entry per file:
 - `src/dimensions/nether.js` — the REAL Nether generator, replacing the
