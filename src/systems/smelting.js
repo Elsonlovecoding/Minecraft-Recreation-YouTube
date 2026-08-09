@@ -283,10 +283,23 @@ export function createSmeltingSystem({ world, items }) {
     }
   }
 
+  // Dimension switch (Phase 15): furnace states are keyed by position, so a
+  // Nether furnace at (2, 65, 3) must never collide with an overworld one.
+  // The exported Map keeps its identity (entries copied in place); stored
+  // furnaces freeze — vanilla furnaces in unloaded chunks pause the same
+  // way. State shape: array of [key, entry].
+  function swapDimensionState(stored = []) {
+    const prev = [...furnaces.entries()];
+    furnaces.clear();
+    for (const [k, entry] of stored) furnaces.set(k, entry);
+    return prev;
+  }
+
   return {
     update,
     onBlockChanged,
     furnaceAt,
+    swapDimensionState,
     furnaces, // read-only by convention (debug/tests)
   };
 }

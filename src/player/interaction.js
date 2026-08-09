@@ -176,9 +176,12 @@ function loadCrackTextures(stages) {
 // (vanilla's fallback rule) — and consumes from that hand. `onUseMob`
 // (main.js) handles right-clicking a mob under the crosshair (shears on a
 // sheep) before any block use.
+// Phase 15: `onIgnite(target)` (main.js -> dimensions/portals.js) handles a
+// flint-and-steel right click on a block face — lighting a valid obsidian
+// frame into a portal; a successful ignition wears the tool 1 durability.
 export function createInteraction({
   world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
-  onUseMob, combat,
+  onUseMob, onIgnite, combat,
 }) {
   // --- targeting state
   let target = null;
@@ -231,6 +234,7 @@ export function createInteraction({
     if (name === 'bucket' || name === 'water_bucket' || name === 'lava_bucket') return true;
     if (name === 'bow') return combat ? combat.hasArrow : true;
     if (name === 'shears') return !!mobHit; // no block/air use in this game
+    if (name === 'flint_and_steel') return true; // portal lighting (Phase 15)
     if (armourSlotIndex(name) !== null) return true;
     const food = foodValue(name);
     if (food) return stats ? stats.canEatFood(food) : true;
@@ -615,6 +619,15 @@ export function createInteraction({
       } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
         mouseRight = false;
         startSwing();
+      } else if (
+        useHand.name === 'flint_and_steel' && onIgnite && onIgnite(target)
+      ) {
+        // Lighting a portal frame (Phase 15). Only a successful ignition
+        // wears the tool — striking bare rock does nothing (there is no
+        // free-standing fire block in this game).
+        useHand.damage(1);
+        mouseRight = false;
+        startSwing(useHand.key);
       } else if (tryBucketPlace(useHand)) {
         mouseRight = false;
         startSwing(useHand.key);

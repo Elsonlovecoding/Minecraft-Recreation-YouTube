@@ -1,7 +1,10 @@
 // world/caves.js — Phase 9 underground generation: cave carving (two noise
-// layers — winding tunnels and open caverns), rare ravines, surface entrances,
-// lava pools below OVERWORLD.LAVA_POOL_MAX_Y, granite/diorite/andesite blobs,
-// gravel pockets and ore veins per config ORES.
+// layers — winding tunnels and open caverns — plus the Phase 15 mega-cavern
+// pass: rare, genuinely huge multi-level chambers), rare ravines, surface
+// entrances, lava pools below OVERWORLD.LAVA_POOL_MAX_Y, waterfall springs in
+// mega caverns, granite/diorite/andesite blobs, gravel pockets and ore veins
+// per config ORES. The seeded noise machinery lives in world/noise.js
+// (Phase 15 split per the ARCHITECTURE size cap).
 //
 // Everything is a pure function of (seed, x, y, z): the 3D fields are sampled
 // on a world-aligned lattice (every CAVES.LATTICE_STEP blocks) and
@@ -16,232 +19,10 @@
 
 import { OVERWORLD, CHUNK, CAVES, ORES, UNDERGROUND } from '../config.js';
 import { BLOCK } from './blocks.js';
-
-// ---------------------------------------------------------------------------
-// Seeded randomness (same primitives as world/terrain.js, kept local so the
-// modules stay independently testable)
-// ---------------------------------------------------------------------------
-
-function mulberry32(a) {
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hash2(seed, x, z) {
-  let h = (seed ^ Math.imul(x, 0x27d4eb2d) ^ Math.imul(z, 0x165667b1)) | 0;
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
-  h ^= h >>> 15;
-  return h >>> 0;
-}
-
-function hash01(seed, x, z) {
-  return hash2(seed, x, z) / 4294967296;
-}
-
-function smoothstep(e0, e1, x) {
-  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
-  return t * t * (3 - 2 * t);
-}
-
-// Shared lerp helpers — the per-chunk carve loop and the pure surface query
-// must combine lattice corners with EXACTLY the same arithmetic so they can
-// never disagree about a threshold crossing.
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-function bilerp(v00, v10, v01, v11, tx, tz) {
-  return lerp(lerp(v00, v10, tx), lerp(v01, v11, tx), tz);
-}
-
-// ---------------------------------------------------------------------------
-// Seeded simplex noise, 2D and 3D (Gustavson's reference algorithms)
-// ---------------------------------------------------------------------------
-
-const GRAD3 = [
-  [1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
-  [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
-  [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1],
-];
-const GRAD2 = [
-  [1, 1], [-1, 1], [1, -1], [-1, -1],
-  [1, 0], [-1, 0], [0, 1], [0, -1],
-];
-const F2 = 0.5 * (Math.sqrt(3) - 1);
-const G2 = (3 - Math.sqrt(3)) / 6;
-const F3 = 1 / 3;
-const G3 = 1 / 6;
-
-class SimplexNoise {
-  constructor(random) {
-    const p = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) p[i] = i;
-    for (let i = 255; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      const tmp = p[i];
-      p[i] = p[j];
-      p[j] = tmp;
-    }
-    this.perm = new Uint8Array(512);
-    this.permMod12 = new Uint8Array(512);
-    this.permMod8 = new Uint8Array(512);
-    for (let i = 0; i < 512; i++) {
-      this.perm[i] = p[i & 255];
-      this.permMod12[i] = this.perm[i] % 12;
-      this.permMod8[i] = this.perm[i] % 8;
-    }
-  }
-
-  // 2D noise in [-1, 1].
-  noise2(xin, yin) {
-    const s = (xin + yin) * F2;
-    const i = Math.floor(xin + s);
-    const j = Math.floor(yin + s);
-    const t = (i + j) * G2;
-    const x0 = xin - (i - t);
-    const y0 = yin - (j - t);
-    const i1 = x0 > y0 ? 1 : 0;
-    const j1 = 1 - i1;
-    const x1 = x0 - i1 + G2;
-    const y1 = y0 - j1 + G2;
-    const x2 = x0 - 1 + 2 * G2;
-    const y2 = y0 - 1 + 2 * G2;
-    const ii = i & 255;
-    const jj = j & 255;
-    let n = 0;
-    let t0 = 0.5 - x0 * x0 - y0 * y0;
-    if (t0 > 0) {
-      t0 *= t0;
-      const g = GRAD2[this.permMod8[ii + this.perm[jj]]];
-      n += t0 * t0 * (g[0] * x0 + g[1] * y0);
-    }
-    let t1 = 0.5 - x1 * x1 - y1 * y1;
-    if (t1 > 0) {
-      t1 *= t1;
-      const g = GRAD2[this.permMod8[ii + i1 + this.perm[jj + j1]]];
-      n += t1 * t1 * (g[0] * x1 + g[1] * y1);
-    }
-    let t2 = 0.5 - x2 * x2 - y2 * y2;
-    if (t2 > 0) {
-      t2 *= t2;
-      const g = GRAD2[this.permMod8[ii + 1 + this.perm[jj + 1]]];
-      n += t2 * t2 * (g[0] * x2 + g[1] * y2);
-    }
-    return 70 * n;
-  }
-
-  // 3D noise in [-1, 1].
-  noise3(xin, yin, zin) {
-    const s = (xin + yin + zin) * F3;
-    const i = Math.floor(xin + s);
-    const j = Math.floor(yin + s);
-    const k = Math.floor(zin + s);
-    const t = (i + j + k) * G3;
-    const x0 = xin - (i - t);
-    const y0 = yin - (j - t);
-    const z0 = zin - (k - t);
-
-    let i1, j1, k1, i2, j2, k2;
-    if (x0 >= y0) {
-      if (y0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-      else if (x0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 0; k2 = 1; }
-      else { i1 = 0; j1 = 0; k1 = 1; i2 = 1; j2 = 0; k2 = 1; }
-    } else {
-      if (y0 < z0) { i1 = 0; j1 = 0; k1 = 1; i2 = 0; j2 = 1; k2 = 1; }
-      else if (x0 < z0) { i1 = 0; j1 = 1; k1 = 0; i2 = 0; j2 = 1; k2 = 1; }
-      else { i1 = 0; j1 = 1; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-    }
-
-    const x1 = x0 - i1 + G3;
-    const y1 = y0 - j1 + G3;
-    const z1 = z0 - k1 + G3;
-    const x2 = x0 - i2 + 2 * G3;
-    const y2 = y0 - j2 + 2 * G3;
-    const z2 = z0 - k2 + 2 * G3;
-    const x3 = x0 - 1 + 3 * G3;
-    const y3 = y0 - 1 + 3 * G3;
-    const z3 = z0 - 1 + 3 * G3;
-
-    const ii = i & 255;
-    const jj = j & 255;
-    const kk = k & 255;
-    let n = 0;
-    let t0 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
-    if (t0 > 0) {
-      t0 *= t0;
-      const g = GRAD3[this.permMod12[ii + this.perm[jj + this.perm[kk]]]];
-      n += t0 * t0 * (g[0] * x0 + g[1] * y0 + g[2] * z0);
-    }
-    let t1 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
-    if (t1 > 0) {
-      t1 *= t1;
-      const g = GRAD3[this.permMod12[ii + i1 + this.perm[jj + j1 + this.perm[kk + k1]]]];
-      n += t1 * t1 * (g[0] * x1 + g[1] * y1 + g[2] * z1);
-    }
-    let t2 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
-    if (t2 > 0) {
-      t2 *= t2;
-      const g = GRAD3[this.permMod12[ii + i2 + this.perm[jj + j2 + this.perm[kk + k2]]]];
-      n += t2 * t2 * (g[0] * x2 + g[1] * y2 + g[2] * z2);
-    }
-    let t3 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
-    if (t3 > 0) {
-      t3 *= t3;
-      const g = GRAD3[this.permMod12[ii + 1 + this.perm[jj + 1 + this.perm[kk + 1]]]];
-      n += t3 * t3 * (g[0] * x3 + g[1] * y3 + g[2] * z3);
-    }
-    return 32 * n;
-  }
-}
-
-// Fractal sums, normalised to [-1, 1].
-function fbm2(noise, x, z, octaves) {
-  let amp = 1;
-  let freq = 1;
-  let sum = 0;
-  let norm = 0;
-  for (let o = 0; o < octaves; o++) {
-    sum += amp * noise.noise2(x * freq, z * freq);
-    norm += amp;
-    amp *= 0.5;
-    freq *= 2;
-  }
-  return sum / norm;
-}
-
-function fbm3(noise, x, y, z, octaves) {
-  let amp = 1;
-  let freq = 1;
-  let sum = 0;
-  let norm = 0;
-  for (let o = 0; o < octaves; o++) {
-    sum += amp * noise.noise3(x * freq, y * freq, z * freq);
-    norm += amp;
-    amp *= 0.5;
-    freq *= 2;
-  }
-  return sum / norm;
-}
-
-// A 3D field: seeded noise + anisotropic scales, evaluated at block coords.
-class Field3D {
-  constructor(random, scaleXZ, scaleY, octaves) {
-    this.noise = new SimplexNoise(random);
-    this.sx = scaleXZ;
-    this.sy = scaleY;
-    this.octaves = octaves;
-  }
-
-  sample(x, y, z) {
-    return fbm3(this.noise, x * this.sx, y * this.sy, z * this.sx, this.octaves);
-  }
-}
+import {
+  mulberry32, hash2, hash01, smoothstep, lerp, bilerp, SimplexNoise, fbm2,
+  Field3D,
+} from './noise.js';
 
 // ---------------------------------------------------------------------------
 // Salts (independent hash/PRNG streams per feature)
@@ -250,6 +31,7 @@ class Field3D {
 const SALT_RAVINE_JITTER = 0x8a71;
 const SALT_GRAVEL = 0x67a1;
 const SALT_LAVA_LEAK = 0x1afa;
+const SALT_WATERFALL = 0x7fa11;
 // Per-ore PRNG stream salts (stable — never reorder).
 const ORE_SALTS = { coal: 0xc0a1, iron: 0x1207, gold: 0x601d, redstone: 0x8ed5, diamond: 0xd1a3 };
 const ORE_BLOCKS = {
@@ -295,6 +77,11 @@ export class CaveCarver {
     const G = T.GIRTH;
     this.girth = new Field3D(rand(0x617a0009), G.SCALE_XZ, G.SCALE_Y, G.OCTAVES);
     this.lavaMask = new SimplexNoise(rand(0x1a7a000a));
+    // Phase 15: the mega-cavern pass — its own 3D field plus the 2D rarity
+    // region mask (a distinct large-cave layer, not wider tunnels).
+    const M = CAVES.MEGA;
+    this.mega = new Field3D(rand(0x3e6a000b), M.SCALE_XZ, M.SCALE_Y, M.OCTAVES);
+    this.megaRegion = new SimplexNoise(rand(0x3e6a000c));
   }
 
   // Tunnel radius multiplier from a raw girth-field value: MIN..MAX across
@@ -366,6 +153,30 @@ export class CaveCarver {
     }
     const fadeIn = CAVES.MIN_Y + CAVES.BOTTOM_FADE_BLOCKS;
     if (y < fadeIn) t += (1 - (y - CAVES.MIN_Y) / CAVES.BOTTOM_FADE_BLOCKS);
+    return t;
+  }
+
+  // --- mega caverns (Phase 15) ----------------------------------------------
+
+  // Region gate for the mega-cavern pass at a column: 0 almost everywhere
+  // (they are uncommon), rising to 1 inside a mega region's core.
+  _megaGate(x, z) {
+    const M = CAVES.MEGA;
+    const m = fbm2(this.megaRegion, x * M.REGION_SCALE, z * M.REGION_SCALE, 2);
+    return smoothstep(M.REGION_START, M.REGION_FULL, m);
+  }
+
+  // Mega-cavern carve threshold at a height (Infinity = never). The region
+  // gate lowers it from CEILING (unreachable) toward THRESHOLD; the band
+  // edges ramp it back up so chamber floors and ceilings close smoothly.
+  _megaThreshold(y, gate) {
+    const M = CAVES.MEGA;
+    if (gate <= 0 || y < M.MIN_Y || y > M.MAX_Y) return Infinity;
+    let t = M.CEILING + (M.THRESHOLD - M.CEILING) * gate;
+    const edge = Math.min(y - M.MIN_Y, M.MAX_Y - y);
+    if (edge < M.EDGE_FADE) {
+      t += (M.CEILING - M.THRESHOLD) * (1 - edge / M.EDGE_FADE);
+    }
     return t;
   }
 
@@ -464,6 +275,8 @@ export class CaveCarver {
     const colTop = new Int32Array(size * size);     // highest y caves may carve
     const colRav = new Float32Array(size * size);   // ravine depth (0 = none)
     const colGate = new Float64Array(size * size);  // entrance gate factor
+    const colMega = new Float64Array(size * size);  // mega-cavern region gate
+    let anyMega = false;
     let latTop = CAVES.MIN_Y;
     let maxH = CAVES.MIN_Y;
     for (let lz = 0; lz < size; lz++) {
@@ -494,6 +307,13 @@ export class CaveCarver {
         if (top > latTop) latTop = top;
 
         colRav[i] = shielded || h <= sea + 1 ? 0 : this.ravineDepthAt(x0 + lx, z0 + lz);
+
+        // Mega caverns sit far below every surface (MAX_Y 26 vs sea 62), so
+        // the ocean shield's colTop clamp already protects sea floors; the
+        // gate is per-column only for the region mask.
+        const mg = this._megaGate(x0 + lx, z0 + lz);
+        colMega[i] = mg;
+        if (mg > 0) anyMega = true;
       }
     }
 
@@ -504,11 +324,15 @@ export class CaveCarver {
     const latB = this._buildLattice(this.tunnelB, x0, z0, yLo, yHi);
     const latC = this._buildLattice(this.cavern, x0, z0, yLo, yHi);
     const latG = this._buildLattice(this.girth, x0, z0, yLo, yHi);
+    // The mega lattice only exists where a mega region touches the chunk —
+    // most of the world skips the whole pass.
+    const latM = anyMega ? this._buildLattice(this.mega, x0, z0, yLo, yHi) : null;
     const ny = latA.ny;
     const colValA = new Float64Array(ny);
     const colValB = new Float64Array(ny);
     const colValC = new Float64Array(ny);
     const colValG = new Float64Array(ny);
+    const colValM = new Float64Array(ny);
 
     const rTun = CAVES.TUNNEL.RADIUS;
     for (let lz = 0; lz < size; lz++) {
@@ -518,11 +342,13 @@ export class CaveCarver {
         const h = colH[i];
         const rav = colRav[i];
         const gate = colGate[i];
+        const megaGate = colMega[i];
         if (top >= CAVES.MIN_Y) {
           this._blendColumn(latA, lx, lz, colValA);
           this._blendColumn(latB, lx, lz, colValB);
           this._blendColumn(latC, lx, lz, colValC);
           this._blendColumn(latG, lx, lz, colValG);
+          if (latM && megaGate > 0) this._blendColumn(latM, lx, lz, colValM);
           for (let y = top; y >= CAVES.MIN_Y; y--) {
             const id = chunk.get(lx, y, lz);
             if (!CARVABLE[id]) continue;
@@ -542,6 +368,12 @@ export class CaveCarver {
                 carve = lerp(colValC[j0], colValC[j0 + 1], ty) > tc;
               }
             }
+            if (!carve && latM && megaGate > 0) {
+              const tm = this._megaThreshold(y, megaGate);
+              if (tm !== Infinity) {
+                carve = lerp(colValM[j0], colValM[j0 + 1], ty) > tm;
+              }
+            }
             if (carve) chunk.set(lx, y, lz, BLOCK.AIR);
           }
         }
@@ -557,6 +389,7 @@ export class CaveCarver {
     }
 
     this._placeLava(chunk, colH);
+    this._placeWaterfalls(chunk, colMega);
     this._placeVariants(chunk, maxH);
     const G = UNDERGROUND.GRAVEL_POCKETS;
     this._placeVeins(chunk, BLOCK.GRAVEL, SALT_GRAVEL, {
@@ -664,6 +497,69 @@ export class CaveCarver {
             chunk.set(lx, y, lz, BLOCK.LAVA);
           }
         }
+      }
+    }
+  }
+
+  // --- waterfall springs (Phase 15) -----------------------------------------
+
+  // Rare water columns pouring down mega-cavern walls into a small floor
+  // pool. Water is still static in this game, so the column IS the fall —
+  // a translucent pillar hugging the wall, swimmable like any water. Runs
+  // after all carving and lava placement (reads the chunk's final state);
+  // per-chunk seeded PRNG, in-chunk writes only, so generation order can
+  // never change the world.
+  _placeWaterfalls(chunk, colMega) {
+    const size = CHUNK.SIZE;
+    const W = CAVES.WATERFALL;
+    const rng = mulberry32(hash2(this.seed ^ SALT_WATERFALL, chunk.cx, chunk.cz));
+    for (let attempt = 0; attempt < W.ATTEMPTS_PER_CHUNK; attempt++) {
+      // Interior cells only: every neighbour test below stays in-chunk.
+      const lx = 1 + Math.floor(rng() * (size - 2));
+      const lz = 1 + Math.floor(rng() * (size - 2));
+      const roll = rng(); // drawn unconditionally — the PRNG stream stays
+                          // aligned however the gates below resolve
+      if (colMega[lz * size + lx] < W.MIN_GATE) continue;
+      if (roll >= W.CHANCE) continue;
+      // Walk the band downward for the first ledge that can host a spring:
+      // an air cell against a wall with a real drop beneath it.
+      for (let y = W.MAX_Y; y >= W.MIN_Y; y--) {
+        if (chunk.get(lx, y, lz) !== BLOCK.AIR) continue;
+        if (
+          !STONE_FAMILY[chunk.get(lx - 1, y, lz)] &&
+          !STONE_FAMILY[chunk.get(lx + 1, y, lz)] &&
+          !STONE_FAMILY[chunk.get(lx, y, lz - 1)] &&
+          !STONE_FAMILY[chunk.get(lx, y, lz + 1)]
+        ) continue;
+        let drop = 0;
+        while (
+          drop < W.MAX_FALL &&
+          chunk.get(lx, y - 1 - drop, lz) === BLOCK.AIR
+        ) drop++;
+        if (drop < W.MIN_DROP) continue; // a puddle ledge — keep walking down
+        // A fall that never found a floor within MAX_FALL would dangle in
+        // mid-air (static water doesn't extend itself) — skip the attempt.
+        if (drop >= W.MAX_FALL && chunk.get(lx, y - 1 - drop, lz) === BLOCK.AIR) {
+          break;
+        }
+        // The column: spring cell down to the landing cell.
+        for (let d = 0; d <= drop - 1; d++) {
+          chunk.set(lx, y - d, lz, BLOCK.WATER);
+        }
+        // A small pool where it lands: the landing cell plus in-chunk
+        // neighbours that are open floor.
+        const py = y - drop;
+        if (chunk.get(lx, py, lz) === BLOCK.AIR) chunk.set(lx, py, lz, BLOCK.WATER);
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = lx + dx;
+          const nz = lz + dz;
+          if (nx < 0 || nx >= size || nz < 0 || nz >= size) continue;
+          if (
+            chunk.get(nx, py, nz) === BLOCK.AIR &&
+            STONE_FAMILY[chunk.get(nx, py - 1, nz)]
+          ) chunk.set(nx, py, nz, BLOCK.WATER);
+        }
+        break; // one fall per successful attempt
       }
     }
   }

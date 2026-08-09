@@ -17,6 +17,14 @@
 //     scooping a source drains its flows outward tick by tick.
 //   - Lava never invades water, solids, or other fluids — only air fills.
 //
+// Phase 15 — water meeting lava (SPEC: obsidian on the portal critical
+// path): a lava SOURCE with water above or beside it becomes OBSIDIAN; a
+// flowing/falling lava cell becomes COBBLESTONE (the vanilla pair). The
+// conversion runs immediately on any block change (placing a water bucket
+// against lava hardens it the same frame) and as each scheduled cell
+// processes; generated contacts (a waterfall pool reaching a lava leak)
+// convert when the settle scan schedules them.
+//
 // The simulation only writes through world.setBlock, so meshing, lighting
 // (flow cells emit 15 like the source), falling-block support checks and
 // torch pops all ride the normal block-change path. Rendering lives in the
@@ -65,9 +73,31 @@ export function createFluids({ world }) {
     return true;
   }
 
+  // Water meets lava (Phase 15): a lava cell with water ABOVE or BESIDE it
+  // hardens — sources to obsidian, flows and falls to cobblestone (vanilla).
+  // Water below doesn't harden the lava over it (also vanilla — lava can't
+  // pour INTO water here anyway, falls only fill air). Returns true when the
+  // cell converted; the setBlock rides the normal listener chain, so
+  // neighbouring lava re-checks itself and an obsidian shell cascades along
+  // the whole contact face.
+  function hardenOnWaterContact(x, y, z, id) {
+    if (
+      world.getBlock(x, y + 1, z) !== BLOCK.WATER &&
+      world.getBlock(x + 1, y, z) !== BLOCK.WATER &&
+      world.getBlock(x - 1, y, z) !== BLOCK.WATER &&
+      world.getBlock(x, y, z + 1) !== BLOCK.WATER &&
+      world.getBlock(x, y, z - 1) !== BLOCK.WATER
+    ) return false;
+    // A real, permanent block — markModified stays true (unlike flow writes).
+    world.setBlock(x, y, z, isLavaSource(id) ? BLOCK.OBSIDIAN : BLOCK.COBBLESTONE);
+    return true;
+  }
+
   // Any edit can start or stop a flow at the cell or a face neighbour —
   // schedule whichever of those cells actually holds lava (a placed source
   // schedules itself; a block broken under a lake schedules the lava above).
+  // Water contact converts the lava immediately instead (same frame as the
+  // edit — placing a water bucket against lava never waits for a tick).
   function onBlockChanged(x, y, z) {
     for (const [dx, dy, dz] of [
       [0, 0, 0], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
@@ -75,7 +105,9 @@ export function createFluids({ world }) {
       const nx = x + dx;
       const ny = y + dy;
       const nz = z + dz;
-      if (isLava(world.getBlock(nx, ny, nz))) schedule(nx, ny, nz);
+      const id = world.getBlock(nx, ny, nz);
+      if (!isLava(id)) continue;
+      if (!hardenOnWaterContact(nx, ny, nz, id)) schedule(nx, ny, nz);
     }
   }
 
@@ -112,6 +144,7 @@ export function createFluids({ world }) {
   function processCell(x, y, z) {
     let id = world.getBlock(x, y, z);
     if (!isLava(id)) return;
+    if (hardenOnWaterContact(x, y, z, id)) return;
 
     // Pull: a flowing cell revalidates itself against its neighbours
     // (upgrade, downgrade, or decay to air). setBlock's listener schedules
@@ -168,12 +201,21 @@ export function createFluids({ world }) {
           const x = baseX + lx;
           const y = iy + MIN_Y;
           const z = baseZ + lz;
+          // Air below/beside can start a flow; water above/beside (Phase
+          // 15 — a generated waterfall pool against a lava leak) hardens
+          // the cell on its first tick.
+          const above = world.getBlock(x, y + 1, z);
+          const e = world.getBlock(x + 1, y, z);
+          const w = world.getBlock(x - 1, y, z);
+          const s = world.getBlock(x, y, z + 1);
+          const n = world.getBlock(x, y, z - 1);
           if (
             world.getBlock(x, y - 1, z) === BLOCK.AIR ||
-            world.getBlock(x + 1, y, z) === BLOCK.AIR ||
-            world.getBlock(x - 1, y, z) === BLOCK.AIR ||
-            world.getBlock(x, y, z + 1) === BLOCK.AIR ||
-            world.getBlock(x, y, z - 1) === BLOCK.AIR
+            e === BLOCK.AIR || w === BLOCK.AIR ||
+            s === BLOCK.AIR || n === BLOCK.AIR ||
+            above === BLOCK.WATER ||
+            e === BLOCK.WATER || w === BLOCK.WATER ||
+            s === BLOCK.WATER || n === BLOCK.WATER
           ) {
             schedule(x, y, z);
           }
@@ -213,9 +255,25 @@ export function createFluids({ world }) {
     }
   }
 
+  // Dimension switch (Phase 15): the pending queue and tick phase belong to
+  // their dimension (cell coordinates mean nothing in another world). The
+  // chunk-side settle flags travel with the chunks themselves.
+  function swapDimensionState(stored = null) {
+    const prev = { pending, carry, timer };
+    if (stored) {
+      ({ pending, carry, timer } = stored);
+    } else {
+      pending = new Set();
+      carry = [];
+      timer = 0;
+    }
+    return prev;
+  }
+
   return {
     update,
     onBlockChanged,
+    swapDimensionState,
     // Debug/test scaffolding
     get pendingCount() {
       return pending.size + carry.length;

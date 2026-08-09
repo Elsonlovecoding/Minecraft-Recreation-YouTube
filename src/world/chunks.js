@@ -10,7 +10,9 @@
 // materials combine with the time-of-day uniforms.
 
 import * as THREE from 'three';
-import { CHUNK, OVERWORLD, LIGHTING, RENDER, SHAPES, ATLAS, FLUIDS } from '../config.js';
+import {
+  CHUNK, OVERWORLD, LIGHTING, RENDER, SHAPES, ATLAS, FLUIDS, PORTALS,
+} from '../config.js';
 import { BLOCK, BLOCKS, TORCH_LEAN, LAVA_LEVEL_OF } from './blocks.js';
 import { getUV, TILE } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
@@ -124,6 +126,13 @@ for (let id = 0; id < NUM_IDS; id++) {
 // Flow side faces sit a hair inside their cell so they can never z-fight a
 // transparent neighbour's face on the shared boundary plane (glass, water).
 const LAVA_SIDE_INSET = 0.001;
+
+// Nether portal interior (Phase 15): a 4/16-thick vertical slab of animated
+// purple, PASS_PORTAL bucket. The two big faces sit at 6/16 and 10/16
+// across the portal's thin axis (the vanilla block shape).
+const PASS_PORTAL = 5;
+const PORTAL_PLANE_MIN = 6 / 16;
+const PORTAL_PLANE_MAX = 10 / 16;
 
 // ---------------------------------------------------------------------------
 // Torch box model (Phase 11) — a WIDTH x HEIGHT x WIDTH post: floor torches
@@ -252,6 +261,55 @@ export function createChunkMaterials(atlasTexture) {
     vertexColors: true,
     side: THREE.DoubleSide,
   });
+  // Phase 15: the nether-portal interior. No portal tile ships in the atlas,
+  // so the swirl is generated (like the crack random-walk and arm skin were
+  // — generated art is the established pattern): layered purple value noise
+  // on a repeating canvas, scrolled upward with a sideways wobble per frame.
+  // The material is deliberately UNLIT and un-patched — the portal is an
+  // emissive surface (light 11 in the registry lights its surroundings);
+  // fullbright purple through fog is the vanilla read.
+  const PT = 32;
+  const portalCanvas = document.createElement('canvas');
+  portalCanvas.width = PT;
+  portalCanvas.height = PT;
+  {
+    const ctx = portalCanvas.getContext('2d');
+    const img = ctx.createImageData(PT, PT);
+    for (let y = 0; y < PT; y++) {
+      for (let x = 0; x < PT; x++) {
+        // Two sine octaves + hash sparkle, tileable via the 2π wrap.
+        const u = (x / PT) * Math.PI * 2;
+        const v = (y / PT) * Math.PI * 2;
+        let n = 0.5 +
+          0.28 * Math.sin(u * 2 + Math.sin(v * 3)) +
+          0.22 * Math.sin(v * 2 + Math.sin(u * 5 + 1.7));
+        n += 0.18 * (Math.sin(x * 12.9898 + y * 78.233) * 43758.5453 % 1);
+        n = Math.max(0, Math.min(1, n));
+        const i = (y * PT + x) * 4;
+        img.data[i] = 60 + 90 * n;        // r
+        img.data[i + 1] = 10 + 40 * n;    // g
+        img.data[i + 2] = 120 + 110 * n;  // b
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  const portalTexture = new THREE.CanvasTexture(portalCanvas);
+  portalTexture.magFilter = THREE.NearestFilter;
+  portalTexture.minFilter = THREE.NearestFilter;
+  portalTexture.generateMipmaps = false;
+  portalTexture.wrapS = THREE.RepeatWrapping;
+  portalTexture.wrapT = THREE.RepeatWrapping;
+  portalTexture.colorSpace = THREE.SRGBColorSpace;
+  const portal = new THREE.MeshBasicMaterial({
+    map: portalTexture,
+    transparent: true,
+    opacity: PORTALS.SWIRL.OPACITY,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  let portalClock = 0;
   patchChunkMaterial(opaque);
   patchChunkMaterial(cutout);
   patchChunkMaterial(water);
@@ -261,12 +319,22 @@ export function createChunkMaterials(atlasTexture) {
     cutout,
     water,
     lava,
+    portal,
     // main.js calls this once per un-paused frame: the animated flow.
     // offset.y decreasing slides the pattern toward +v — downstream on flow
     // tops, downward on flow sides and falling columns.
     scrollLava(dt) {
       lavaTexture.offset.y =
         (((lavaTexture.offset.y - FLUIDS.SCROLL_TILES_PER_SECOND * dt) % 1) + 1) % 1;
+    },
+    // The portal swirl drifts upward and shimmers sideways.
+    scrollPortal(dt) {
+      const S = PORTALS.SWIRL;
+      portalClock += dt;
+      portalTexture.offset.y =
+        (((portalTexture.offset.y - S.SCROLL_TILES_PER_SECOND * dt) % 1) + 1) % 1;
+      portalTexture.offset.x =
+        S.WOBBLE_AMPLITUDE * Math.sin(portalClock * Math.PI * 2 * S.WOBBLE_HZ);
     },
   };
 }
@@ -329,7 +397,9 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     }
   }
 
-  const buckets = [null, newBucket(), newBucket(), newBucket(), newBucket()];
+  const buckets = [
+    null, newBucket(), newBucket(), newBucket(), newBucket(), newBucket(),
+  ];
   const aoStrength = LIGHTING.AO_STRENGTH;
   const waterSink = RENDER.WATER_SURFACE_SINK;
   const blocks = chunk.blocks;
@@ -485,6 +555,48 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     }
   };
 
+  // Nether portal interior (Phase 15): two big vertical quads, a 4/16-thick
+  // slab along the portal's plane axis. The axis is read from the
+  // neighbours — a portal is always at least 2 wide, so every interior cell
+  // has a same-row portal neighbour along its plane. UVs are in repeating
+  // tile units continuing across cells (u along the plane, v up the world),
+  // so the shared scrolling material animates one seamless swirl over the
+  // whole portal. Unlit fullbright material — the portal is the emitter.
+  const emitPortal = (lx, iy, lz, id) => {
+    const bucket = buckets[PASS_PORTAL];
+    const y = iy + MIN_Y;
+    const alongX =
+      getId(lx + 1, y, lz) === id || getId(lx - 1, y, lz) === id ||
+      // A 1-wide sliver mid-destruction: fall back to obsidian walls.
+      getId(lx, y, lz + 1) !== id && getId(lx, y, lz - 1) !== id &&
+      (getId(lx + 1, y, lz) === BLOCK.OBSIDIAN || getId(lx - 1, y, lz) === BLOCK.OBSIDIAN);
+    const pushQuad = (corners, uvs) => {
+      const base = bucket.count;
+      for (let k = 0; k < 4; k++) {
+        bucket.pos.push(corners[k][0], corners[k][1], corners[k][2]);
+        bucket.uv.push(uvs[k][0], uvs[k][1]);
+        bucket.col.push(1, 1, 1);
+        bucket.lig.push(1, 1); // unused (material un-patched); keeps layout
+      }
+      bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      bucket.count += 4;
+    };
+    // u continuity in WORLD coordinates so a portal spanning a chunk border
+    // carries one seamless swirl across it.
+    const along = alongX ? chunk.cx * SIZE + lx : chunk.cz * SIZE + lz;
+    for (const off of [PORTAL_PLANE_MIN, PORTAL_PLANE_MAX]) {
+      const corners = [];
+      const uvs = [];
+      for (const [a, h] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        corners.push(alongX
+          ? [lx + a, y + h, lz + off]
+          : [lx + off, y + h, lz + a]);
+        uvs.push([along + a, y + h]);
+      }
+      pushQuad(corners, uvs);
+    }
+  };
+
   // One window cell sampled for AO + vertex light, written to the s* outs.
   // Outside the world vertically: air, full sky above, darkness below.
   let sOcc = 0;
@@ -516,6 +628,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         }
         if (IS_LAVA_FLOW[id]) {
           emitLavaFlow(lx, iy, lz, id);
+          continue;
+        }
+        if (id === BLOCK.NETHER_PORTAL) {
+          emitPortal(lx, iy, lz, id);
           continue;
         }
         const pass = PASS[id];
@@ -666,6 +782,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   addMesh(buckets[PASS_CUTOUT], materials.cutout);
   addMesh(buckets[PASS_WATER], materials.water);
   addMesh(buckets[PASS_LAVA], materials.lava);
+  addMesh(buckets[PASS_PORTAL], materials.portal);
 
   return { group, geometries };
 }

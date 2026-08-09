@@ -24,6 +24,14 @@ export const NETHER = {
   MAX_Y: 128,
   CEILING_Y: 128,         // bedrock ceiling
   COORD_RATIO: 8,         // 1 nether block = 8 overworld blocks
+  // Phase 15 placeholder terrain (dimensions/nether.js): a flat netherrack
+  // plain under the fixed red sky, so the portal has somewhere to arrive.
+  // The real Nether generation replaces this next session.
+  PLACEHOLDER: {
+    FLOOR_Y: 64,          // top netherrack layer (near overworld portal
+                          // heights — y carries over 1:1 through a portal)
+    BEDROCK_TOP_Y: 59,    // bedrock floor 58..59 under netherrack 60..64
+  },
 };
 
 export const END = {
@@ -111,6 +119,42 @@ export const CAVES = {
     SHALLOW_Y: 30,           // threshold reaches SHALLOW value here
     THRESHOLD_DEEP: 0.71,
     THRESHOLD_SHALLOW: 0.85,
+  },
+
+  // Mega caverns (Phase 15 — the "caves are all narrow tunnels" report): a
+  // DISTINCT large-cave pass, separate from the tunnel noise. A very-low-
+  // frequency 2D region mask gates where they exist at all (uncommon but
+  // findable); inside a region, a low-frequency squashed 3D field carves
+  // where it exceeds THRESHOLD — genuinely huge chambers, 30-60+ blocks
+  // across and 20+ tall, stacked into multiple levels where the field
+  // folds. The threshold rises to CEILING (unreachable) toward region edges
+  // and the vertical band edges, so chambers close smoothly.
+  MEGA: {
+    SCALE_XZ: 1 / 110,
+    SCALE_Y: 1 / 58,
+    OCTAVES: 2,
+    THRESHOLD: 0.52,         // field value carving starts at (region core)
+    CEILING: 1.05,           // unreachable threshold (fbm stays within ±1)
+    MIN_Y: -52,              // above the lava-lake band's deep flood
+    MAX_Y: 26,               // never near the surface (sea level 62)
+    EDGE_FADE: 8,            // threshold ramp to CEILING at the band edges
+    REGION_SCALE: 1 / 420,   // rarity mask frequency (region ~ hundreds of blocks)
+    REGION_START: 0.48,      // mask noise where mega regions begin
+    REGION_FULL: 0.66,       // mask noise where the region gate saturates
+  },
+
+  // Waterfall springs (Phase 15): rare water columns pouring down mega-cavern
+  // walls into a small floor pool. Static water (this game's water doesn't
+  // flow yet) — the column IS the waterfall. Deterministic per chunk, writes
+  // only inside the owning chunk.
+  WATERFALL: {
+    ATTEMPTS_PER_CHUNK: 2,   // spring-column candidates per chunk
+    CHANCE: 0.3,             // chance an eligible candidate actually springs
+    MIN_GATE: 0.5,           // only well inside a mega region
+    MIN_Y: -20,              // springs sit in the upper cavern walls
+    MAX_Y: 24,
+    MIN_DROP: 5,             // needs at least this much open air below
+    MAX_FALL: 32,            // column length cap
   },
 
   // Lava placement in carved space (Phase 10 — replaces the old "everything
@@ -585,6 +629,11 @@ export const COMBAT = {
     PICKUP_DELAY_SECONDS: 0.5,    // ...but not before this after sticking
     SPAWN_FORWARD: 0.4,           // arrows spawn this far along the aim direction
     EYE_DROP: 0.1,                // ...and this far below the shooter's eye
+    MIN_TINT: 0.45,               // floor on the baked-light tint — skeletons
+                                  // fire at night and underground, where the
+                                  // raw tint (falloff^11+ ≈ 0.09) rendered the
+                                  // arrow invisible black on a black sky (the
+                                  // Phase 15 "no projectile" report)
   },
 
   // Explosions (the creeper's; damage itself comes from the mob registry).
@@ -725,7 +774,10 @@ export const MOBS = {
     SHOOT_COOLDOWN_SECONDS: 1.0,  // rest between a release and the next draw
     DRAW_SECONDS: 1.0,            // visible bow wind-up before each shot
     DRAW_DECAY_RATE: 3,           // draw lost per second when aim breaks
-    ARROW_SPEED: 32,              // blocks/s (vanilla ~1.6 blocks/tick)
+    ARROW_SPEED: 24,              // blocks/s — Phase 15: eased off the vanilla
+                                  // 32 so the shot reads as a projectile with
+                                  // a visible arc instead of a hitscan flick
+                                  // (the aim lead/lift maths compensate)
     ARROW_INACCURACY: 1.2,        // blocks/s of random spread on the shot
     EYE_HEIGHT: 1.6,              // arrows leave from here
     AIM_LEAD_FACTOR: 1.0,         // fraction of the player's velocity led
@@ -736,8 +788,12 @@ export const MOBS = {
     BOW_SCALE: 0.55,              // bow slab edge length (blocks)
     BOW_OFFSET: [0, -0.68, -0.02], // bow position on the arm (hand end)
     BOW_TILT: [-0.5, 1.35, -0.5], // bow orientation in the hand at rest
-    DRAW_STRING_PULL: 0.55,       // radians the string arm folds back at full draw
-    DRAW_ARM_RAISE: 0.12,         // extra radians the bow arm lifts at full draw
+    // Phase 15 (the "no shooting animation" report): the aim pose itself now
+    // follows the firing cycle — arms DOWN through the cooldown, raised and
+    // drawn over DRAW_SECONDS, released — so the wind-up amounts are sized
+    // to read at a distance.
+    DRAW_STRING_PULL: 0.9,        // radians the string arm folds back at full draw
+    DRAW_ARM_RAISE: 0.25,         // extra radians the bow arm lifts at full draw
   },
 
   // Creeper (approaches, hisses, flashes, explodes)
@@ -1112,6 +1168,12 @@ export const NETHER_SKY = {
   FOG_COLOR: 0x330808,            // thick red, close
   FOG_NEAR: 5,
   FOG_FAR: 60,
+  // SPEC "ambient light: constant dim red" — while in the Nether the
+  // day/night cycle's sky writes are overridden with these fixed values
+  // (render/lighting.js setDimensionSky): skylight held at a permanent dusk
+  // and tinted red, block light (glowstone, lava, the portal) unaffected.
+  SKY_DARKEN: 5,
+  SKY_TINT: 0xff9a80,
 };
 
 export const END_SKY = {
@@ -1157,13 +1219,43 @@ export const ATLAS = {
 // ---------------------------------------------------------------------------
 
 export const PORTALS = {
-  NETHER_FRAME_MIN_WIDTH: 4,
+  NETHER_FRAME_MIN_WIDTH: 4,      // SPEC: minimum OUTER frame size 4x5
   NETHER_FRAME_MIN_HEIGHT: 5,
+  MAX_INTERIOR: 21,               // interior span cap (vanilla's 23x23 outer)
   NETHER_STAND_SECONDS: 3,
+  LINK_SEARCH_RADIUS: 32,         // reuse an existing portal within this many
+                                  // blocks (destination scale) of the scaled
+                                  // arrival point; otherwise build one
   EYE_SHATTER_CHANCE: 0.2,
   STRONGHOLD_MIN_DISTANCE: 1000,
   STRONGHOLD_MAX_DISTANCE: 2000,
   END_PORTAL_FRAME_COUNT: 12,
+
+  // The animated portal-interior look (world/chunks.js renders it from a
+  // generated purple swirl texture — no portal tile ships in the atlas).
+  SWIRL: {
+    OPACITY: 0.85,
+    SCROLL_TILES_PER_SECOND: 0.15, // upward drift of the swirl pattern
+    WOBBLE_AMPLITUDE: 0.08,        // sideways shimmer (texture offset)
+    WOBBLE_HZ: 0.4,
+  },
+
+  // Purple particles drifting off active portal blocks (dimensions/portals.js).
+  PARTICLES: {
+    COUNT: 90,                     // pooled particle budget
+    RANGE: 20,                     // portals within this range of the player emit
+    LIFE_SECONDS: 1.5,
+    DRIFT_SPEED: 0.6,              // blocks/s of random drift
+    SIZE: 0.22,                    // point sprite size (blocks at 1 distance)
+  },
+
+  // The low whispering hum near an active portal + the travel whoosh
+  // (procedural WebAudio, like combat's hiss/boom — no audio assets exist).
+  AMBIENCE: {
+    RANGE: 14,                     // hum fades to silence at this distance
+    VOLUME: 0.22,
+    WHOOSH_VOLUME: 0.6,
+  },
 };
 
 export const DRAGON = {
@@ -1171,6 +1263,15 @@ export const DRAGON = {
   HEAD_ONLY_FULL_DAMAGE: true,
   BODY_DAMAGE_MULTIPLIER: 0.25,
 };
+
+// ---------------------------------------------------------------------------
+// TEMPORARY, MUST REMOVE BEFORE PHASE 20 — Nether test chest
+// ---------------------------------------------------------------------------
+
+// Places a chest at the player's spawn point holding 10 obsidian, a flint
+// and steel, a diamond pickaxe and an iron sword, so the portal/Nether can
+// be tested without a full playthrough (main.js reads it at boot).
+export const TEST_CHEST = true;
 
 // ---------------------------------------------------------------------------
 // Debug / development
