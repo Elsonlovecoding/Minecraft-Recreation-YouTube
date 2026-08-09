@@ -8,28 +8,58 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 17 — nether fortresses: region-seeded
-nether-brick fortress generation in the real Nether (a guaranteed fortress
-per 192-block region — always findable within reasonable exploration of a
-portal — grown as a deterministic blueprint: a central blaze-spawner room,
-bridge and corridor runs, crossings, terminal blaze towers and wart rooms,
-all connected with doorways and support piers down to ground or the lava
-sea; every intersecting chunk re-derives the same blueprint and writes only
-its own columns), the blaze (SPEC 20hp, hovers, fires bursts of 3 small
-fast fireballs for 6, drops blaze rods; the real blaze.png model with three
-counter-rotating rod rings; spawner-only, like vanilla), blaze spawner
-block entities (the caged SPAWNER tile with a spinning miniature blaze
-inside; player-proximity activation, timed spawn cycles with a nearby-blaze
-cap; generated spawners discovered by the fluids-style chunk scan), nether
-wart (three growth-stage crop blocks on soul sand — fortress gardens
-generate them grown, harvest drops 2-4, replanting grows on timers, soil
-break pops the plant), fireball options (per-fireball size/damage-radius/
-blast-hardness — ghast fireballs now break netherrack but not nether
-brick, so fortresses survive sieges), and two mandated size-cap splits
-(world/emitters.js out of chunks.js with a byte-identical A/B proof;
-entities/skeleton.js out of mobs.js, moved verbatim)**
+Phase last completed: **Phase 18 — the bridge to the End: brewing
+(systems/brewing.js — the 5-slot brewing stand on the SlotContainer
+machinery, blaze powder fuel loaded 20 operations at a time, the SPEC
+potion table with all three bottles transforming together per 20s
+operation; glass bottles fill into water bottles at any water source;
+potions drink through the hold-right-click path, leave their glass bottle,
+and apply real effects in stats.js — fire resistance suppressing ALL
+lava/fire damage for 3:00, the run-critical one; strength +3 melee;
+healing instant — with a HUD indicator and tinted-bottle item art
+generated from the shipped bottle sprite), the enderman (SPEC 40hp/7dmg,
+the real 2.9-block model with the separate jaw layer; passive until the
+player looks directly at its head — the exact camera-forward vector against
+the vanilla dot threshold, line-of-sight gated — then aggressive with the
+creepy head-lift pose; blinks away when hit, blinks to a distant target
+while angry, takes water damage and blinks out of it; drops ender pearls;
+a rare overworld night spawn), eyes of ender (right-click throws one
+toward the DETERMINISTIC stronghold point — dimensions/stronghold.js
+places it 1000-2000 blocks from spawn per seed, next phase generates the
+stronghold exactly there — the eye rises, glides, hovers, then drops back
+as an item or shatters 20%), the three session bug fixes (blazes retuned
+to the real values: volley of 3 fireballs 0.3s apart, then a full 5s
+cooldown, 5 damage on a direct hit plus a 4s burn, and a 1.2s wind-up
+with a visible body flare; fortresses grown to the real sprawling scale:
+one per 384-block region, ~100-piece blueprints spanning up to ~300
+blocks, straight bridges up to 112 blocks, staircase galleries shifting
+whole arms up/down 6 blocks, tall crenellated towers, and an enclosed
+3x3-room keep around the heart — per-piece deck heights with flush-link
+guarantees; the Nether brightened: ambient floor 6 -> 9 with a warmer
+red-orange fog and tint, lava oceans lighting their shores through the
+normal flood fill), and the mandated ui/screens.js split
+(ui/containers.js — the chest/furnace/brewing screen sections)**
 
-Previous phase: **Phase 16 — the real Nether: the placeholder
+Previous phase: **Phase 17 — nether fortresses: region-seeded
+nether-brick fortress generation in the real Nether (a guaranteed fortress
+per 192-block region — grown as a deterministic blueprint: a central
+blaze-spawner room, bridge and corridor runs, crossings, terminal blaze
+towers and wart rooms, all connected with doorways and support piers down
+to ground or the lava sea; every intersecting chunk re-derives the same
+blueprint and writes only its own columns), the blaze (SPEC 20hp, hovers,
+fires bursts of 3 small fast fireballs, drops blaze rods; the real
+blaze.png model with three counter-rotating rod rings; spawner-only, like
+vanilla), blaze spawner block entities (the caged SPAWNER tile with a
+spinning miniature blaze inside; player-proximity activation, timed spawn
+cycles with a nearby-blaze cap; generated spawners discovered by the
+fluids-style chunk scan), nether wart (three growth-stage crop blocks on
+soul sand — fortress gardens generate them grown, harvest drops 2-4,
+replanting grows on timers, soil break pops the plant), fireball options
+(per-fireball size/damage-radius/blast-hardness), and two mandated
+size-cap splits (world/emitters.js out of chunks.js with a byte-identical
+A/B proof; entities/skeleton.js out of mobs.js, moved verbatim)**
+
+Phase 16 (still earlier): **the real Nether: the placeholder
 generator replaced by genuine generation (netherrack between a bedrock
 floor and the bedrock ceiling at 128, huge open caverns from a shaped 3D
 density field, lava oceans flooding every open cell at/below y=31,
@@ -1270,7 +1300,220 @@ Phase 14 (this session) additions, one entry per file:
   constants); MOBS.PASSIVE added; LIGHTING.HELD_LIGHT/HELD_LIGHT_TINT;
   INTERACTION.HAND.OFFHAND_*; UI.PLAYER_PREVIEW.
 
-Phase 17 (this session) additions, one entry per file:
+Phase 18 (this session) additions, one entry per file:
+- `src/systems/brewing.js` — REAL (was a stub): the brewing stand.
+  Registries in the file (the smelting.js shape): `BREW_RECIPES` — the
+  SPEC table (water bottle + nether wart -> awkward; awkward + magma
+  cream -> fire resistance; awkward + blaze powder -> strength; awkward +
+  glistering melon slice -> healing) — and the blaze-powder fuel.
+  `BrewingStand` is a 5-slot SlotContainer (3 gated bottle slots that take
+  only water bottles/potions, a gated ingredient slot, a gated
+  blaze-powder fuel slot; the furnace's click-gate pattern including the
+  same-item pull-onto-cursor concession) plus the progress machine: a brew
+  runs only when the ingredient maps at least one bottle, all matching
+  bottles transform together after `BREWING.BREW_SECONDS` (20) consuming
+  1 ingredient, one blaze powder loads `BREWS_PER_FUEL` (20) operations
+  and is consumed only when a brew can actually start, progress belongs
+  to the ingredient name (swaps restart, the furnace rule) and resets
+  when the brew can't run (no rewind — vanilla brewing just stops).
+  addStack shift-routing: bottles -> first empty bottle slots, powder ->
+  fuel first then ingredient, other ingredients -> ingredient.
+  `createBrewingSystem` is the per-position stand map: standAt lazy-create,
+  every stand ticks with the screen closed, break drops all five slots,
+  swapDimensionState like furnaces.
+- `src/player/inventory.js` Phase 18 — the `POTIONS` registry (per potion:
+  liquid colour + the effect drinking applies; the vanilla colours, awkward
+  a distinct murky violet since this game has no tooltips), potions in
+  SPECIAL_MAX_STACK (stack 1), and `consumableValue(name)`: food OR a
+  potion presented as an always-drinkable zero-hunger consumable carrying
+  `container: 'glass_bottle'` and its `potion` entry — the single lookup
+  player/interaction.js now uses for the hold-to-eat/drink flow
+  (`foodValue` stays exported unchanged).
+- `src/player/stats.js` Phase 18 — potion effects: fire_resistance and
+  strength countdown timers ticked in update, healing instant on drink;
+  `eat(food)` applies `food.potion`; fire resistance suppresses BOTH lava
+  contact damage and burn ticks for its duration (the flames still show —
+  swimming the lava sea on one potion is the point); `igniteFire(seconds)`
+  is the external-burn entry (blaze fireballs); `effects`/`strengthBonus`
+  getters for the HUD and combat; death/respawn clears the effects.
+- `src/systems/combat.js` Phase 18 — strength adds to the weapon base
+  before the charge curve (the vanilla attribute shape); sfx grew the
+  enderman `warp` vwoop and the eye `shatter` crack; the fireball system
+  receives `ignitePlayer` so a blaze fireball's brief burn lands on a
+  DIRECT player hit only.
+- `src/systems/fireballs.js` Phase 18 — `spawn` takes `fireSeconds`; the
+  player-hit branch ignites the burn alongside the centre-burst explosion.
+- `src/entities/blaze.js` + config `MOBS.BLAZE` Phase 18 — the real
+  Minecraft pacing (the "blazes kill almost instantly" report): fireball
+  damage 6 -> 5 plus `FIRE_SECONDS` 4 of burn on a direct hit, volley of 3
+  at 0.3s spacing, `COOLDOWN_SECONDS` 3 -> 5 between volleys,
+  `CHARGE_SECONDS` 0.7 -> 1.2 — and the wind-up is now clearly visible:
+  the rod rings spin up (as before) AND the body pulses toward hot orange
+  (`CHARGE_FLASH_HZ`, the tint chain in mobs.js between the hurt flash
+  and the fire flicker). Browser-measured cadence: shots at 0/0.3/0.6,
+  next volley 6.3s later; a dead player stops the barrage.
+- `src/dimensions/fortress.js` + config `NETHER.FORTRESS` Phase 18 — the
+  fortress overhaul (the "too small" report), a full rework: one fortress
+  per 24x24-chunk (384-block) region, `MAX_PIECES` 34 -> 110,
+  `MAX_RADIUS_CELLS` 5 -> 18 (spans measured up to 296 blocks). Pieces
+  carry their own deck height; two pieces link only where their meeting
+  edges agree on it (`pieceEdgeY` — bridges/corridors along their axis,
+  rooms/crossings all sides, stairs yIn on the entry face / yOut on the
+  exit face). New piece kinds: STAIRCASE galleries (1-block steps between
+  two landings, walled, stepped roof, climbing `LEVEL_STEP` 6 within
+  deckY ± `LEVEL_RANGE` 12 — inserted before a junction with
+  `STAIR_CHANCE`, so whole arms shift level; both directions measured
+  across regions) and keep HALLS: the heart sits in an enclosed
+  `(2*KEEP_RADIUS_CELLS+1)²` = 3x3 block of interconnected roofed rooms
+  (glowstone ceiling lamps, doorways between every adjacent pair — the
+  enclosed interior section). Bridge runs are genuinely long
+  (`BRIDGE_MIN/MAX_CELLS` 4-14 = up to 112 blocks straight); corridors
+  stay short. Blaze towers are tall now (`TOWER_WALL_HEIGHT` 10, open-top
+  merlons). A run arriving at a foreign-height piece caps itself with a
+  room instead of merging (no stubs); the dead-end-crossing cleanup is
+  height-aware. All the Phase 17 guarantees re-proven at the new scale
+  (30-region suite: full connectivity through height-matched links,
+  containment, determinism, >= 1 wart + blaze; emission suite: 2.6-5k
+  walkable cells per fortress, BFS from the heart reaches spawners and
+  wart ON FOOT ACROSS DECK LEVELS via the stairs).
+- config `NETHER_SKY` Phase 18 — the "Nether too dark" report:
+  `AMBIENT_LIGHT` 6 -> 9 (the uMinSkyLevel floor — dimly lit but clearly
+  visible), `FOG_COLOR` 0x330808 -> 0x4a1006 and `FOG_FAR` 60 -> 72 with
+  a warmer `SKY_TINT` — the red-orange cast. Lava already emitted 15 into
+  the flood fill; with the raised floor the oceans now read as glowing
+  shores against visible (not black) netherrack.
+- `src/entities/models.js` Phase 18 — `ENDERMAN_MODEL`: the vanilla
+  64x32-sheet model converted with the established rules — 8px head at
+  37..45px, the JAW as a separate deflated box on the same pivot (the
+  vanilla "hat" layer holding the open-mouth art; the head's bottom face
+  is transparent in the sheet so the jaw shows through), 8x12x4 body,
+  2x30x2 arms and legs (legs pivoted at 30 so the feet land exactly on
+  the ground plane). Unwrap regions verified against the decoded 2-bit
+  sheet (the overlay layers are legitimately sparse — that IS the
+  open-mouth reveal).
+- `src/entities/enderman.js` — NEW (the injection pattern): enderman
+  behaviour. Passive amble (leg/pause wander) until the STARE — the exact
+  camera-forward vector (controller yaw/pitch, the same YXZ euler the
+  camera uses) dotted against the eye-to-head direction beats the vanilla
+  `1 - 0.025/dist` threshold with line of sight — then angry: fast chase
+  (steerToward + tryMelee, 7 through the armour pipeline), the creepy
+  pose (head eases up off the jaw; the jaw follows the head-track
+  rotation so it never reads detached). Teleports: a random blink to dry
+  standable ground (16 seeded attempts, clearance 3, never into water,
+  loaded chunks only, A* path cleared, distance-faded warp sfx) — fired
+  on any hit (the vanilla dodge), on each water-damage tick (SPEC:
+  damaged by water — 1/s), and toward a >14-block target every ~4s while
+  angry. Forgets beyond 48 blocks or when the player dies.
+- `src/entities/registry.js` Phase 18 — the enderman entry (SPEC 40hp,
+  7dmg, ender_pearl 0-1; 0.6x2.9 vanilla hitbox, pathfinding clearance 3,
+  spawnWeight 20 beside the 100-weight regulars — a rare-but-findable
+  overworld night spawn; the End lists it next phase) and the blaze's
+  occasional magma_cream drop (25% — the fire resistance ingredient;
+  its vanilla sources are out of scope, documented deviation).
+- `src/entities/mobs.js` Phase 18 — enderman dispatch (AI + the
+  `anim: 'enderman'` layer: biped walk + animateCreepy), the new mob
+  record fields (angry/creepy/creepyBlend/lastHealth/waterTimer/
+  chaseTimer/headBaseY), and the blaze charge flare in the tint chain.
+- `src/player/controller.js` Phase 18 — `yaw`/`pitch` getters (the
+  enderman stare check derives the exact camera-forward vector).
+- `src/dimensions/stronghold.js` — the stronghold's deterministic
+  LOCATION (`strongholdCenter(seed)`: seeded angle + distance
+  1000-2000 from spawn, the SPEC band — measured 1404 for seed 1337).
+  Thrown eyes fly toward it; next phase's generation must anchor the
+  portal room to exactly this point.
+- `src/entities/ender_eye.js` — NEW: thrown eyes of ender. throwEye()
+  launches from the player's eye toward the stronghold: an eased glide
+  to a signal point `TRAVEL_BLOCKS` (16) out and `RISE_BLOCKS` (9) up
+  over 2.2s, a bobbing 1.1s hover, then the SPEC resolution — drops back
+  as an ender_eye item, or shatters (20%) with a flash shell and a glassy
+  crack. No world reads (it clears terrain by rising, vanilla-style), so
+  no unloaded-chunk hazard; swapDimensionState like every entity manager.
+- `src/player/interaction.js` Phase 18 — three right-click chain
+  additions: glass bottle FILLS at the first water source on the
+  crosshair ray (the bucket-scoop pattern and priority — a nearer pool
+  wins over a usable block behind it; the source is NOT consumed,
+  vanilla; a single bottle swaps in place, a stack consumes one and the
+  water bottle joins the inventory or drops at the feet), a held
+  ender_eye THROWS via `onThrowEye` (consuming one), and the eating hold
+  runs on `consumableValue` so potions DRINK (always allowed, no hunger
+  gate) leaving their glass bottle through the stew-bowl container path.
+  The hand sources grew a `stack` getter.
+- `src/ui/containers.js` — NEW (the mandated screens split): the
+  chest/furnace/brewing screen SECTIONS, their CSS, and the indicator
+  pixel art (flame, progress arrow, the new downward brew arrow + powder
+  bar) moved out of screens.js (chest/furnace verbatim in behaviour —
+  regression-proven through the real DOM); the factory binds sections to
+  whichever container is open at event time.
+- `src/ui/screens.js` Phase 18 — down to ~670 (was ~810 over the cap):
+  keeps the panel/cursor/slot machinery, craft grids, equip row and
+  open/close flow; new 'brewing' mode (`openBrewing`, the
+  brewing-uninterested shift fallback via `routableInBrewing`, the
+  activeBlockPos guard kind).
+- `src/entities/items.js` Phase 18 — potion visuals: `getPotionCanvas`
+  builds each potion's 16x16 canvas by scanline-filling the shipped
+  bottle art's interior with the tinted liquid (slight depth shading;
+  the glass shine stays on top), cached per potion off one shared
+  bottle-art load; `itemVisualInfo` routes potions, and
+  `createExtrudedItemMesh` builds their dropped/held slabs from the
+  canvas (the atlas-sprite pattern, async).
+- `src/ui/icons.js` Phase 18 — potion icons from the same canvases as
+  data URLs (the chest-icon async pattern) — hotbar, screens and the HUD
+  indicator all show the tinted bottle.
+- `src/ui/hud.js` Phase 18 — the potion-effect indicator: top-right chips
+  (tinted bottle icon + m:ss countdown) rebuilt only when the
+  whole-second countdowns change.
+- `src/main.js` Phase 18 — brewing + ender-eye systems wired: block
+  listener, managers list, pause-gated ticks, `onUseBlock` routes the
+  brewing stand, `onThrowEye`, the container close-guard 'brewing' kind,
+  `__brewing`/`__enderEyes` dev handles.
+- `docs/SPEC.md` Phase 18 — the blaze mob-table row updated to the
+  rebalanced real values (5 fireball damage + brief fire, volley of 3
+  then ~5s cooldown, visible wind-up) per the session's bug report.
+
+Phase 18 verification: 659 node checks green across four suites — the
+fortress blueprint suite (561: 30 regions fully connected through
+height-matched links, stairs in 29/30 with both directions represented,
+containment, determinism, no dead-end crossings, no unassigned rooms,
+spans to 296 blocks and straight bridges to 112), the fortress emission
+suite (21: mock-world emission per chunk, walkability BFS from the heart
+reaching spawners AND wart on foot across deck levels, censuses), the
+Phase 18 core suite (63: the full potion/consumable registry, every SPEC
+brew recipe, the BrewingStand machine — 20s operation timing at 60fps,
+three-bottle batch, fuel loading rules, no-fuel/no-match/swap-restart
+paths, gates and routing — stronghold determinism + the SPEC distance
+band, enderman registry/model vs SPEC, blaze retune values, config
+shape), and the effects suite (14: fire resistance blocking lava AND burn
+ticks against a live synthetic world while the timers run down, strength
+bonus, instant healing, igniteFire, water bottle inert, respawn clears).
+The enderman unwrap regions were verified against the decoded 2-bit
+sheet. In headless Chromium (the local-three harness), 75 checks across
+six suites, zero console errors throughout: boot with all new systems
+live; the brewing screen opened on a placed stand through onUseBlock
+(title, sections, three bottle slots, powder bar, the downward arrow
+filling), a real two-bottle awkward batch brewed by the ticking loop with
+the screen closed, fire resistance brewed and then DRUNK through the real
+held-button path (effect 180s, bottle returned, the HUD chip showing);
+the REAL right-click chain under genuine pointer lock — a glass bottle
+filling at a staged pool (source kept, one consumed from the stack) and
+an eye of ender thrown (consumed, launched); the eye's signal point
+matching the deterministic stronghold direction and every throw resolving
+after fly+hover; the enderman staying passive under a 2.5s watch, aggroed
+by an exact stare, closing in with the creepy head-lift measured on the
+rig, blinking >4 blocks on a hit, hurt by water, and 24 kills paying
+pearls inside the 0-1 band; the blaze volley cadence measured on GAME
+time (3 shots 0.3s apart, 6.3s to the next volley, 5 damage +
+fireSeconds 4 on every shot, disengaging when the player died); the
+Nether ambient uniform at 9 and the region-(0,0) fortress found in the
+REAL Nether (6 spawners, 60 grown wart — exactly the blueprint's census —
+across a 300-block box); and the chest/furnace screens regression-proven
+through the real DOM after the split (shift routing into input/fuel,
+chest deposits, smelting with the screen closed). Screenshots verify the
+look: the brewing screen mid-brew, the fire-resistance HUD chip, a
+112-block bridge vanishing into the red fog, the keep interior, the
+glowing lava sea against clearly visible netherrack, and the enderman's
+tall silhouette against the dusk sky.
+
+Phase 17 (previous session) additions, one entry per file:
 - `src/dimensions/fortress.js` — NEW: nether fortresses. One fortress per
   `NETHER.FORTRESS.REGION_CHUNKS`² (12² chunks = 192 blocks) region, always
   — the region-seeded BLUEPRINT (cached per region) grows from a central
@@ -2516,10 +2759,43 @@ suites + the reviewers' own probes), zero console errors.
 ## Partially built
 
 - Remaining stub modules with responsibility headers: entities/dragon.js,
-  systems/brewing.js, dimensions/end.js, dimensions/stronghold.js
-  (entities/entity.js, pathfinding.js, models.js, mobs.js are real as of
-  Phase 12; systems/combat.js as of 13; dimensions/portals.js and
-  dimensions/dimensions.js as of 15; dimensions/nether.js as of 16).
+  dimensions/end.js (entities/entity.js, pathfinding.js, models.js,
+  mobs.js are real as of Phase 12; systems/combat.js as of 13;
+  dimensions/portals.js and dimensions/dimensions.js as of 15;
+  dimensions/nether.js as of 16; systems/brewing.js as of 18;
+  dimensions/stronghold.js carries the deterministic LOCATION as of 18 —
+  generation itself is still to come and must anchor to it).
+- Phase 18 deliberate slices:
+  - Magma cream (the fire-resistance ingredient) is an occasional blaze
+    drop (25%) — its vanilla sources (magma cubes, bartering) are out of
+    scope. The healing potion's glistering melon has NO source yet (no
+    melons, no gold-nugget crafting): the brew recipe is registered and
+    inert, and SPEC marks healing optional.
+  - Potions have no tooltips (this game has none) — the liquid colours
+    distinguish them, so awkward is a murky violet instead of vanilla's
+    water-blue. Splash/lingering/extended/II variants: none. The awkward
+    bottle drinks like water (no effect), vanilla.
+  - The brewing stand still renders as its full atlas-tile cube (the
+    `special` shape note from Phase 10 stands); its screen layout is a
+    simplified vanilla (no bubbling animation art).
+  - Fuel is debited per completed operation (vanilla debits on start) —
+    an interrupted brew doesn't waste a charge; loaded charges persist.
+  - The enderman never picks up blocks, has no idle sounds beyond the
+    warp vwoop, and doesn't dodge arrows pre-hit (our arrows only test
+    mobs; the post-hit blink covers the feel). No End dimension yet, so
+    night-overworld is its only spawn ground this phase. The stare uses
+    the vanilla dot threshold but not the vanilla's helmet/pumpkin
+    exemptions (no pumpkins in scope).
+  - Eyes of ender fly toward the stronghold's true bearing from wherever
+    thrown (even in the Nether, where vanilla's do nothing useful — the
+    direction is still the overworld bearing; harmless, and the
+    stronghold hunt is an overworld activity).
+  - Fortress stairs are 1-block steps (no stair blocks exist): mobs walk
+    them, the player jumps up them — the standard block-game staircase.
+    Fortresses stay one blueprint per region (the sprawl now fills it);
+    bridges don't cross over each other (one piece per cell column).
+  - The blaze charge flare is a body tint pulse (no particle system);
+    volley cadence and the burn are exact to the session values.
 - Phase 17 deliberate slices:
   - Blazes are SPAWNER-ONLY (vanilla also natural-spawns them around
     fortresses); the spawner keeps the fight going, and rods farm fine.
@@ -2756,16 +3032,37 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **The Nether arc is complete**: portal -> real generation -> fortresses
-  with blazes and wart. Blaze rods now feed the EXISTING Phase 8 recipes
-  (blaze powder x2, brewing stand, eye of ender). The remaining SPEC arc:
-  **brewing** (systems/brewing.js stub; nether wart + blaze powder are
-  obtainable — the Furnace/SlotContainer + screens pattern is the
-  template, and ui/screens.js must split its container screens first, per
-  the cap note), the **enderman** (the pearl source for eyes of ender —
-  sheet ships at assets/entity/enderman_enderman.png, 64x32; SPEC 40hp /
-  7dmg / passive-until-looked-at / teleports / water damage), the
-  **stronghold + eye throwing**, the **End and the dragon**.
+- **The bridge to the End is complete**: brewing (fire resistance in
+  hand), endermen paying pearls, eyes of ender flying at a fixed point.
+  The remaining SPEC arc: the **stronghold** (generation MUST anchor its
+  portal room to `strongholdCenter(TERRAIN.SEED)` in
+  dimensions/stronghold.js — the eyes have been pointing there since this
+  phase; corridors/rooms/portal room with pre-filled frames per SPEC;
+  the spawner-discovery scan pattern in world/spawners.js is what its
+  loot chests will need, chests.js only creates state on block events),
+  then the **End and the dragon** (dimensions/end.js + entities/dragon.js
+  stubs; END_SKY exists; the enderman registry entry is ready to be
+  listed in the End def's spawn table; end portal frame/eye filling is
+  PORTALS.END_PORTAL_FRAME_COUNT + the END_PORTAL_FRAME block).
+- Phase 18 APIs: `strongholdCenter(seed)` (dimensions/stronghold.js) is
+  the single source of truth for the stronghold's location — generation
+  and the eyes must never disagree. `consumableValue(name)`
+  (player/inventory.js) is the eat/drink registry lookup; add potions in
+  POTIONS (colour + effect) and effects in stats.js's `effects` map +
+  `eat()`. `stats.igniteFire(seconds)` is the external-burn entry;
+  `stats.effects`/`strengthBonus` the readers. `combat.spawnFireball`
+  takes `fireSeconds` (direct player hits only). The brewing stand is
+  `brewing.standAt(x,y,z)` (systems/brewing.js, the furnace pattern);
+  container screen sections live in ui/containers.js — a new container
+  screen adds its section there and its mode/open call in screens.js.
+  `player.yaw`/`player.pitch` are the exact camera angles (the enderman
+  stare derives the forward vector from them — reuse for anything that
+  needs "is the player looking at X").
+- The enderman teleport helper (entities/enderman.js `teleportRandom`)
+  is the shape the End fight's dragon-area blinks can reuse; its
+  dry-standable check is water-aware. Enderman spawns in the End: list
+  'enderman' in the End def's spawn table (registry entry has no
+  `nether` flag, so keep the End def explicit).
 - Phase 17 APIs: `world.generator.fortress` (Nether dimension) —
   `blueprint(rx, rz)` and `heartOf(rx, rz)` locate fortresses for
   tooling/tests. `PLANTABLE` (world/blocks.js) is the crop-planting hook
@@ -2810,12 +3107,14 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   browser sampling); if a future report contradicts PROGRESS again,
   believe the report — the Phase 14 harness proved internal state, not
   what a player sees.
-- ~~world/chunks.js is exactly AT the ~800 cap~~ — Phase 17: split done
-  (world/emitters.js, byte-identical A/B). ui/screens.js (~810) is now
-  the only file over the cap — the brewing screen must split it first.
+- ~~ui/screens.js (~810) is now the only file over the cap~~ — Phase 18:
+  split done (ui/containers.js; screens.js ~670). NOW over the cap:
+  `player/interaction.js` (~806 after the bottle/eye/drink chain — cut
+  the bucket/bottle fluid actions next growth) and `systems/combat.js`
+  (~803 — the arrow machinery cut is the long-mandated split). Neither
+  may grow again without its split.
 - With the survival loop closed, the remaining SPEC arc is the endgame:
-  brewing, the enderman, the stronghold + eyes of ender, the End and the
-  dragon.
+  the stronghold, the End and the dragon.
 - Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
   right-click-on-mob hook (extend for wheat-luring/breeding). Passive
   types: `ai: 'passive'` + optional `wool`/`laysEggs`/`maxFallSpeed`/
@@ -2840,12 +3139,11 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
   on a cache hit, so a `const` is still in its temporal dead zone (this
   has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
-- File-size caps (ARCHITECTURE): ~~mobs.js is OVER the cap~~ — the
-  registry split (Phase 15), ghast split (Phase 16) and skeleton split
-  (Phase 17) have it at ~760. screens.js is at ~810; the brewing-stand
-  screen should trigger a split (container screens vs the inventory
-  screen). combat.js is at ~785 — the next growth should cut the arrow
-  machinery out.
+- File-size caps (ARCHITECTURE): mobs.js sits at ~787 (blaze + enderman
+  dispatches); screens.js got its Phase 18 split (~670 +
+  ui/containers.js). interaction.js (~806) and combat.js (~803) are
+  marginally over and carry mandated-split notes — see the cap bullet
+  above and ARCHITECTURE.md.
 - The mob-type registry entries for the herds reference config MOBS.PASSIVE
   at module load (chicken maxFallSpeed) — config stays import-order-safe
   as long as it has no imports of its own; keep it that way.
@@ -3067,3 +3365,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 15 | Portal mechanics: obsidian frame detection (SPEC 4x5 minimum, corners optional, node-tested pure logic), flint-and-steel lighting with durability wear through the real right-click chain, animated generated-swirl portal blocks (world-space UVs, emissive light 11), purple portal particles + procedural hum/shimmer/whoosh, 3s stand-to-travel with 1:8 coordinate scaling, linked portal reuse within 32 blocks or creation flush on local ground, portal break-down via the block listener; the dimension system (dimensions/dimensions.js): one World whose backing store swaps, per-dimension scene groups, every entity manager swapping collections (items/mobs/falling/arrows/fluids/furnaces/chests — frozen + hidden while stored, furnaces provably not smelting), fixed dimension skies (setDimensionSky), Nether death respawning at the overworld spawn; the placeholder flat-netherrack Nether; water+lava -> obsidian/cobblestone (immediate on contact, fluids.js); the distinct mega-cavern pass + waterfall springs (world/noise.js split, byte-identical); the skeleton shooting fix (raise-draw-release cycle, bow-position arrows, MIN_TINT night visibility, visible arc at speed 24); MOB_TYPES -> entities/registry.js (mandated split); TEMPORARY test chest behind config TEST_CHEST; 26 node + 61 browser checks, review fixes (stale-camera travel frame, canopy chest, portal UV seam) | The real Nether generation + blazes/ghasts (placeholder replaced next session); nether portal ceiling-height placement niceties (ocean-floor return portals, Y-blind link search); mobs/items never travel portals; brewing, stronghold, End, dragon |
 | 16 | The real Nether (dimensions/nether.js): shaped 3D density field between bedrock floor and the bedrock ceiling at 128 — huge open caverns, lava oceans at/below y=31, floating netherrack formations, soul sand patches (registry `slows`), glowstone ceiling clusters, quartz veins, rare wall lava leaks; ~1.5ms/chunk, byte-deterministic; the dimension ambient floor (`NETHER_SKY.AMBIENT_LIGHT` -> `uMinSkyLevel`) making "constant dim red" real under the ceiling; Nether lava tick halved (fluids.setTickSeconds per dimension); ceiling-aware linked-portal ground search + carved-pocket fallback (arrivals can't land on the ceiling); the ghast (entities/ghast.js + registry `flying`/`scale`/`minBrightness`, GHAST_MODEL from the real 2x sheet): gravity-free wander, fireballs at a visible player every 3s, melee deflection flipping ownership (systems/fireballs.js — combat raycast wraps fireballs, explode takes per-blast radii); per-dimension spawn tables (nether: ghasts only, any light, cap 4; overworld pools exclude `nether: true` types); the chest-lid fix (modern sheet's swapped top/bottom slots — model + icon); two cap splits (ghast.js, fireballs.js); 10 node + 23 browser checks, zero console errors | Nether fortresses + blazes + nether wart; arrows don't pop fireballs; ghast shooting-face texture; wider Nether lava range (needs new flow ids); brewing, stronghold, End, dragon |
 | 17 | Nether fortresses (dimensions/fortress.js): a guaranteed fortress per 192-block region — region-seeded blueprints (heart blaze room, 6-wide bridge/corridor runs with railings/windows, crossings, terminal blaze towers with merlons and roofed wart rooms with glowstone lamps), fully connected with doorways, one deck height, support piers to ground/lava; deterministic per-chunk emission (fortress pass last). The blaze (entities/blaze.js + BLAZE_MODEL/BLAZE_RINGS): hovers, holds its ring, charge -> burst of 3 small fast fireballs (6 dmg, no crater) -> cooldown, drops blaze rods 0-1, spawner-only. Blaze spawner block entities (world/spawners.js): spinning caged mini blaze, proximity-gated timed spawn cycles with a nearby cap, fluids-style chunk-scan discovery of generated spawners. Nether wart (blocks 65-67 + world/wart.js + the emitters crop model): fortress gardens generate it grown, harvest drops 2-4, PLANTABLE replant on soul sand grows on timers, soil break pops. Fireball opts (size/damageRadius/maxHardness — ghast blasts spare nether brick). Two mandated cap splits: world/emitters.js (byte-identical A/B) and entities/skeleton.js (verbatim). 23 node + 17 browser checks, zero console errors | Blazes spawner-only (no natural fortress spawns); single-level fortresses; no fire blocks from fireballs; no spawner XP; wart stages reuse the grown art cropped; brewing, enderman, stronghold, End, dragon |
+| 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |
