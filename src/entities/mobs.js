@@ -15,7 +15,11 @@
 //   spider    fast, climbs walls, neutral in daylight unless provoked
 //   cow/pig/sheep/chicken  wander on daylight grass, flee when hit, never
 //             despawn; sheep shear, chickens lay eggs and fall slowly
-// (enderman/blaze/ghast arrive with their dimensions.)
+//   ghast     Phase 16, Nether only (the dimension def's spawn table):
+//             flies on a gravity-free wander, lobs slow exploding
+//             fireballs at a visible player; a melee swing on a fireball
+//             deflects it back (combat owns the projectile)
+// (enderman and blaze arrive with their phases.)
 
 import * as THREE from 'three';
 import { MOBS, COMBAT, LIGHTING, PLAYER, CHUNK } from '../config.js';
@@ -25,6 +29,7 @@ import { createMobModel, attachOverlayModel, SPIDER_LEG_POSE } from './models.js
 import { MOB_TYPES } from './registry.js';
 import { createSpawner } from './spawning.js';
 import { createPassiveBehaviour } from './passive.js';
+import { createGhastBehaviour } from './ghast.js';
 import { rayAABB, lineOfSight } from '../systems/combat.js';
 import { createExtrudedItemMesh } from './items.js';
 import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
@@ -53,7 +58,11 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   const mobs = [];
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
 
-  const hostileTypes = Object.values(MOB_TYPES).filter((t) => t.hostile);
+  // The default (overworld) spawn pools: every hostile without a dimension
+  // restriction, and the passive herds. Dimension defs override them with
+  // their own tables via setSpawnProfile (Phase 16 — the ghast is
+  // `nether: true` and appears only in the Nether def's list).
+  const hostileTypes = Object.values(MOB_TYPES).filter((t) => t.hostile && !t.nether);
   const passiveTypes = Object.values(MOB_TYPES).filter((t) => !t.hostile);
 
   // Phase 14 splits: natural spawning (entities/spawning.js) and passive
@@ -94,6 +103,11 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       // creeper state
       ignited: false,
       fuse: 0,
+      // ghast state (Phase 16): the drifting wander leg, and a yaw target
+      // that overrides the velocity-facing rule while it aims at the player
+      wanderTimer: 0,
+      wanderDir: { x: 1, y: 0, z: 0 },
+      yawTarget: null,
       // passive state (entities/passive.js attaches lazily)
       passive: null,
       sheared: false,
@@ -177,8 +191,34 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
 
   // --- spawning (entities/spawning.js since the Phase 14 split) ------------
 
+  // Phase 16: the spawner reads a per-dimension profile — type pools, caps
+  // and the light rule. The default is the overworld; dimension defs
+  // override it through setSpawnProfile (dimensions/dimensions.js applies
+  // the def's `spawn` table on every switch).
+  const defaultProfile = {
+    hostile: hostileTypes,
+    passive: passiveTypes,
+    hostileCap: MOBS.HOSTILE_CAP,
+    passiveCap: MOBS.PASSIVE_CAP,
+    anyLight: false,
+  };
+  let spawnProfile = null;
+
+  function setSpawnProfile(profile) {
+    spawnProfile = profile
+      ? {
+        hostile: (profile.hostiles ?? []).map((n) => MOB_TYPES[n]).filter(Boolean),
+        passive: (profile.passives ?? []).map((n) => MOB_TYPES[n]).filter(Boolean),
+        hostileCap: profile.hostileCap ?? MOBS.HOSTILE_CAP,
+        passiveCap: profile.passiveCap ?? MOBS.PASSIVE_CAP,
+        anyLight: !!profile.anyLight,
+      }
+      : null;
+  }
+
   const spawner = createSpawner({
-    world, player, dayNight, hostileTypes, passiveTypes, mobs, spawnAt,
+    world, player, dayNight, mobs, spawnAt,
+    getProfile: () => spawnProfile ?? defaultProfile,
   });
 
   // The effective light for the spider's neutrality gate: block light holds
@@ -433,18 +473,28 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     if (e.climbing) e.velocity.y = MOBS.SPIDER.CLIMB_SPEED;
   }
 
+  // Ghast behaviour (Phase 16) lives in entities/ghast.js per the
+  // ARCHITECTURE size cap — the passive.js injection pattern.
+  const ghast = createGhastBehaviour({
+    world, player, combat, playerTargetable, playerDistance,
+  });
+
   const AI = {
     zombie: zombieAI,
     skeleton: skeletonAI,
     creeper: creeperAI,
     spider: spiderAI,
+    ghast: ghast.ghastAI,
     passive: passive.passiveAI,
   };
 
   // Right-click on a mob with an item (player/interaction.js routes it
   // through main.js): shears on an unsheared sheep shear it. Returns true
-  // when the use consumed the click (the caller wears the shears).
+  // when the use consumed the click (the caller wears the shears). A
+  // fireball wrapper from combat's crosshair raycast is not a mob — no
+  // right-click use (deflection is the left button).
   function useOnMob(mob, itemName) {
+    if (mob?.isFireball) return false;
     if (itemName === 'shears' && passive.shear(mob)) return true;
     return false;
   }
@@ -542,9 +592,12 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const e = mob.entity;
     const type = mob.type;
 
-    // Body yaw eases toward the move direction (forward = -sin/-cos yaw).
+    // Body yaw eases toward the move direction (forward = -sin/-cos yaw);
+    // a set yawTarget (the ghast facing the player it shoots at) wins.
     const v = e.velocity;
-    if (Math.hypot(v.x, v.z) > MOBS.BODY_TURN_MIN_SPEED && !e.dead) {
+    if (mob.yawTarget !== null && !e.dead) {
+      mob.yaw = easeAngle(mob.yaw, mob.yawTarget, MOBS.BODY_TURN_RATE, dt);
+    } else if (Math.hypot(v.x, v.z) > MOBS.BODY_TURN_MIN_SPEED && !e.dead) {
       mob.yaw = easeAngle(mob.yaw, Math.atan2(-v.x, -v.z), MOBS.BODY_TURN_RATE, dt);
     }
 
@@ -559,6 +612,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const swing = Math.sin(mob.swingPhase) * MOBS.LIMB_SWING_MAX * mob.swingAmp;
     if (type.anim === 'spider') animateSpiderLimbs(mob);
     else if (type.anim === 'creeper') animateCreeperLimbs(mob, swing);
+    else if (type.anim === 'ghast') ghast.animateGhastLimbs(mob);
     else if (type.anim === 'quadruped') passive.animateQuadruped(mob, swing);
     else if (type.anim === 'chicken') passive.animateChicken(mob, swing);
     else animateBipedLimbs(mob, swing, dt);
@@ -603,7 +657,9 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const fuseFrac = type.ai === 'creeper'
       ? clamp(mob.fuse / MOBS.CREEPER.FUSE_SECONDS, 0, 1)
       : 0;
-    mob.group.scale.setScalar(1 + MOBS.CREEPER.SWELL_SCALE * fuseFrac);
+    // Base model scale (the ghast is authored at 1 block, hitbox 4) times
+    // the creeper's pre-blast swell.
+    mob.group.scale.setScalar((type.scale ?? 1) * (1 + MOBS.CREEPER.SWELL_SCALE * fuseFrac));
 
     // Tint by local baked light (cave mobs read dark, torch-lit mobs warm),
     // flash red while hurt, flicker orange while on fire, and blink white
@@ -614,12 +670,19 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     const light = world.getLight(p.x, p.y + e.def.height / 2, p.z);
     let target = 1;
     if (light) {
-      const skyLevel = clamp(light.sky - dayNight.skyDarken, 0, 15);
+      // The dimension ambient floor (Phase 16 — the Nether's constant dim
+      // red) lifts the sky term exactly like the chunk shader does.
+      const skyLevel = clamp(
+        Math.max(light.sky - dayNight.skyDarken, dayNight.ambientLight ?? 0),
+        0, 15,
+      );
       target = Math.max(
         LIGHTING.LIGHT_FALLOFF ** (15 - skyLevel),
         LIGHTING.LIGHT_FALLOFF ** (15 - light.block),
       );
     }
+    // Per-type visibility floor (the ghast's pale bulk never fades out).
+    target = Math.max(target, mob.type.minBrightness ?? 0);
     const heldLevel = CHUNK_LIGHT_UNIFORMS.uHeldLightLevel.value;
     if (heldLevel > 0) {
       const hp = CHUNK_LIGHT_UNIFORMS.uHeldLightPos.value;
@@ -763,6 +826,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     useOnMob,  // right-click items on mobs (shears -> sheep)
     swapDimensionState,
     setNaturalSpawning,
+    setSpawnProfile, // per-dimension spawn tables (Phase 16)
     spawnAt,   // dev/test scaffolding: __mobs.spawnAt(__mobs.types.zombie, x, y, z)
     types: MOB_TYPES,
     mobs,      // read-only by convention (debug/tests)

@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import { PORTALS, NETHER, PLAYER, OVERWORLD, CHUNK } from '../config.js';
-import { BLOCK } from '../world/blocks.js';
+import { BLOCK, isSolid } from '../world/blocks.js';
 
 // ---------------------------------------------------------------------------
 // Pure frame detection (node-testable)
@@ -285,17 +285,87 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
     return best;
   }
 
+  // A standable Nether arrival column (Phase 16): the highest solid,
+  // non-lava floor with CLEARANCE air cells above it, scanned strictly
+  // inside the bedrock shell — the overworld rule (highest solid column)
+  // would land on TOP of the ceiling. Lava floors fail isSolid, so an
+  // ocean column reports nothing rather than a portal in the lava.
+  function netherFloorY(x, z) {
+    const P = PORTALS.NETHER_PLACE;
+    for (let y = NETHER.CEILING_Y - 1 - P.CLEARANCE; y > NETHER.MIN_Y + 1; y--) {
+      if (!isSolid(getBlock(x, y - 1, z))) continue;
+      let clear = true;
+      for (let d = 0; d < P.CLEARANCE; d++) {
+        if (getBlock(x, y + d, z) !== BLOCK.AIR) {
+          clear = false;
+          break;
+        }
+      }
+      if (clear) return y;
+    }
+    return null;
+  }
+
   // Build the minimum 4x5 frame at the scaled arrival point in the ACTIVE
   // (destination) dimension, standing on the local ground — the bottom bar
   // replaces the surface row so the player walks out flush — and light it.
-  function createLinkedPortal(axis, tx, tz) {
+  // In the Nether (Phase 16) the ground is found by spiralling columns out
+  // from the scaled point for real interior floor; if the area offers none
+  // (a lava ocean, solid rock), a sheltered netherrack pocket is carved
+  // around the frame at the traveller's own height, above the lava sea.
+  function createLinkedPortal(axis, tx, tz, ty) {
     const dx = axis === 'x' ? 1 : 0;
     const dz = axis === 'x' ? 0 : 1;
-    const ground = world.getHighestSolidY(tx, tz);
-    const by = Math.min(
-      Math.max(ground + 1, OVERWORLD.MIN_Y + 2),
-      OVERWORLD.MIN_Y + CHUNK.HEIGHT - 6,
-    );
+    let by;
+    if (dimensions.activeKey === 'nether') {
+      let found = null;
+      const R = PORTALS.NETHER_PLACE.SEARCH_RADIUS;
+      outer: for (let r = 0; r <= R; r++) {
+        for (let oz = -r; oz <= r; oz++) {
+          for (let ox = -r; ox <= r; ox++) {
+            if (Math.max(Math.abs(ox), Math.abs(oz)) !== r) continue;
+            const y = netherFloorY(tx + ox, tz + oz);
+            if (y !== null) {
+              found = { x: tx + ox, z: tz + oz, y };
+              break outer;
+            }
+          }
+        }
+      }
+      if (found) {
+        tx = found.x;
+        tz = found.z;
+        by = found.y;
+      } else {
+        // No natural ground anywhere near: carve a closed netherrack
+        // pocket (a little cave with a floor) and put the frame in it.
+        by = Math.min(
+          Math.max(Math.round(ty ?? NETHER.LAVA_SEA_Y + 8), NETHER.LAVA_SEA_Y + 3),
+          NETHER.CEILING_Y - 10,
+        );
+        for (let i = -2; i <= 3; i++) {
+          for (let c = -2; c <= 2; c++) {
+            for (let r = -2; r <= 4; r++) {
+              const cx = tx + dx * i + (1 - dx) * c;
+              const cz = tz + dz * i + (1 - dz) * c;
+              const cy = by + r;
+              // Shell all around, plus a full floor at r = -1 flush with
+              // the frame's bottom bar (the player steps out level).
+              const solid =
+                i === -2 || i === 3 || c === -2 || c === 2 ||
+                r === -2 || r === 4 || r === -1;
+              world.setBlock(cx, cy, cz, solid ? BLOCK.NETHERRACK : BLOCK.AIR);
+            }
+          }
+        }
+      }
+    } else {
+      const ground = world.getHighestSolidY(tx, tz);
+      by = Math.min(
+        Math.max(ground + 1, OVERWORLD.MIN_Y + 2),
+        OVERWORLD.MIN_Y + CHUNK.HEIGHT - 6,
+      );
+    }
     for (let i = -1; i <= 2; i++) {
       for (let r = -1; r <= 3; r++) {
         const cx = tx + dx * i;
@@ -330,7 +400,7 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
 
     dimensions.switchTo(destKey);
     const dest = nearestPortal(registry[destKey], tx, tz) ??
-      createLinkedPortal(source?.axis ?? 'x', tx, tz);
+      createLinkedPortal(source?.axis ?? 'x', tx, tz, p.y);
 
     // Arrive standing inside the destination portal's bottom row.
     p.x = dest.x0 + (dest.axis === 'x' ? dest.width / 2 : 0.5);

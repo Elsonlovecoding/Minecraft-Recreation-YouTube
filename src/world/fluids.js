@@ -44,6 +44,14 @@ export function createFluids({ world }) {
   let pending = new Set(); // "x,y,z" cells to process on the next tick
   let carry = [];          // overflow from a budget-capped tick
   let timer = 0;
+  // Per-dimension tick override (Phase 16): Nether lava spreads twice as
+  // fast (vanilla). dimensions/dimensions.js sets it on every switch; null
+  // restores the overworld default.
+  let tickSeconds = FLUIDS.LAVA_SPREAD_SECONDS;
+
+  function setTickSeconds(seconds) {
+    tickSeconds = seconds ?? FLUIDS.LAVA_SPREAD_SECONDS;
+  }
 
   function schedule(x, y, z) {
     if (y < MIN_Y || y >= MAX_Y) return;
@@ -236,7 +244,7 @@ export function createFluids({ world }) {
     }
 
     timer += dt;
-    if (timer < FLUIDS.LAVA_SPREAD_SECONDS) return;
+    if (timer < tickSeconds) return;
     timer = 0; // one spread step per interval, even after a long hitch
 
     const batch = pending;
@@ -274,6 +282,7 @@ export function createFluids({ world }) {
     update,
     onBlockChanged,
     swapDimensionState,
+    setTickSeconds, // per-dimension lava pace (Phase 16 — the Nether halves it)
     // Debug/test scaffolding
     get pendingCount() {
       return pending.size + carry.length;

@@ -15,11 +15,13 @@
 //
 // The sky: each dimension def may carry a fixed-sky profile (config
 // NETHER_SKY) applied through dayNight.setDimensionSky — the overworld
-// passes null and keeps the normal day/night cycle. Natural mob spawning
-// is enabled per def (the placeholder Nether spawns nothing; its mobs
-// arrive with the real Nether next session).
+// passes null and keeps the normal day/night cycle. Per def (Phase 16):
+// `spawning` gates natural spawning, `spawn` is the dimension's own spawn
+// table (mobs.setSpawnProfile — the Nether lists the ghast; absent = the
+// overworld pools), and `lavaTickSeconds` overrides the lava spread pace
+// (fluids.setTickSeconds — Nether lava runs twice as fast, vanilla).
 
-export function createDimensions({ world, dayNight, mobs, managers, defs }) {
+export function createDimensions({ world, dayNight, mobs, fluids, managers, defs }) {
   // key -> { def, worldState, managerStates } — state fields hold the
   // dimension's stores only while it is INACTIVE; the active dimension's
   // state lives in the world/managers themselves.
@@ -60,6 +62,8 @@ export function createDimensions({ world, dayNight, mobs, managers, defs }) {
 
     dayNight.setDimensionSky(to.def.sky ?? null);
     mobs.setNaturalSpawning(to.def.spawning !== false);
+    mobs.setSpawnProfile(to.def.spawn ?? null);
+    if (fluids) fluids.setTickSeconds(to.def.lavaTickSeconds ?? null);
     active = key;
   }
 

@@ -148,7 +148,9 @@ function buildChestIcon(sheet) {
   top.height = 14;
   const topCtx = top.getContext('2d');
   topCtx.imageSmoothingEnabled = false;
-  drawRegion180(topCtx, sheet, 14, 0, 14, 14, 0, 0, 14, 14);
+  // The wood-grain lid-top art lives in the classic BOTTOM slot (28,0) —
+  // the modern sheet swaps the top/bottom pair (see world/chests.js).
+  drawRegion180(topCtx, sheet, 28, 0, 14, 14, 0, 0, 14, 14);
 
   const S = UI.BLOCK_ICON_PX;
   const drop = Math.round(S * ICON_DROP);
