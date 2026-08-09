@@ -47,6 +47,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   let contactTimer = 0;  // countdown until the next contact damage tick
   let fireTimer = STATS.FIRE_TICK_SECONDS;
   let drownTimer = STATS.DROWN_TICK_SECONDS;
+  let voidTimer = STATS.VOID_TICK_SECONDS;
   let regenTimer = STATS.REGEN_INTERVAL_SECONDS;
   let starveTimer = STATS.STARVE_TICK_SECONDS;
   let prevX = null;      // last-frame position for movement exhaustion
@@ -309,6 +310,20 @@ export function createStats({ world, player, inventory, items, onDeath }) {
       }
     } else {
       drownTimer = STATS.DROWN_TICK_SECONDS;
+    }
+    if (dead) return;
+
+    // --- the void (Phase 19): below the world floor, damage until death —
+    // the End's island floats over open void (SPEC: "falling into void
+    // kills"); bedrock keeps the other dimensions from ever reaching it.
+    if (body.position.y < STATS.VOID_DAMAGE_Y) {
+      voidTimer -= dt;
+      if (voidTimer <= 0) {
+        voidTimer = STATS.VOID_TICK_SECONDS;
+        damage(STATS.VOID_DAMAGE);
+      }
+    } else {
+      voidTimer = STATS.VOID_TICK_SECONDS;
     }
     if (dead) return;
 

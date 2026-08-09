@@ -397,5 +397,241 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     }
   };
 
-  return { emitTorch, emitLavaFlow, emitPortal, emitWart };
+  // Shared helper for the Phase 19 small-box models (brewing stand, end
+  // portal frame): one quad into a bucket, lit flat by the block's own cell
+  // (the torch rule — no AO on tiny boxes), with a per-face brightness
+  // class. Corners in world-ish space (chunk-local x/z, world y).
+  const ownLight = (lx, iy, lz) => {
+    const i = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + iy;
+    return [wSky[i] * (1 / 15), wBlk[i] * (1 / 15)];
+  };
+  const pushLitQuad = (bucket, corners, uvs, b, sky, blk) => {
+    const base = bucket.count;
+    for (let k = 0; k < 4; k++) {
+      bucket.pos.push(corners[k][0], corners[k][1], corners[k][2]);
+      bucket.uv.push(uvs[k][0], uvs[k][1]);
+      bucket.col.push(b, b, b);
+      bucket.lig.push(sky, blk);
+    }
+    bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+    bucket.count += 4;
+  };
+  // An axis-aligned box [x0..x1, y0..y1, z0..z1] in cell-local units at
+  // (lx, y, lz), each face sampling a UV rect (tile fractions) of `tile`.
+  // Faces flush with the cell boundary cull against opaque neighbours (and
+  // against `cullSameId` neighbours); interior faces always emit.
+  const pushBox = (lx, iy, lz, tile, box, faceUVs, { skipBottom = false, cullSameId = null } = {}) => {
+    const bucket = buckets[PASS_CUTOUT];
+    const y = iy + MIN_Y;
+    const [sky, blk] = ownLight(lx, iy, lz);
+    const { u0, v0, u1, v1 } = tileUV(tile);
+    const du = u1 - u0;
+    const dv = v1 - v0;
+    const [x0, y0, z0, x1, y1b, z1] = box;
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    for (let fi = 0; fi < 6; fi++) {
+      const face = FACES[fi];
+      const d = face.dir;
+      if (skipBottom && fi === 3) continue;
+      // A face flush with the cell boundary behaves like a cube face there.
+      const flush =
+        (d[0] === 1 && x1 === 1) || (d[0] === -1 && x0 === 0) ||
+        (d[1] === 1 && y1b === 1) || (d[1] === -1 && y0 === 0) ||
+        (d[2] === 1 && z1 === 1) || (d[2] === -1 && z0 === 0);
+      if (flush) {
+        const nid = getId(lx + d[0], y + d[1], lz + d[2]);
+        if (!IS_TRANSPARENT[nid]) continue;
+        if (cullSameId && cullSameId(nid)) continue;
+      }
+      const uv = faceUVs[fi];
+      if (!uv) continue;
+      const [fu0, fu1, fv0, fv1] = uv;
+      const corners = face.corners.map((c) => [
+        lx + (c[0] ? x1 : x0),
+        y + (c[1] ? y1b : y0),
+        lz + (c[2] ? z1 : z0),
+      ]);
+      const uvs = face.corners.map((c) => [
+        u0 + du * (c[3] ? fu1 : fu0),
+        v0 + dv * (c[4] ? fv1 : fv0),
+      ]);
+      const b = d[1] > 0 ? FB.top : d[1] < 0 ? FB.bottom : FB.side;
+      pushLitQuad(bucket, corners, uvs, b, sky, blk);
+    }
+  };
+
+  // Brewing stand (Phase 19 — replaces the wrong full-cube rendering): a
+  // stone base plate, the thin rod sampling the tile's rod column, and
+  // three flat arm panes radiating out, each showing the tile's
+  // hanging-bottle art (the vanilla read: rod, base, three bottle arms).
+  const BS = SHAPES.BREWING_STAND;
+  const emitBrewingStand = (lx, iy, lz) => {
+    const y = iy + MIN_Y;
+    const [sky, blk] = ownLight(lx, iy, lz);
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    // Base plate: stone, sides showing a thin band.
+    const b0 = 0.5 - BS.BASE_HALF;
+    const b1 = 0.5 + BS.BASE_HALF;
+    const bandV = [3 / 16, 13 / 16, 0, BS.BASE_HEIGHT];
+    const plateUV = [3 / 16, 13 / 16, 3 / 16, 13 / 16];
+    pushBox(lx, iy, lz, TILE.STONE,
+      [b0, 0, b0, b1, BS.BASE_HEIGHT, b1],
+      [bandV, bandV, plateUV, plateUV, bandV, bandV],
+      { skipBottom: true });
+    // The rod: 2px column, its art rows sampled straight from the tile.
+    const r0 = 0.5 - BS.ROD_HALF;
+    const r1 = 0.5 + BS.ROD_HALF;
+    const rodSide = [7 / 16, 9 / 16, 0, 14 / 16];
+    const rodTop = [7 / 16, 9 / 16, 12 / 16, 14 / 16];
+    pushBox(lx, iy, lz, TILE.BREWING_STAND,
+      [r0, BS.BASE_HEIGHT, r0, r1, BS.ROD_TOP, r1],
+      [rodSide, rodSide, rodTop, null, rodSide, rodSide]);
+    // Three arm panes, one per bottle slot: a vertical DoubleSide quad from
+    // the rod outward, carrying the tile's left-half art (arm bar, hook and
+    // hanging bottle). The cutout material is DoubleSide, so one quad reads
+    // from both sides.
+    const bucket = buckets[PASS_CUTOUT];
+    const { u0, v0, u1, v1 } = tileUV(TILE.BREWING_STAND);
+    const du = u1 - u0;
+    const dv = v1 - v0;
+    for (const angle of BS.ARM_ANGLES) {
+      const dx = Math.cos(angle);
+      const dz = Math.sin(angle);
+      const rIn = BS.ROD_HALF;
+      const rOut = BS.ROD_HALF + BS.ARM_LENGTH;
+      const yLo = y + BS.BASE_HEIGHT;
+      const yHi = y + BS.ARM_TOP;
+      // Corner order (0,0)(1,0)(0,1)(1,1) in the quad's UV frame: u runs
+      // outer -> rod so the bottle art hangs outward, v runs up.
+      const corners = [
+        [lx + 0.5 + dx * rOut, yLo, lz + 0.5 + dz * rOut],
+        [lx + 0.5 + dx * rIn, yLo, lz + 0.5 + dz * rIn],
+        [lx + 0.5 + dx * rOut, yHi, lz + 0.5 + dz * rOut],
+        [lx + 0.5 + dx * rIn, yHi, lz + 0.5 + dz * rIn],
+      ];
+      const armU = [0, 7 / 16];
+      const armV = [1 / 16, 14 / 16];
+      const uvs = [
+        [u0 + du * armU[0], v0 + dv * armV[0]],
+        [u0 + du * armU[1], v0 + dv * armV[0]],
+        [u0 + du * armU[0], v0 + dv * armV[1]],
+        [u0 + du * armU[1], v0 + dv * armV[1]],
+      ];
+      pushLitQuad(bucket, corners, uvs, FB.side, sky, blk);
+    }
+  };
+
+  // Iron bars (Phase 19): thin panes through the cell centre, reaching
+  // toward solid or bars neighbours (half-panes join seamlessly across
+  // cells); an unconnected block renders as a free-standing cross.
+  const emitBars = (lx, iy, lz) => {
+    const bucket = buckets[PASS_CUTOUT];
+    const y = iy + MIN_Y;
+    const [sky, blk] = ownLight(lx, iy, lz);
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    const { u0, v0, u1, v1 } = tileUV(TILE.IRON_BARS);
+    const du = u1 - u0;
+    const dv = v1 - v0;
+    // A vertical pane strip from cell-local a0..a1 along `axis` (0 = x),
+    // held at 0.5 across it. u samples the matching horizontal band of the
+    // tile so bar columns stay put as panes join.
+    const strip = (axis, a0, a1) => {
+      const corners = axis === 0
+        ? [[lx + a0, y, lz + 0.5], [lx + a1, y, lz + 0.5],
+           [lx + a0, y + 1, lz + 0.5], [lx + a1, y + 1, lz + 0.5]]
+        : [[lx + 0.5, y, lz + a0], [lx + 0.5, y, lz + a1],
+           [lx + 0.5, y + 1, lz + a0], [lx + 0.5, y + 1, lz + a1]];
+      const uvs = [
+        [u0 + du * a0, v0], [u0 + du * a1, v0],
+        [u0 + du * a0, v0 + dv], [u0 + du * a1, v0 + dv],
+      ];
+      pushLitQuad(bucket, corners, uvs, FB.side, sky, blk);
+    };
+    const connects = (dx, dz) => {
+      const nid = getId(lx + dx, y, lz + dz);
+      return nid === BLOCK.IRON_BARS || !IS_TRANSPARENT[nid];
+    };
+    const px = connects(1, 0);
+    const nx = connects(-1, 0);
+    const pz = connects(0, 1);
+    const nz = connects(0, -1);
+    if (!px && !nx && !pz && !nz) {
+      strip(0, 0, 1);
+      strip(1, 0, 1);
+      return;
+    }
+    if (px && nx) strip(0, 0, 1);
+    else if (px) strip(0, 0.5, 1);
+    else if (nx) strip(0, 0, 0.5);
+    if (pz && nz) strip(1, 0, 1);
+    else if (pz) strip(1, 0.5, 1);
+    else if (nz) strip(1, 0, 0.5);
+  };
+
+  // End portal frame (Phase 19): the vanilla 13/16-tall block — end-stone
+  // base band, frame-side art, the green frame top — plus, on a filled
+  // frame, the small raised eye box sampling the generated frame-with-eye
+  // tile. Both variants share the emitter; only the top art and the eye
+  // box differ.
+  const EF = SHAPES.END_FRAME;
+  const emitEndFrame = (lx, iy, lz, filled) => {
+    const isFrame = (nid) =>
+      nid === BLOCK.END_PORTAL_FRAME || nid === BLOCK.END_PORTAL_FRAME_EYE;
+    const side = [0, 1, 0, EF.HEIGHT];
+    const topTile = filled ? TILE.END_PORTAL_FRAME_EYE : TILE.END_PORTAL_FRAME_TOP;
+    // The box: sides sample the bottom HEIGHT band of the side art (its top
+    // rows are transparent in the tile — the art is drawn 13px tall).
+    pushBox(lx, iy, lz, TILE.END_PORTAL_FRAME_SIDE,
+      [0, 0, 0, 1, EF.HEIGHT, 1],
+      [side, side, null, [0, 1, 0, 1], side, side],
+      { cullSameId: isFrame });
+    // Top face at 13/16, its own tile (never culled — nothing sits flush).
+    {
+      const bucket = buckets[PASS_CUTOUT];
+      const y = iy + MIN_Y;
+      const [sky, blk] = ownLight(lx, iy, lz);
+      const { u0, v0, u1, v1 } = tileUV(topTile);
+      const cs = FACES[2].corners;
+      pushLitQuad(
+        bucket,
+        cs.map((c) => [lx + c[0], y + EF.HEIGHT, lz + c[2]]),
+        cs.map((c) => [c[3] ? u1 : u0, c[4] ? v1 : v0]),
+        LIGHTING.FACE_BRIGHTNESS.top, sky, blk,
+      );
+    }
+    if (filled) {
+      const e0 = 0.5 - EF.EYE_HALF;
+      const e1 = 0.5 + EF.EYE_HALF;
+      const band = [EF.EYE_UV[0], EF.EYE_UV[1], EF.EYE_UV[0], EF.EYE_UV[1]];
+      pushBox(lx, iy, lz, TILE.END_PORTAL_FRAME_EYE,
+        [e0, EF.HEIGHT, e0, e1, 1, e1],
+        [band, band, band, null, band, band]);
+    }
+  };
+
+  // The end portal interior (Phase 19): a flat sheet at 12/16, rendered in
+  // the animated portal pass (the shared swirl material — fullbright, the
+  // portal is the emitter). UVs continue in world coordinates so the 3x3
+  // surface reads as one sheet.
+  const emitEndPortal = (lx, iy, lz) => {
+    const bucket = buckets[PASS_PORTAL];
+    const y = iy + MIN_Y;
+    const wx = chunk.cx * SIZE + lx;
+    const wz = chunk.cz * SIZE + lz;
+    const cs = [[0, 1], [1, 1], [0, 0], [1, 0]]; // FACES[2] corner order
+    const base = bucket.count;
+    for (const [a, b] of cs) {
+      bucket.pos.push(lx + a, y + SHAPES.END_PORTAL_SURFACE_Y, lz + b);
+      bucket.uv.push((wx + a) * 0.5, (wz + b) * 0.5);
+      bucket.col.push(1, 1, 1);
+      bucket.lig.push(1, 1); // unused (material un-patched); keeps layout
+    }
+    bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+    bucket.count += 4;
+  };
+
+  return {
+    emitTorch, emitLavaFlow, emitPortal, emitWart,
+    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal,
+  };
 }

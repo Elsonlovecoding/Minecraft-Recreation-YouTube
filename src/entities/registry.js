@@ -99,8 +99,12 @@ export const MOB_TYPES = {
     ai: 'enderman',
     anim: 'enderman',          // biped walk + the creepy head-lift layer
     hostile: true,
-    spawnWeight: 20,           // rare beside the 100-weight regulars, but
-                               // findable — the run needs its pearls
+    spawnWeight: 60,           // Phase 19: 20 -> 60 ("could not find a
+                               // single one" report — at 20 the cap filled
+                               // with cave regulars before an enderman ever
+                               // rolled; 60/460 of night spawns is uncommon
+                               // but reliably encountered, and the Nether
+                               // is the plentiful source now)
     texture: 'assets/entity/enderman_enderman.png',
     textureSize: [64, 32],
     model: ENDERMAN_MODEL,

@@ -138,6 +138,19 @@ export const END = {
   PILLAR_COUNT: 10,
   PILLAR_MIN_HEIGHT: 40,
   PILLAR_MAX_HEIGHT: 70,
+  // Phase 19 — the island itself (dimensions/end.js; pillars/crystals/
+  // dragon arrive next phase). A radial end-stone disc: full thickness at
+  // the centre, tapering to a wobbled edge, floating over void.
+  ISLAND_TOP_Y: 64,           // island surface height
+  ISLAND_MAX_DEPTH: 42,       // stone thickness at the centre
+  EDGE_WOBBLE: 7,             // radius noise amplitude (ragged coastline)
+  EDGE_WOBBLE_SCALE: 0.7,     // radius noise frequency (radians on the ring)
+  SURFACE_WOBBLE: 2,          // gentle surface undulation amplitude
+  // The obsidian arrival platform (vanilla flavour, placed ON the island
+  // margin so arrival can never soft-lock over the void).
+  PLATFORM: { X: 38, Z: 0, RADIUS: 2, CLEARANCE: 3 },
+  HOSTILE_CAP: 10,            // endermen fill the island (SPEC: "endermen
+                              // spawn on the island")
 };
 
 // ---------------------------------------------------------------------------
@@ -559,6 +572,14 @@ export const STATS = {
   DROWN_DAMAGE: 2,
   DROWN_TICK_SECONDS: 1.0,
 
+  // The void (Phase 19 — the End's floor is open sky): falling below this
+  // deals damage until death, like vanilla's void. Unreachable in the
+  // overworld and Nether (bedrock floors); 16 blocks under the world
+  // bottom, matching the mob/item void-despawn depth.
+  VOID_DAMAGE_Y: -80,
+  VOID_DAMAGE: 4,
+  VOID_TICK_SECONDS: 0.5,
+
   // Burning: lava sets the body on fire; water puts it out (vanilla numbers)
   FIRE_DAMAGE: 1,               // per burn tick while on fire
   FIRE_TICK_SECONDS: 1.0,
@@ -782,6 +803,27 @@ export const SHAPES = {
     PLANE_INSET: 4 / 16,          // planes sit at 4/16 and 12/16 of the cell
     STAGE_HEIGHTS: [6 / 16, 10 / 16, 1], // quad height per growth stage 0..2
   },
+  // Brewing stand box model (Phase 19 — replaces the wrong full-cube
+  // rendering): a stone base plate, a thin central rod sampling the tile's
+  // rod column, and three flat arm panes radiating out, each showing the
+  // tile's hanging-bottle art.
+  BREWING_STAND: {
+    BASE_HALF: 5 / 16,            // base plate half-extent (10px plate)
+    BASE_HEIGHT: 2 / 16,          // base plate thickness
+    ROD_HALF: 1 / 16,             // rod cross-section half (2px rod)
+    ROD_TOP: 1,                   // rod reaches the cell top (14px over base)
+    ARM_LENGTH: 7 / 16,           // arm pane reach from the rod outward
+    ARM_TOP: 15 / 16,             // arm pane top edge
+    ARM_ANGLES: [0, 2.35619449, 3.92699081], // arm yaws (0°, 135°, 225°)
+  },
+  // End portal frame (Phase 19): the vanilla 13/16-tall block, plus the
+  // small raised eye box on a filled frame.
+  END_FRAME: {
+    HEIGHT: 13 / 16,              // frame box height (vanilla 0.8125)
+    EYE_HALF: 2 / 16,             // eye box half-extent (4px square)
+    EYE_UV: [6 / 16, 10 / 16],    // tile band the eye box samples (centre)
+  },
+  END_PORTAL_SURFACE_Y: 12 / 16,  // the portal sheet's height in its cell
 };
 
 // ---------------------------------------------------------------------------
@@ -802,6 +844,12 @@ export const SMELTING = {
 // ingredient tables are registries in that file and player/inventory.js,
 // like smelting recipes; these are the global tunables.)
 // ---------------------------------------------------------------------------
+
+// Chest block entities (world/chests.js).
+export const CHESTS = {
+  SCAN_CHUNKS_PER_FRAME: 1,       // generated-chest discovery budget
+                                  // (the spawner scan's pace)
+};
 
 export const BREWING = {
   BREW_SECONDS: 20,               // one brewing operation (vanilla 20s)
@@ -849,6 +897,13 @@ export const MOBS = {
   // (2s interval x 4 attempts, was 1s x 8).
   HOSTILE_CAP: 14,                // total cap to protect framerate and pacing
   PASSIVE_CAP: 12,
+  NETHER_HOSTILE_CAP: 10,         // Phase 19: the Nether spawns endermen
+                                  // besides its ghasts ("endermen should be
+                                  // common in the Nether" report), so its
+                                  // cap outgrew GHAST.CAP
+  NETHER_ENDERMAN_WEIGHT: 200,    // vs the ghast's 100 — two of three
+                                  // Nether spawns are endermen (the pearl
+                                  // farm the run needs)
 
   // --- Phase 12: the spawning framework (entities/spawning.js since the
   // Phase 14 split; per-mob stats live in the entities/mobs.js registry,
@@ -1462,11 +1517,13 @@ export const LAVA_VIEW = {
 };
 
 export const NETHER_SKY = {
-  FOG_COLOR: 0x4a1006,            // thick warm red, close (Phase 18: lifted
+  FOG_COLOR: 0x4a1006,            // thick warm red (Phase 18: lifted
                                   // from near-black 0x330808 — the Nether
                                   // should read dimly lit, not dark)
-  FOG_NEAR: 8,
-  FOG_FAR: 72,
+  FOG_NEAR: 20,                   // Phase 19: 8/72 -> 20/140 ("fog too
+  FOG_FAR: 140,                   // thick" report — still the densest fog
+                                  // in the game, but terrain, lava oceans
+                                  // and fortresses read at a distance)
   // SPEC "ambient light: constant dim red" — while in the Nether the
   // day/night cycle's sky writes are overridden with these fixed values
   // (render/lighting.js setDimensionSky): skylight held at a permanent dusk
@@ -1486,6 +1543,12 @@ export const END_SKY = {
   FOG_COLOR: 0x281a3a,            // purple, medium
   FOG_NEAR: 20,
   FOG_FAR: 110,
+  // SPEC "ambient light: constant dim purple" — the same fixed-sky channel
+  // the Nether uses (render/lighting.js setDimensionSky).
+  SKY_DARKEN: 6,
+  SKY_TINT: 0xc0aee0,             // the cool violet cast
+  AMBIENT_LIGHT: 9,               // effective-sky floor: the island is
+                                  // clearly visible under the void sky
 };
 
 // ---------------------------------------------------------------------------
@@ -1545,6 +1608,42 @@ export const PORTALS = {
   STRONGHOLD_MIN_DISTANCE: 1000,
   STRONGHOLD_MAX_DISTANCE: 2000,
   END_PORTAL_FRAME_COUNT: 12,
+
+  // The stronghold itself (Phase 19 — dimensions/stronghold.js). One per
+  // world, underground, its portal room anchored to strongholdCenter (the
+  // eye-of-ender target). A deterministic blueprint of CELL-sized pieces —
+  // corridors, junction rooms, staircases shifting deck levels, terminal
+  // libraries and storage rooms — grown from the portal room by the
+  // fortress.js walk.
+  STRONGHOLD: {
+    CELL: 11,                     // blocks per layout cell (rooms are one cell)
+    BASE_Y: 12,                   // portal-room deck height (underground —
+                                  // surfaces sit at 45+, lava lakes at -54)
+    LEVEL_STEP: 4,                // deck shift per staircase piece
+    LEVEL_RANGE: 8,               // decks stay within BASE_Y ± this
+    MAX_RADIUS_CELLS: 5,          // layout bounded to ±5 cells (~55 blocks)
+    MAX_PIECES: 34,               // total piece budget
+    RUN_MIN_CELLS: 1,             // corridor run length range (cells)
+    RUN_MAX_CELLS: 3,
+    CONTINUE_CHANCE: 0.7,         // a run continues past a junction...
+    STAIR_CHANCE: 0.4,            // ...possibly through a staircase
+    BRANCH_CHANCE: 0.5,           // side arms at junctions
+    MAX_DEPTH: 4,                 // junction generations from the heart
+    ROOM_HEIGHT: 4,               // room interior height (portal room taller)
+    PORTAL_ROOM_HEIGHT: 6,
+    CORRIDOR_HEIGHT: 3,
+    DOOR_HEIGHT: 3,
+    MOSSY_CHANCE: 0.12,           // stone-brick weathering rolls, per block
+    CRACKED_CHANCE: 0.12,
+    TORCH_EVERY: 5,               // corridor torch spacing (columns)
+    PIER_MAX_DROP: 12,            // support piers under cavern crossings
+    FRAME_PREFILL_CHANCE: 0.1,    // per-frame chance to generate eye-filled
+                                  // (SPEC: "some frames spawn pre-filled")
+    ANCHOR: { A: 5, B: 2 },       // strongholdCenter lands on this portal-room
+                                  // offset — a walkway column, so digging
+                                  // straight down at the eye point can never
+                                  // drop the player into the lava pool
+  },
 
   // The animated portal-interior look (world/chunks.js renders it from a
   // generated purple swirl texture — no portal tile ships in the atlas).

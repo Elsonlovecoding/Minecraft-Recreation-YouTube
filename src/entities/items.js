@@ -32,7 +32,10 @@ const MODEL_ITEMS = { chest: 'chest' };
 // Items whose sprite art lives in the block atlas rather than assets/items/
 // (Phase 11: the torch is a box model in the world and a flat sprite as an
 // item, like vanilla — there is no assets/items/torch.png).
-export const ATLAS_SPRITE_ITEMS = { torch: TILE.TORCH };
+export const ATLAS_SPRITE_ITEMS = {
+  torch: TILE.TORCH,
+  iron_bars: TILE.IRON_BARS, // Phase 19: bars mesh as panes, not a cube
+};
 
 const atlasSpriteCanvases = new Map(); // item name -> 16x16 canvas
 

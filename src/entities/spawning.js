@@ -23,16 +23,58 @@
 
 import { MOBS, OVERWORLD, CHUNK } from '../config.js';
 import { BLOCK, blockDef } from '../world/blocks.js';
+import { MOB_TYPES } from './registry.js';
 import { standableAt } from './pathfinding.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // `mobs` is the live mob list (read each cycle); `spawnAt(type, x, y, z)`
-// creates one and is owned by the manager; `getProfile()` resolves the
-// active dimension's spawn table.
-export function createSpawner({ world, player, dayNight, mobs, spawnAt, getProfile }) {
+// creates one and is owned by the manager.
+export function createSpawner({ world, player, dayNight, mobs, spawnAt }) {
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
   let spawnTimer = 0;
+
+  // The default (overworld) spawn pools: every hostile without a dimension
+  // restriction, and the passive herds. Dimension defs override them with
+  // their own tables via setSpawnProfile (Phase 16; the machinery moved
+  // here from mobs.js in Phase 19 — its natural home, and mobs.js was at
+  // the size cap).
+  const defaultProfile = {
+    hostile: Object.values(MOB_TYPES).filter((t) => t.hostile && !t.nether),
+    passive: Object.values(MOB_TYPES).filter((t) => !t.hostile),
+    hostileCap: MOBS.HOSTILE_CAP,
+    passiveCap: MOBS.PASSIVE_CAP,
+    anyLight: false,
+  };
+  let spawnProfile = null;
+  const getProfile = () => spawnProfile ?? defaultProfile;
+
+  // Pool entries are names, or { name, weight } to override the registry
+  // spawnWeight for that dimension only (Phase 19: the Nether's endermen
+  // outnumber its ghasts without touching the overworld rarity).
+  function resolvePool(list) {
+    return (list ?? [])
+      .map((entry) => {
+        const name = typeof entry === 'string' ? entry : entry.name;
+        const type = MOB_TYPES[name];
+        if (!type) return null;
+        const weight = typeof entry === 'string' ? null : entry.weight ?? null;
+        return weight != null ? { ...type, spawnWeight: weight } : type;
+      })
+      .filter(Boolean);
+  }
+
+  function setSpawnProfile(profile) {
+    spawnProfile = profile
+      ? {
+        hostile: resolvePool(profile.hostiles),
+        passive: resolvePool(profile.passives),
+        hostileCap: profile.hostileCap ?? MOBS.HOSTILE_CAP,
+        passiveCap: profile.passiveCap ?? MOBS.PASSIVE_CAP,
+        anyLight: !!profile.anyLight,
+      }
+      : null;
+  }
 
   function countByCategory() {
     const p = player.body.position;
@@ -186,5 +228,5 @@ export function createSpawner({ world, player, dayNight, mobs, spawnAt, getProfi
     }
   }
 
-  return { update, countByCategory };
+  return { update, countByCategory, setSpawnProfile };
 }

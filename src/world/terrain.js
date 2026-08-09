@@ -12,6 +12,7 @@
 import { OVERWORLD, CHUNK, TERRAIN } from '../config.js';
 import { BLOCK } from './blocks.js';
 import { CaveCarver } from './caves.js';
+import { StrongholdGenerator } from '../dimensions/stronghold.js';
 
 // ---------------------------------------------------------------------------
 // Seeded randomness
@@ -159,6 +160,10 @@ export class TerrainGenerator {
     // Phase 9: caves, ravines, ores, stone variants (world/caves.js) — carved
     // after the base column fill, before decorations.
     this.caves = new CaveCarver(this.seed);
+    // Phase 19: the stronghold (dimensions/stronghold.js) — emitted per
+    // chunk as the LAST generation pass so structure writes win, exactly
+    // like the Nether's fortress pass (dimensions/nether.js).
+    this.stronghold = new StrongholdGenerator(this.seed);
   }
 
   // --- climate and biome weights -------------------------------------------
@@ -345,6 +350,8 @@ export class TerrainGenerator {
 
     this.placeTrees(chunk, colAt);
     this.placeCacti(chunk, colAt);
+
+    this.stronghold.emitChunk(chunk); // last — structure writes win
   }
 
   fillColumn(chunk, lx, lz, col) {

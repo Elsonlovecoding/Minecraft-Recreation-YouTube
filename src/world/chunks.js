@@ -56,6 +56,9 @@ export class Chunk {
     this._fluidScanned = false; // world/fluids.js settled this chunk's lava
     this._spawnerScanned = false; // world/spawners.js discovered this chunk's
                                   // generated spawner blocks (same pattern)
+    this._chestScanned = false;   // world/chests.js discovered this chunk's
+                                  // generated loot chests (Phase 19, same
+                                  // pattern again)
   }
 
   // lx/lz must be 0..SIZE-1 (world.js converts world coords); y is a world
@@ -286,8 +289,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   // The special-shape emitters (world/emitters.js): torch box model,
   // flowing-lava cells, the portal slab, the nether wart crop. They close
   // over this mesh's buckets/light window through the ctx.
-  const { emitTorch, emitLavaFlow, emitPortal, emitWart } =
-    createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W });
+  const {
+    emitTorch, emitLavaFlow, emitPortal, emitWart,
+    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal,
+  } = createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W });
 
   // One window cell sampled for AO + vertex light, written to the s* outs.
   // Outside the world vertically: air, full sky above, darkness below.
@@ -328,6 +333,24 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         }
         if (WART_HEIGHT[id] > 0) {
           emitWart(lx, iy, lz, id);
+          continue;
+        }
+        // Phase 19 specials: the brewing stand box model, iron-bar panes,
+        // end portal frames (empty/filled) and the end portal sheet.
+        if (id === BLOCK.BREWING_STAND) {
+          emitBrewingStand(lx, iy, lz);
+          continue;
+        }
+        if (id === BLOCK.IRON_BARS) {
+          emitBars(lx, iy, lz);
+          continue;
+        }
+        if (id === BLOCK.END_PORTAL_FRAME || id === BLOCK.END_PORTAL_FRAME_EYE) {
+          emitEndFrame(lx, iy, lz, id === BLOCK.END_PORTAL_FRAME_EYE);
+          continue;
+        }
+        if (id === BLOCK.END_PORTAL) {
+          emitEndPortal(lx, iy, lz);
           continue;
         }
         const pass = PASS[id];
