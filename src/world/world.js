@@ -324,12 +324,16 @@ export class World {
         // settle flag makes a RETURNING chunk re-scan so an interrupted
         // spread resumes. Only unload clears it — remeshing must not, or
         // every remesh would re-enqueue the chunk's whole lava surface.
+        // The spawner-discovery flag (world/spawners.js) follows the same
+        // rule; its rescan is idempotent (states found by key are kept).
         chunk._fluidScanned = false;
+        chunk._spawnerScanned = false;
         if (!chunk.modified) this.chunks.delete(key);
       } else if (chunk.mesh && dx * dx + dz * dz > meshKeepR2) {
         disposeChunkMesh(chunk);
         this.meshedCount--;
         chunk._fluidScanned = false;
+        chunk._spawnerScanned = false;
       }
     }
   }

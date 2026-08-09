@@ -353,6 +353,36 @@ export const GHAST_MODEL = [
   })),
 ];
 
+// Blaze (blaze.png, 64x32 unwrap): an 8px head floating near the top of the
+// 1.8-block hitbox, ringed by twelve 2x8x2 rods in three orbits — the
+// vanilla model's proportions (head rotation point 24px up; ring pivots at
+// 26/22/13px with radii 9/7/5px). The rods' pivot positions here are their
+// rest layout at orbit angle 0; entities/blaze.js re-positions them each
+// frame as the rings spin (rod k of ring r is part `rod{r*4+k}`).
+export const BLAZE_RINGS = [
+  { radius: 9, y: 26, phase: 0 },
+  { radius: 7, y: 22, phase: Math.PI / 4 },
+  { radius: 5, y: 13, phase: 0 },
+];
+export const BLAZE_MODEL = [
+  { name: 'head', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 24, 0], offset: [-4, -4, -4] },
+  ...BLAZE_RINGS.flatMap((ring, r) =>
+    [0, 1, 2, 3].map((k) => {
+      const angle = ring.phase + (k * Math.PI) / 2;
+      return {
+        name: `rod${r * 4 + k}`,
+        texOffs: [0, 16],
+        size: [2, 8, 2],
+        pivot: [
+          Math.cos(angle) * ring.radius,
+          ring.y,
+          Math.sin(angle) * ring.radius,
+        ],
+        offset: [-1, -8, -1],
+      };
+    })),
+];
+
 // Chicken (chicken_temperate_chicken.png, 64x32): 4x6x3 head with beak and
 // wattle, 6x8x6 body, 3x5x3 legs, 1x4x6 wings (flap while falling).
 export const CHICKEN_MODEL = [

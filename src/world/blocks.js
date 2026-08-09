@@ -120,6 +120,14 @@ export const BLOCK = {
   LAVA_FLOW_2: 62,
   LAVA_FLOW_3: 63,
   LAVA_FALL: 64,
+  // Phase 17: nether wart growth stages (fortress wart rooms generate stage
+  // 2; planting the nether_wart item on soul sand starts a stage-0 plant
+  // that world/wart.js grows). Rendered as the vanilla crop shape by the
+  // mesher's wart emitter (world/emitters.js) — the two younger stages
+  // shorter, sampling the bottom band of the same atlas tile.
+  NETHER_WART_0: 65,
+  NETHER_WART_1: 66,
+  NETHER_WART_2: 67,
 };
 
 export const BLOCKS = [];
@@ -380,6 +388,20 @@ register(BLOCK.NETHER_PORTAL, 'nether_portal', 'Nether Portal', {
   faces: null, solid: false, transparent: true, light: 11,
   drops: [], special: 'nether_portal',
 });
+// Nether wart (Phase 17): a walk-through crop on soul sand, instant-break
+// with any tool. The mesher renders the vanilla crop shape from the
+// NETHER_WART tile (`special: 'wart'`; faces stay null so the generic cube
+// emitter skips it). Only the grown stage pays out; younger stages return
+// the one wart that was planted.
+function registerWart(id, name, drops) {
+  register(id, name, 'Nether Wart', {
+    faces: null, hardness: 0, solid: false, transparent: true,
+    special: 'wart', drops,
+  });
+}
+registerWart(BLOCK.NETHER_WART_0, 'nether_wart_0', [{ item: 'nether_wart', count: 1 }]);
+registerWart(BLOCK.NETHER_WART_1, 'nether_wart_1', [{ item: 'nether_wart', count: 1 }]);
+registerWart(BLOCK.NETHER_WART_2, 'nether_wart_2', [{ item: 'nether_wart', count: [2, 4] }]);
 
 // ---------------------------------------------------------------------------
 // End
@@ -609,6 +631,33 @@ export function lavaFlowLevel(id) {
   const level = LAVA_LEVEL_OF[id];
   return level >= 1 ? level : null;
 }
+
+// ---------------------------------------------------------------------------
+// Nether wart family (Phase 17)
+// ---------------------------------------------------------------------------
+
+// Growth stage per wart block id (0 freshly planted .. 2 fully grown);
+// undefined = not a wart. world/wart.js advances stages, the mesher's wart
+// emitter reads the stage for the crop height.
+export const WART_STAGE = {
+  [BLOCK.NETHER_WART_0]: 0,
+  [BLOCK.NETHER_WART_1]: 1,
+  [BLOCK.NETHER_WART_2]: 2,
+};
+export const WART_STAGE_BLOCKS = [
+  BLOCK.NETHER_WART_0, BLOCK.NETHER_WART_1, BLOCK.NETHER_WART_2,
+];
+
+export function isWart(id) {
+  return WART_STAGE[id] !== undefined;
+}
+
+// Items that plant a block on a specific soil when right-clicked onto its
+// top face (player/interaction.js consults this in the placement path —
+// and in the active-hand gate, so a plantable item counts as having a use).
+export const PLANTABLE = {
+  nether_wart: { block: BLOCK.NETHER_WART_0, soil: BLOCK.SOUL_SAND },
+};
 
 // The id actually placed for a selected block item: oriented blocks
 // (furnace) turn their front toward the player; torches become the wall

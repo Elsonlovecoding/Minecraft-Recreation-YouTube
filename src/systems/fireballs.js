@@ -88,8 +88,15 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
   const fireballs = [];
 
   // `from` is the spawn point (outside the shooter's box), `vel` blocks/s.
-  // fromPlayer flips when a melee swing deflects it.
-  function spawn({ from, vel, damage, blockRadius, fromPlayer = false }) {
+  // fromPlayer flips when a melee swing deflects it. Phase 17 options for
+  // the blaze's small fast fireballs: `size` scales the render and hitbox
+  // (default the ghast's COMBAT.FIREBALL.SIZE), `damageRadius` overrides
+  // the blast falloff range, `maxHardness` caps what the blast can break
+  // (combat.explode opts — blockRadius 0 breaks nothing at all).
+  function spawn({
+    from, vel, damage, blockRadius, fromPlayer = false,
+    size, damageRadius, maxHardness,
+  }) {
     const mesh = new THREE.Mesh(
       getFireballGeometry(),
       new THREE.MeshBasicMaterial({
@@ -100,12 +107,16 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
       }),
     );
     mesh.position.set(from.x, from.y, from.z);
+    if (size !== undefined) mesh.scale.setScalar(size / COMBAT.FIREBALL.SIZE);
     scene.add(mesh);
     const fireball = {
       pos: { x: from.x, y: from.y, z: from.z },
       vel: { x: vel.x, y: vel.y, z: vel.z },
       damage,
       blockRadius,
+      damageRadius,
+      maxHardness,
+      size: size ?? COMBAT.FIREBALL.SIZE,
       fromPlayer,
       mesh,
       age: 0,
@@ -132,10 +143,10 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
   // Nearest fireball whose box the ray hits within maxDist, with its
   // distance — combat's crosshair raycast compares it against the mob hit.
   function nearestOnRay(origin, dir, maxDist) {
-    const h = COMBAT.FIREBALL.SIZE / 2;
     let best = null;
     let bestT = Infinity;
     for (const f of fireballs) {
+      const h = f.size / 2;
       const t = rayAABB(origin, dir, {
         minX: f.pos.x - h, minY: f.pos.y - h, minZ: f.pos.z - h,
         maxX: f.pos.x + h, maxY: f.pos.y + h, maxZ: f.pos.z + h,
@@ -201,7 +212,11 @@ export function createFireballs({ world, scene, getMobs, playerAABB, explode, sf
       }
       if (burstAt) {
         remove(i);
-        explode(burstAt, fb.damage, { blockRadius: fb.blockRadius });
+        explode(burstAt, fb.damage, {
+          blockRadius: fb.blockRadius,
+          damageRadius: fb.damageRadius,
+          maxHardness: fb.maxHardness,
+        });
         continue;
       }
       fb.pos.x += fb.vel.x * dt;

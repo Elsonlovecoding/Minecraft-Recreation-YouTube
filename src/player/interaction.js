@@ -26,7 +26,9 @@ import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
   OVERWORLD, CHUNK, STATS, MOBS,
 } from '../config.js';
-import { BLOCK, blockDef, blockIdByName, placementVariant } from '../world/blocks.js';
+import {
+  BLOCK, blockDef, blockIdByName, placementVariant, PLANTABLE,
+} from '../world/blocks.js';
 import { foodValue, armourSlotIndex } from './inventory.js';
 import { createHand } from './hand.js';
 
@@ -238,7 +240,8 @@ export function createInteraction({
     if (armourSlotIndex(name) !== null) return true;
     const food = foodValue(name);
     if (food) return stats ? stats.canEatFood(food) : true;
-    return blockIdByName(name) !== null; // placeable block
+    // Placeable block, or a plantable item (nether wart on soul sand).
+    return blockIdByName(name) !== null || PLANTABLE[name] !== undefined;
   }
 
   // The acting hand for this right click: the main hand if its item has a
@@ -474,7 +477,22 @@ export function createInteraction({
     const name = hand.name;
     if (!name) return;
     const id = blockIdByName(name);
-    if (id === null) return; // the held item isn't a placeable block
+    if (id === null) {
+      // Plantable items (Phase 17: nether wart) place their crop block on
+      // their soil's TOP face only, into air only — never displacing a
+      // fluid, never sideways off a bed's edge.
+      const plant = PLANTABLE[name];
+      if (!plant) return; // the held item isn't placeable at all
+      if (fy !== 1 || target.id !== plant.soil) return;
+      // Same out-of-range guard as the block path below: setBlock above the
+      // world ceiling is a silent no-op and must not eat the stack count.
+      if (target.y + 1 >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
+      if (world.getBlock(target.x, target.y + 1, target.z) !== BLOCK.AIR) return;
+      world.setBlock(target.x, target.y + 1, target.z, plant.block);
+      hand.consume(1);
+      startSwing(hand.key);
+      return;
+    }
     // Torches need solid support (the clicked block IS the support).
     if (id === BLOCK.TORCH && !blockDef(target.id).solid) return;
     const x = target.x + fx;

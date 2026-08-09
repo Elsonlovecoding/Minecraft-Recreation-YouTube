@@ -22,10 +22,22 @@ src/
     caves.js             cave carving (tunnels, caverns, Phase 15 mega
                          caverns + waterfall springs), ore placement, lava
                          placement
-    chunks.js            chunk data, meshing, face culling; special
-                         emitters (torch, lava flow, Phase 15 portal)
+    chunks.js            chunk data, meshing, face culling (Phase 17: the
+                         mesher tables + special emitters split out into
+                         emitters.js per the size cap)
+    emitters.js          the mesher's per-block lookup tables, FACES
+                         geometry table and the special-shape emitters:
+                         torch box model, flowing lava, portal slab, and
+                         the Phase 17 nether wart crop (split out of
+                         chunks.js — byte-identical A/B verified)
     chests.js            chest block entities: contents + entity-textured
                          box model + lid animation (Phase 10 addition)
+    spawners.js          blaze spawner block entities (Phase 17): the
+                         spinning caged-blaze display, player-proximity
+                         spawn cycles, chunk-scan discovery of generated
+                         spawners (the fluids settle-scan pattern)
+    wart.js              nether wart lifecycle (Phase 17): growth timers
+                         for planted wart, soil-break pops with drops
     fluids.js            flowing lava: budgeted spread/fall/recede automaton
                          over block-change events (Phase 12 addition);
                          water+lava hardening to obsidian/cobble (Phase 15)
@@ -71,6 +83,13 @@ src/
                          tentacle animation (Phase 16 split out of mobs.js
                          per the size cap — the passive.js injection
                          pattern)
+    skeleton.js          skeleton behaviour: keep-distance AI + the
+                         draw-and-release firing cycle (Phase 17 split out
+                         of mobs.js per the size cap, moved verbatim — the
+                         injection pattern)
+    blaze.js             blaze behaviour (Phase 17): hover, the
+                         charge/burst-of-3 fireball cycle, the orbiting
+                         rod-ring animation (the injection pattern)
     dragon.js            ender dragon fight
     items.js             dropped item entities, pickup
     falling.js           falling sand/gravel entities (Phase 9 addition)
@@ -102,7 +121,13 @@ src/
     nether.js            the real Nether generator (Phase 16): shaped 3D
                          density field between bedrock floor and ceiling —
                          caverns, lava oceans, floating formations, soul
-                         sand, glowstone, quartz. Fortresses still to come
+                         sand, glowstone, quartz; Phase 17 runs the
+                         fortress pass last
+    fortress.js          nether fortresses (Phase 17): region-seeded
+                         blueprints (heart blaze room, bridge/corridor
+                         runs, crossings, terminal blaze towers and wart
+                         rooms) emitted per chunk deterministically, with
+                         support piers down to ground/lava
     end.js               end island, pillars, crystals
     stronghold.js        stronghold generation, end portal room
 
@@ -134,18 +159,20 @@ not wherever is convenient.
 in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its mandated split in Phase 13 (the first-person
-hand lives in `player/hand.js` now; ~740 after the Phase 14 offhand);
-`entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`)
-and its ghast split in Phase 16 (`entities/ghast.js`) — it still sits at ~840
-(the spawn-profile plumbing); the next growth should cut the skeleton AI or
-the animation block out;
+hand lives in `player/hand.js` now; ~760 after the Phase 17 planting path);
+`entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`),
+its ghast split in Phase 16 (`entities/ghast.js`) and its mandated skeleton
+split in Phase 17 (`entities/skeleton.js`, moved verbatim) — ~760 now with
+the blaze dispatch in;
 `systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`;
-combat is ~765 now);
+combat is ~785 after the Phase 17 explode/sfx additions — the next growth
+should cut the arrow machinery out);
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
-`world/chunks.js` sits exactly AT ~800 after the Phase 15 portal emitter —
-the next session that grows it must split (the special-shape emitters —
-torch/lava/portal — are the natural cut);
+`world/chunks.js` got its mandated split in Phase 17 (`world/emitters.js`:
+the per-block mesher tables, the FACES geometry table and the special-shape
+emitters — torch/lava/portal/wart; moved with a byte-identical A/B check;
+chunks.js is ~495 now);
 `ui/screens.js` sits at ~810 as of Phase 14 (preview + offhand slot) — the
 brewing-stand screen should split the container screens out.
 

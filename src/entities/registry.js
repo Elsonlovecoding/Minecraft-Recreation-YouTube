@@ -9,7 +9,7 @@ import { MOBS } from '../config.js';
 import {
   HUMANOID_MODEL, SKELETON_MODEL, CREEPER_MODEL, SPIDER_MODEL,
   COW_MODEL, PIG_MODEL, SHEEP_MODEL, SHEEP_WOOL_MODEL, CHICKEN_MODEL,
-  GHAST_MODEL,
+  GHAST_MODEL, BLAZE_MODEL,
 } from './models.js';
 
 export const MOB_TYPES = {
@@ -114,6 +114,30 @@ export const MOB_TYPES = {
     minBrightness: 0.35,       // the pale ghost reads through the gloom
     headHeightFraction: 0.5,
     drops: [{ item: 'gunpowder', count: [0, 2] }], // SPEC
+  },
+  blaze: {
+    name: 'blaze',
+    ai: 'blaze',
+    anim: 'blaze',
+    hostile: true,
+    nether: true,              // never in the overworld pools — and not in
+                               // the Nether's natural table either: blazes
+                               // come only from fortress spawner blocks
+                               // (world/spawners.js), like vanilla
+    spawnWeight: 0,
+    texture: 'assets/entity/blaze.png',
+    textureSize: [64, 32],
+    model: BLAZE_MODEL,
+    flying: true,              // hovers — entities/blaze.js steers wishY
+    width: 0.6,                // vanilla hitbox
+    height: 1.8,
+    clearance: 2,
+    maxHealth: 20,             // SPEC
+    speed: MOBS.BLAZE.FLY_SPEED,
+    attackDamage: MOBS.BLAZE.FIREBALL.DAMAGE, // SPEC: 6 (fireball)
+    minBrightness: 0.9,        // a creature of fire renders near-fullbright
+    headHeightFraction: 0.85,
+    drops: [{ item: 'blaze_rod', count: [0, 1] }], // SPEC blaze_rod (vanilla roll)
   },
 
   // --- the passive herds (Phase 14). Stats from the SPEC passive table;

@@ -246,6 +246,11 @@ export function createCombat({
       seconds: 0.15, volume: 0.5, filterType: 'highpass',
       frequency: 1400, attack: 0.005,
     }),
+    // The blaze's short fiery huff per burst shot (Phase 17).
+    flame: (volume) => noiseBurst({
+      seconds: 0.35, volume: 0.45 * volume, filterType: 'bandpass',
+      frequency: 2400, attack: 0.01,
+    }),
   };
 
   // Baked-light brightness at a point (the mob tint formula) for arrows —
@@ -609,12 +614,16 @@ export function createCombat({
   // obsidian/bedrock survive, fluids are untouched. Phase 16: the radii are
   // per-blast now — ghast fireballs crater far smaller than a creeper —
   // defaulting to the creeper's config values; the damage radius keeps the
-  // config pair's 2x proportion unless given explicitly.
+  // config pair's 2x proportion unless given explicitly. Phase 17:
+  // opts.maxHardness caps what a blast can break below the global
+  // MAX_BLAST_HARDNESS — ghast fireballs break netherrack but not nether
+  // brick (the fortress survives a siege, the vanilla proportions).
   function explode(centre, maxDamage, opts = {}) {
     const E = COMBAT.EXPLOSION;
     const blockRadius = opts.blockRadius ?? E.BLOCK_RADIUS;
     const damageRadius = opts.damageRadius ??
       blockRadius * (E.DAMAGE_RADIUS / E.BLOCK_RADIUS);
+    const maxHardness = opts.maxHardness ?? E.MAX_BLAST_HARDNESS;
     const r = Math.ceil(blockRadius);
     for (let dy = -r; dy <= r; dy++) {
       for (let dz = -r; dz <= r; dz++) {
@@ -630,7 +639,9 @@ export function createCombat({
           if (id === BLOCK.AIR) continue;
           const def = blockDef(id);
           if (def.fluid || def.hardness === null) continue;
-          if (def.hardness > E.MAX_BLAST_HARDNESS) continue; // obsidian, bedrock
+          if (def.hardness > maxHardness) continue; // obsidian, bedrock; and
+                                                    // fortress brick vs the
+                                                    // capped ghast fireball
           world.setBlock(x, y, z, BLOCK.AIR);
           if (Math.random() < E.DROP_CHANCE) spawnBlockDrops(def, x, y, z);
         }
