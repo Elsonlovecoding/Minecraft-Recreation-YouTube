@@ -235,6 +235,10 @@ export function createFireballs({
           maxHardness: fb.maxHardness,
           knockX: knock?.x,
           knockZ: knock?.z,
+          // A fire projectile (fireSeconds set — the blaze's) deals FIRE
+          // damage: fire resistance negates it for the player entirely,
+          // like vanilla (mobs in the blast still take it).
+          fireDamage: fb.fireSeconds != null,
         });
         continue;
       }

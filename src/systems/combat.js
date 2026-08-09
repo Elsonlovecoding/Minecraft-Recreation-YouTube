@@ -665,12 +665,17 @@ export function createCombat({
     }
 
     // Distance-scaled damage: the player (through armour, with knockback
-    // away from the blast) and every living mob in range.
+    // away from the blast) and every living mob in range. Fire-typed
+    // blasts (opts.fireDamage — blaze fireballs) are negated entirely for
+    // a player under fire resistance, the vanilla rule; mobs still take
+    // them.
     const p = player.body.position;
     const pd = Math.hypot(
       p.x - centre.x, p.y + PLAYER.HEIGHT / 2 - centre.y, p.z - centre.z,
     );
-    if (pd < damageRadius) {
+    const playerFireProof =
+      opts.fireDamage && (stats.effects?.fire_resistance ?? 0) > 0;
+    if (pd < damageRadius && !playerFireProof) {
       // opts.knockX/knockZ override the radial shove for blasts centred ON
       // the player (a direct fireball hit bursts at the body centre, where
       // the radial direction is zero — Phase 17 review fix: the caller
