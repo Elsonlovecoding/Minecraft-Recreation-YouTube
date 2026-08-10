@@ -14,7 +14,21 @@ src/
   config.js              all tunable constants in one place
 
   world/
-    blocks.js            block registry: ids, textures, hardness, drops
+    blocks.js            block registry: ids, textures, hardness, drops,
+                         collision/render shape tables (re-exported from
+                         shapes.js/shape_tables.js), the fluid families
+    shapes.js            the Phase 21 SHAPED building blocks: their ids and
+                         registry entries — stairs, slabs, fences, gates,
+                         walls, ladders, doors, trapdoors, beds, signs,
+                         flower pots, item frames. blocks.js hands it
+                         `register`, so the pair is cycle-free
+    shape_tables.js      the box tables behind them (Phase 21 split of
+                         shapes.js per the size cap): SHAPE_BOXES (render),
+                         COLLISION_BOXES (physics), FLUSH_RECTS (face
+                         culling), the fence/wall connection builders and
+                         every family lookup. ONE box list feeds both the
+                         mesher and the collision sweep — what you see is
+                         what you walk into
     terrain.js           noise, heightmap, biomes, trees
     noise.js             seeded simplex/fbm/Field3D machinery for the
                          carver (Phase 15 split out of caves.js per the
@@ -38,9 +52,17 @@ src/
                          spawners (the fluids settle-scan pattern)
     wart.js              nether wart lifecycle (Phase 17): growth timers
                          for planted wart, soil-break pops with drops
-    fluids.js            flowing lava: budgeted spread/fall/recede automaton
-                         over block-change events (Phase 12 addition);
+    fluids.js            flowing fluids: budgeted spread/fall/recede
+                         automaton over block-change events (Phase 12 lava;
+                         Phase 21 generalised it so WATER runs the same
+                         rules with its own range 7 and faster tick, plus
+                         vanilla's two-sources-make-a-source);
                          water+lava hardening to obsidian/cobble (Phase 15)
+    signs.js             sign block entities (Phase 21): the four lines of
+                         text, the entry panel, the generated text plane on
+                         the board face
+    frames.js            item frame block entities (Phase 21): the mounted
+                         item and its display mesh
     world.js             chunk manager, get/set block, loading, block-change
                          listeners, getLight point queries, dimension
                          backing-store swap (Phase 15)
@@ -49,9 +71,24 @@ src/
     renderer.js          Three.js setup, tone mapping, shadows, post
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night
+    item_art.js          generated 16x16 sprites for items this project
+                         ships no texture for (Phase 21: the five hoes, the
+                         shield, door/trapdoor/sign/bed/frame/pot) — the
+                         established generated-art pattern, consumed through
+                         entities/items.js like every other item visual
 
   player/
-    controller.js        movement, physics, collision, camera
+    controller.js        pointer-lock input, key bindings, the first-person
+                         camera (bob, eye heights, FOV kick) and fly mode
+    body.js              PlayerBody + findSpawnPosition (Phase 21 split out
+                         of controller.js per the size cap — moved verbatim):
+                         the AABB physics, swept collision against every
+                         block's COLLISION BOX LIST, and the ladder climb.
+                         DOM-free and node-constructible, by design
+    placement.js         block placement rules (Phase 21 split out of
+                         interaction.js per the size cap): where a block may
+                         go, the two-cell pieces (doors, beds), slab
+                         stacking, and the wall/floor support rules
     interaction.js       raycast, break, place, block outline
     fluid_actions.js     bucket scoop/place + glass-bottle filling (Phase
                          19 split out of interaction.js per the size cap —
@@ -128,11 +165,17 @@ src/
                          per-position stand map (the smelting.js shape)
     combat.js            damage, knockback, armour (Phase 13): player
                          melee with weapon cooldowns and crits, the
-                         armour damage pipeline, bow + arrow projectiles,
-                         explosions (per-blast radii as of Phase 16), the
+                         armour damage pipeline, explosions (per-blast
+                         radii as of Phase 16), the Phase 21 SHIELD (a
+                         raised guard negates frontal hits), the
                          procedural hiss/boom synth. Mob managers receive
                          it injected via main.js (combat never imports
                          the mob manager)
+    arrows.js            arrow projectiles and the bow draw (Phase 21: the
+                         cut the size cap has mandated since Phase 17,
+                         moved verbatim — the crossed-quad model, the
+                         gravity arc, block sticking, pick-up, and the
+                         draw/release cycle)
     fireballs.js         ghast fireball projectiles: straight-line flight,
                          explode on hit, melee-deflectable (Phase 16 split
                          out of combat.js per the size cap; combat injects
@@ -207,8 +250,16 @@ docs/
 **One responsibility per file.** If you're adding mob spawning, it goes in `mobs.js`,
 not wherever is convenient.
 
+**One shape, one source.** A block's collision boxes and its rendered boxes
+come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
+if the mesher and the physics ever disagree, players walk into thin air.
+
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Current state of the cap: `config.js` is exempt (it is the
+in this document. Phase 21 made five cuts: the long-mandated
+`systems/arrows.js` out of combat.js (which is 572 now, finally under),
+`player/placement.js` out of interaction.js (745), `player/body.js` out of
+controller.js (259), and `world/shapes.js` + `world/shape_tables.js` out of
+blocks.js. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
 `player/interaction.js` got its hand split in Phase 13 (`player/hand.js`)
 and its mandated fluid-actions split in Phase 19 (`player/fluid_actions.js`,
@@ -219,23 +270,37 @@ split in Phase 17 (`entities/skeleton.js`, moved verbatim), and Phase 19
 moved the spawn-profile machinery into `entities/spawning.js` (its natural
 home) — ~758 now;
 `systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`)
-and sits at 808 (untouched in Phase 19) — the ONLY file still OVER, and the
-arrow machinery is the long-standing mandated cut before anything lands
-in it;
+and its long-mandated ARROW split in Phase 21 (`systems/arrows.js`, moved
+verbatim as the session's first move before the shield landed in it) —
+572 now, under the cap for the first time since Phase 13;
+`player/controller.js` got its physics split in Phase 21 (`player/body.js`:
+PlayerBody + findSpawnPosition, moved verbatim; controller is 259);
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
 `world/chunks.js` got its mandated split in Phase 17 (`world/emitters.js`:
 the per-block mesher tables, the FACES geometry table and the special-shape
 emitters — torch/lava/portal/wart; moved with a byte-identical A/B check;
 chunks.js is ~495 now);
+`player/interaction.js` also gave up its placement rules in Phase 21
+(`player/placement.js` — the single-cell path moved verbatim, joined by the
+two-cell and support rules; interaction is 745);
 `ui/screens.js` got its mandated split in Phase 18 (`ui/containers.js`:
 the chest/furnace/brewing container sections + indicator art; screens.js
 keeps the panel/cursor/slot machinery and is ~670 now — Phase 20's victory
 screen brings it to ~736, still under);
 `entities/dragon.js` split its visual effects out at birth in Phase 20
 (`entities/dragon_fx.js`: healing beam, breath particles, death light
-show, the egg — dragon.js is ~780, crystals live in their own
-`entities/crystals.js` from the start).
+show, the egg — crystals live in their own `entities/crystals.js` from
+the start); Phase 21's perch pose and allocation-free hitboxes bring it to
+878 — OVER, and **the rig (spawnDragon/attach/layoutChain/animate plus the
+two local<->world transforms) is the mandated cut before anything else
+lands in it**;
+`world/blocks.js` gave up the whole Phase 21 building set to
+`world/shapes.js` (registrations) and `world/shape_tables.js` (the box
+tables) and sits at 908 — also OVER; **the fluid families (the lava/water
+id tables and their predicates) are its mandated cut**, and it needs the
+BLOCK/BLOCKS bindings passed in the way shapes.js takes `register`, or the
+import cycle bites.
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.
@@ -266,8 +331,16 @@ Deploys to GitHub Pages unchanged.
 
 1. Add to the registry in `world/blocks.js` with hardness, tool, drops
 2. Add its texture to the atlas and register the tile index in `render/atlas.js`
-3. If it has behaviour (falls, damages, emits light), handle it in the relevant system
-4. If it's craftable, add the recipe to `systems/crafting.js`
+3. If it is not a full cube, give it a `shape` (and, when the physics box
+   differs, a `collision`) in `world/shapes.js` and mark it
+   `special: 'shape'` — the generic emitter and the collision sweep both read
+   that ONE table, so there is nothing else to write. Register its id in
+   `SHAPED_BLOCK_IDS` there too.
+4. If it has behaviour (falls, damages, emits light), handle it in the relevant system
+5. If it's craftable, add the recipe to `systems/crafting.js`
+6. If it stores state (text, contents), give it a block-entity module in
+   `world/` on the chests.js/signs.js pattern and add it to main.js's
+   listener list AND the dimension managers list
 
 ## Adding a mob
 

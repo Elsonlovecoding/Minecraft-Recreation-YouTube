@@ -134,10 +134,20 @@ export const NETHER = {
 export const END = {
   MIN_Y: 0,
   MAX_Y: 256,
-  ISLAND_RADIUS: 50,          // central island ~100 blocks across
+  // Phase 21 (reported too small): the measured Phase 20 island ran 88-106
+  // blocks across because EDGE_WOBBLE cut as deep as it pushed out. Radius
+  // 56 with a 6-block wobble keeps every bearing at 100+ and reads ~112
+  // across — SPEC's "roughly 100 blocks" as a floor, not an average.
+  ISLAND_RADIUS: 56,          // central island ~112 blocks across
   PILLAR_COUNT: 10,
-  PILLAR_MIN_HEIGHT: 40,
-  PILLAR_MAX_HEIGHT: 70,
+  // Phase 21 (reported as towering over the island): heights are measured
+  // ABOVE the island surface, and 40-70 there put the tallest pillar's top
+  // 70 blocks over a 100-wide island — nothing like vanilla. Real spikes
+  // top out at y 76-103 over a surface at y≈64, i.e. 12-39 blocks of shaft.
+  // These are those numbers; the column is still a 40-70 block obsidian
+  // structure once its ROOT_DEPTH anchor into the island is counted.
+  PILLAR_MIN_HEIGHT: 14,
+  PILLAR_MAX_HEIGHT: 40,
   // Phase 20 — the island rebuilt (dimensions/end.js; the Phase 19 report
   // called the first pass far too small). A radial end-stone disc: full
   // thickness at the centre, tapering to a wobbled edge, floating over
@@ -165,7 +175,10 @@ export const END = {
     RADIUS_MIN: 2,            // pillar cylinder radius rolls in this range
     RADIUS_MAX: 3,
     ANGLE_JITTER: 0.25,       // radians of seeded scatter off the even ring
-    ROOT_DEPTH: 6,            // blocks the pillar anchors below the surface
+    ROOT_DEPTH: 26,           // blocks the pillar anchors below the surface —
+                              // Phase 21: the shaft got shorter, so the
+                              // column roots deeper into the 42-thick island
+                              // and stays a 40-66 block obsidian pillar
   },
 
   // Phase 20 — the exit portal fountain at the island centre: a bedrock
@@ -570,8 +583,47 @@ export const PLAYER = {
                                 // 10 blocks = 3.5, 23+ kills from full health;
                                 // Phase 12 fixed the doubled value)
 
+  // Climbing (Phase 21 — ladders). Vanilla: while the body overlaps a
+  // climbable block, holding forward INTO it (or holding jump) drives the
+  // player up at a fixed rate, releasing lets them slide down slowly, and
+  // sneaking pins them in place. Fall distance resets while climbing.
+  CLIMB_MARGIN: 0.35,           // horizontal reach that still counts as being
+                                // ON a ladder (vanilla is generous here)
+  CLIMB_SPEED: 2.35,            // blocks/s upward (vanilla ladder speed)
+  CLIMB_DOWN_SPEED: 3.0,        // blocks/s sliding down when not climbing
+  CLIMB_HOLD_SPEED: 0,          // sneaking on a ladder holds position
+  CLIMB_HORIZONTAL_FACTOR: 0.4, // horizontal movement damping while climbing
+
   // Safe spawn: nearest dry, clear surface column to this point
   SPAWN: { X: 8, Z: 8, SEARCH_RADIUS: 48 },
+};
+
+// ---------------------------------------------------------------------------
+// Beds (Phase 21) — right-click to set the spawn point; sleeping at night
+// with nothing hostile nearby skips to morning.
+// ---------------------------------------------------------------------------
+
+export const BEDS = {
+  NIGHT_START: 0.5,               // timeOfDay window in which sleeping works
+  NIGHT_END: 1.0,                 // (0 sunrise, 0.25 noon, 0.5 sunset)
+  WAKE_TIME_OF_DAY: 0.0,          // sleeping fast-forwards to dawn
+  MONSTER_RADIUS: 8,              // hostiles within this block sleeping (vanilla)
+  SLEEP_SECONDS: 1.2,             // the fade while the night passes
+  USE_RANGE: 3,                   // must be standing this close to use it
+};
+
+// ---------------------------------------------------------------------------
+// Shields (Phase 21) — right-click raises; a raised shield blocks melee and
+// projectile damage arriving from the front.
+// ---------------------------------------------------------------------------
+
+export const SHIELD = {
+  RAISE_SECONDS: 0.25,            // vanilla delay before the guard counts
+  DURABILITY: 336,                // vanilla shield durability
+  BLOCK_ARC_DOT: 0.0,             // attack direction vs facing: >0 = frontal
+  DAMAGE_REDUCTION: 1.0,          // fully blocked (vanilla)
+  WEAR_PER_BLOCK: 1,              // durability spent per blocked hit
+  SLOWDOWN: 0.35,                 // movement multiplier while blocking
 };
 
 // ---------------------------------------------------------------------------
@@ -672,18 +724,27 @@ export const FALLING = {
 
 // ---------------------------------------------------------------------------
 // Flowing fluids (world/fluids.js) — Phase 12: lava spreads from sources,
-// falls when unsupported, and recedes when its feed is cut. Water stays
-// static (its lakes are generation-sealed; water flow is a later phase).
+// falls when unsupported, and recedes when its feed is cut. Phase 21 put
+// WATER on the same automaton (the reported "flow looks wrong and behaves
+// inconsistently" bug): water spreads 7 with a faster tick, like vanilla,
+// and both fluids now render at their own partial height per level.
 // ---------------------------------------------------------------------------
 
 export const FLUIDS = {
   LAVA_SPREAD_SECONDS: 1.5,     // one spread step (vanilla overworld lava tick)
   LAVA_RANGE: 3,                // horizontal spread distance from a source (SPEC)
+  WATER_SPREAD_SECONDS: 0.25,   // water ticks 5x/second (vanilla ~5 ticks)
+  WATER_RANGE: 7,               // vanilla water spreads 7 cells from a source
   // Rendered surface height per horizontal flow level, as a fraction of the
   // cell — each step visibly lower than the last. Sources render full cubes.
+  // Lava's three levels stay exactly as Phase 12 shipped them; water's seven
+  // step down from just under a full block to a thin film (vanilla's
+  // 8/9..1/9 ladder, floored so the shallowest step still reads).
   FLOW_HEIGHTS: [0.75, 0.5, 0.25],
+  WATER_FLOW_HEIGHTS: [7 / 8, 6 / 8, 5 / 8, 4 / 8, 3 / 8, 2 / 8, 1 / 8],
   FALL_HEIGHT: 1.0,             // falling columns fill their cell
   SCROLL_TILES_PER_SECOND: 0.35, // animated flowing-texture scroll rate
+  WATER_SCROLL_TILES_PER_SECOND: 0.9, // water runs visibly faster than lava
   MAX_UPDATES_PER_TICK: 1200,   // fluid cells processed per spread tick (the
                                 // remainder carries — a lake edge can't stall
                                 // a frame). Sized above the initial settle
@@ -703,6 +764,10 @@ export const TOOL_TIERS = {
   wood:    { speedMultiplier: 2, durability: 60 },
   stone:   { speedMultiplier: 4, durability: 132 },
   iron:    { speedMultiplier: 6, durability: 251 },
+  // Phase 21 — GOLD, the real Minecraft trade: the fastest mining speed of
+  // any tier and only 33 durability. Its HARVEST level is wood's, though
+  // (vanilla): a golden pickaxe cannot mine gold, redstone or diamond ore.
+  gold:    { speedMultiplier: 12, durability: 33 },
   diamond: { speedMultiplier: 8, durability: 1562 },
 };
 
@@ -720,6 +785,9 @@ export const WEAPON_DAMAGE = {
   stone_axe: 9,
   iron_axe: 9,
   diamond_axe: 9,
+  // Phase 21 — gold hits like wood (vanilla); hoes are not weapons.
+  golden_sword: 4,
+  golden_axe: 7,
 };
 
 // ---------------------------------------------------------------------------
@@ -864,6 +932,83 @@ export const SHAPES = {
     EYE_UV: [6 / 16, 10 / 16],    // tile band the eye box samples (centre)
   },
   END_PORTAL_SURFACE_Y: 12 / 16,  // the portal sheet's height in its cell
+
+  // -------------------------------------------------------------------------
+  // Phase 21 — the building-block shapes. Every one of these is a list of
+  // axis-aligned boxes in cell-local units, built by world/blocks.js into the
+  // ONE `boxes` table that BOTH the collision sweep (player/controller.js,
+  // entities/entity.js) and the mesher's generic shape emitter
+  // (world/emitters.js) read. One source of truth: what you see is what you
+  // walk into.
+  // -------------------------------------------------------------------------
+
+  SLAB_HEIGHT: 8 / 16,            // half a block (vanilla)
+  STAIRS: {
+    STEP_HEIGHT: 8 / 16,          // the lower slab's top
+    STEP_DEPTH: 8 / 16,           // how far into the cell the upper step sits
+  },
+  FENCE: {
+    POST_HALF: 2 / 16,            // 4px post through the cell centre
+    ARM_HALF: 1.5 / 16,           // 3px connecting rails
+    ARM_LOW: 6 / 16,              // lower rail band (bottom, top)
+    ARM_LOW_TOP: 9 / 16,
+    ARM_HIGH: 12 / 16,            // upper rail band
+    ARM_HIGH_TOP: 15 / 16,
+    HEIGHT: 1,                    // rendered height (vanilla posts are 1 cell)
+    COLLISION_HEIGHT: 1.5,        // SPEC/vanilla: 1.5 tall so mobs can't jump it
+  },
+  WALL: {
+    POST_HALF: 4 / 16,            // 8px post
+    ARM_HALF: 3 / 16,             // 6px connecting sections
+    ARM_TOP: 14 / 16,
+    HEIGHT: 14 / 16,
+    COLLISION_HEIGHT: 1.5,        // walls block mobs like fences do
+  },
+  GATE: {
+    POST_HALF: 2 / 16,
+    BOTTOM: 5 / 16,               // the gate panel sits above the ground gap
+    TOP: 1,
+    THICK_HALF: 2 / 16,           // panel thickness across the gate
+    OPEN_SIDE: 7 / 16,            // open leaves swing to the cell edges
+    COLLISION_HEIGHT: 1.5,
+  },
+  LADDER: {
+    DEPTH: 3 / 16,                // how far the rungs stand off the wall
+  },
+  DOOR: {
+    THICKNESS: 3 / 16,            // vanilla door slab thickness
+  },
+  TRAPDOOR: {
+    THICKNESS: 3 / 16,
+  },
+  BED: {
+    HEIGHT: 9 / 16,               // mattress top (vanilla)
+  },
+  SIGN: {
+    POST_HALF: 1 / 16,            // standing sign's 2px post
+    POST_TOP: 9 / 16,
+    BOARD_BOTTOM: 9 / 16,         // board band on a standing sign
+    BOARD_TOP: 1,
+    BOARD_HALF: 6 / 16,           // board half-width
+    BOARD_THICK: 1 / 16,          // board thickness (half-extent)
+    WALL_BOTTOM: 4 / 16,          // wall sign board band
+    WALL_TOP: 12 / 16,
+    WALL_OFFSET: 2 / 16,          // stand-off from the wall it hangs on
+    TEXT_LINES: 4,
+    TEXT_MAX_CHARS: 15,
+    TEXTURE_SIZE: 128,            // generated text canvas edge (px)
+  },
+  FLOWER_POT: {
+    HALF: 3 / 16,                 // 6px pot
+    HEIGHT: 6 / 16,
+    PLANT_HALF: 4 / 16,           // the potted sapling's crossed quads
+    PLANT_TOP: 14 / 16,
+  },
+  ITEM_FRAME: {
+    DEPTH: 1.5 / 16,              // frame thickness off the wall
+    HALF: 6 / 16,                 // frame half-width
+    ITEM_SIZE: 0.42,              // rendered item edge inside the frame
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1339,6 +1484,19 @@ export const UI = {
   BLOCK_ICON_PX: 64,              // canvas resolution of isometric block icons
   DURABILITY_BAR_PX: 3,           // height of the durability bar in a slot
 
+  // The boss bar (Phase 21): Minecraft's purple bar across the top of the
+  // screen while the Ender Dragon lives, depleting as it takes damage.
+  BOSS_BAR: {
+    WIDTH_PX: 380,                // bar width (vanilla is 182 art px at 2x)
+    HEIGHT_PX: 10,                // the bar itself
+    TOP_PX: 14,                   // offset from the top screen edge
+    LABEL_PX: 15,                 // caption font size
+    EASE_RATE: 6,                 // 1/s easing of the depleting fill
+  },
+
+  // The sleep fade (Phase 21 — beds): a full-screen wash while night passes.
+  SLEEP_FADE_COLOR: '#05050c',
+
   // The 3D player model preview on the inventory screen (Phase 14,
   // ui/player_preview.js): a small live-rendered viewport beside the 2x2
   // craft grid; the model turns to follow the mouse like vanilla.
@@ -1434,6 +1592,11 @@ export const INTERACTION = {
     DRAW_OFFSET: [-0.18, 0.07, 0.06], // hand offset while drawing
     DRAW_TIP: 0.3,                   // extra x-rotation raising the bow
     DRAW_ENGAGE_RATE: 8,             // 1/s ease into/out of the draw pose
+    // Raised shield (Phase 21): the hand swings in front of the view and
+    // turns its face toward the camera — the vanilla guard.
+    SHIELD_OFFSET: [-0.16, 0.12, 0.18],
+    SHIELD_YAW: 0.9,                 // radians the guard turns inward
+    SHIELD_ENGAGE_RATE: 10,          // 1/s ease into/out of the guard
     // Offhand (Phase 14): the left hand mirrors the right across the screen
     // centre and shows the offhand item whenever one is held. It swings on
     // offhand actions (eating from the offhand) but never on attacks.
@@ -1760,7 +1923,17 @@ export const DRAGON = {
     MIN_SECONDS: 8,             // sits at least this long...
     MAX_SECONDS: 16,            // ...and takes off by this even if ignored
     LEAVE_DAMAGE: 24,           // accumulated damage that ends a perch early
-    BODY_HEIGHT: 3.4,           // body-centre height above the fountain base
+    // Phase 21 (reported: "stands on top of the exit portal rather than
+    // gripping it"). The body now settles so the front claws close on the
+    // fountain's raised rim and the rear feet plant on the bedrock base,
+    // with the neck craned DOWN at the player — which is what makes the
+    // perch a melee window at all.
+    BODY_HEIGHT: 2.6,           // body-centre height above the fountain base
+    GRIP_SPREAD: 0.55,          // radians the front legs splay outward to grip
+    GRIP_REACH: 0.5,            // radians the front legs reach forward/down
+    REAR_PLANT: 0.35,           // radians the rear legs fold under the body
+    HEAD_DROP: 1.1,             // blocks the craned head aims below the eye
+    NECK_SAG: -0.55,            // neck curve sag while perched (arches over)
     ARROW_IMMUNE: true,         // vanilla: projectiles do nothing while
                                 // perched (ranged hits are detected by
                                 // distance — melee happens within reach)
@@ -1797,7 +1970,11 @@ export const DRAGON = {
   // perch-phase melee progress sticks instead of healing back (the
   // review's fight-economy finding).
   HEAL: {
-    RANGE: 40,                  // crystals feed the dragon within this
+    // Phase 21 retune: the pillars are shorter, so the perch seat sits ~35
+    // from the nearest crystal instead of ~49. Range 30 keeps the circling
+    // ring fed (nearest crystal ~20-27 away all the way round) while the
+    // PERCH still gets no drink — the Phase 20 fight-economy rule, held.
+    RANGE: 30,                  // crystals feed the dragon within this
     PER_SECOND: 3,              // health per second while connected
     CRYSTAL_POP_DAMAGE: 10,     // losing the connected crystal stings
                                 // (vanilla explosion feedback)

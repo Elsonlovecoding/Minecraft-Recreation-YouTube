@@ -109,31 +109,42 @@ export function createDragonFight({
   const bodyTarget = makeTarget('body');
 
   // The hittable boxes this frame: the head (full damage), three cubes
-  // along the body spine, and two tail cubes (all body-rate). Computed
-  // from the flight state directly — no matrix reads.
+  // along the body spine, and two tail cubes (all body-rate). Computed from
+  // the flight state directly — no matrix reads, and (Phase 21) into a
+  // PREALLOCATED table so a raycast per frame per arrow allocates nothing.
+  const SPINE_LOCALS = [
+    { x: 0, y: 0, z: -1.2 }, { x: 0, y: 0, z: 0.8 }, { x: 0, y: 0, z: 2.6 },
+  ];
+  const BOX_HALVES = [1.0, 1.5, 1.5, 1.3, 0.7, 0.6];
+  const boxPool = BOX_HALVES.map((_, i) => ({
+    kind: i === 0 ? 'head' : 'body',
+    center: { x: 0, y: 0, z: 0 },
+    aabb: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+  }));
+  // The radius that certainly contains every box (for the cheap ray reject).
+  const HIT_RADIUS = 7 * DRAGON.SCALE;
+  let boxCount = 0;
+
   function hitBoxes() {
-    if (!dragon || dragon.state === 'dying' || dragon.state === 'dead') return [];
+    boxCount = 0;
+    if (!dragon || dragon.state === 'dying' || dragon.state === 'dead') return boxPool;
     const s = DRAGON.SCALE;
-    const boxes = [];
-    const add = (kind, local, half) => {
+    const write = (local, half) => {
+      const box = boxPool[boxCount++];
       const w = localToWorld(local);
-      boxes.push({
-        kind,
-        center: w,
-        aabb: {
-          minX: w.x - half, maxX: w.x + half,
-          minY: w.y - half, maxY: w.y + half,
-          minZ: w.z - half, maxZ: w.z + half,
-        },
-      });
+      box.center.x = w.x;
+      box.center.y = w.y;
+      box.center.z = w.z;
+      const a = box.aabb;
+      a.minX = w.x - half; a.maxX = w.x + half;
+      a.minY = w.y - half; a.maxY = w.y + half;
+      a.minZ = w.z - half; a.maxZ = w.z + half;
     };
-    add('head', dragon.headLocal, 1.0 * s);
-    add('body', { x: 0, y: 0, z: -1.2 }, 1.5 * s);
-    add('body', { x: 0, y: 0, z: 0.8 }, 1.5 * s);
-    add('body', { x: 0, y: 0, z: 2.6 }, 1.3 * s);
-    add('body', dragon.tailLocals[1], 0.7 * s);
-    add('body', dragon.tailLocals[4], 0.6 * s);
-    return boxes;
+    write(dragon.headLocal, BOX_HALVES[0] * s);
+    for (let i = 0; i < 3; i++) write(SPINE_LOCALS[i], BOX_HALVES[i + 1] * s);
+    write(dragon.tailLocals[1], BOX_HALVES[4] * s);
+    write(dragon.tailLocals[4], BOX_HALVES[5] * s);
+    return boxPool;
   }
 
   // Nearest dragon part or crystal on the ray as { target, t }, or null.
@@ -143,11 +154,25 @@ export function createDragonFight({
     if (dimensions.activeKey !== 'end') return null;
     let best = null;
     let bestT = Infinity;
-    for (const box of hitBoxes()) {
-      const t = rayAABB(origin, dir, box.aabb, maxDist);
-      if (t !== null && t < bestT) {
-        bestT = t;
-        best = box;
+    // Cheap reject first: if the ray's closest approach to the body centre
+    // misses the bounding sphere, none of the six boxes can be hit.
+    if (dragon && dragon.state !== 'dying' && dragon.state !== 'dead') {
+      const ox = dragon.pos.x - origin.x;
+      const oy = dragon.pos.y - origin.y;
+      const oz = dragon.pos.z - origin.z;
+      const along = clamp(ox * dir.x + oy * dir.y + oz * dir.z, 0, maxDist);
+      const perp2 = (ox - dir.x * along) ** 2 + (oy - dir.y * along) ** 2 +
+        (oz - dir.z * along) ** 2;
+      if (perp2 <= HIT_RADIUS * HIT_RADIUS) {
+        const boxes = hitBoxes();
+        for (let i = 0; i < boxCount; i++) {
+          const box = boxes[i];
+          const t = rayAABB(origin, dir, box.aabb, maxDist);
+          if (t !== null && t < bestT) {
+            bestT = t;
+            best = box;
+          }
+        }
       }
     }
     const crystalHit = crystals.raycast(origin, dir, maxDist);
@@ -376,6 +401,10 @@ export function createDragonFight({
     startCircleLeg();
   }
 
+  // Where the perched body settles: low enough over the fountain that the
+  // front claws close on its raised rim and the rear feet plant on the
+  // bedrock base (Phase 21 — the reported "stands on top of the exit portal
+  // rather than gripping it").
   const perchSeat = () => ({
     x: centre.x,
     y: END.ISLAND_TOP_Y + 1 + DRAGON.PERCH.BODY_HEIGHT,
@@ -681,14 +710,20 @@ export function createDragonFight({
     d.parts.wingtipR.rotation.z = tipFold;
     d.parts.wingtipL.rotation.z = -tipFold;
 
-    // Legs: trail in flight, plant while perched.
-    const upperX = perched ? -0.1 : -0.75;
-    const lowerX = perched ? 0.15 : 1.0;
+    // Legs: trail in flight, GRIP while perched (Phase 21) — the front
+    // pair splays outward and reaches forward so the claws close over the
+    // fountain's rim, the rear pair folds under the body on the base.
+    const P = DRAGON.PERCH;
+    const upperX = perched ? -P.GRIP_REACH : -0.75;
+    const lowerX = perched ? P.GRIP_REACH * 1.6 : 1.0;
     for (const side of ['R', 'L']) {
+      const out = side === 'R' ? 1 : -1;
       d.parts[`frontUpper${side}`].rotation.x = upperX;
+      d.parts[`frontUpper${side}`].rotation.z = perched ? out * P.GRIP_SPREAD : 0;
       d.parts[`frontLower${side}`].rotation.x = lowerX;
-      d.parts[`rearUpper${side}`].rotation.x = upperX * 0.8;
-      d.parts[`rearLower${side}`].rotation.x = lowerX * 0.9;
+      d.parts[`rearUpper${side}`].rotation.x = perched ? P.REAR_PLANT : upperX * 0.8;
+      d.parts[`rearUpper${side}`].rotation.z = perched ? out * P.GRIP_SPREAD * 0.6 : 0;
+      d.parts[`rearLower${side}`].rotation.x = perched ? -P.REAR_PLANT * 0.8 : lowerX * 0.9;
     }
 
     // Neck + head: cruise pose in flight, craned at the player while
@@ -697,12 +732,16 @@ export function createDragonFight({
     if (dying) {
       headBase = { x: 0, y: 1.9, z: -2.6 };
     } else if (perched && playerTargetable()) {
-      const local = worldToLocal(playerEye());
+      // Aim BELOW the player's eye so the head comes down to them — the
+      // lowered head is what makes melee viable during the perch (Phase 21;
+      // it used to track the eye and often sat above head height).
+      const eye = playerEye();
+      const local = worldToLocal({ x: eye.x, y: eye.y - P.HEAD_DROP, z: eye.z });
       const len = Math.hypot(local.x, local.y, local.z) || 1;
       const reach = 3.3;
       headBase = {
         x: clamp((local.x / len) * reach, -2, 2),
-        y: clamp((local.y / len) * reach, -2.3, 1.4),
+        y: clamp((local.y / len) * reach, -2.8, 0.6),
         z: Math.min(-1.6, (local.z / len) * reach),
       };
     } else {
@@ -717,7 +756,7 @@ export function createDragonFight({
       NECK,
       { x: 0, y: 0.4, z: -0.9 },
       headBase,
-      0.45,
+      perched ? DRAGON.PERCH.NECK_SAG : 0.45, // perched: the neck arches down
       0,
       0,
     );

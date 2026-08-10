@@ -13,7 +13,7 @@
 // (the model's separate 'jaw' part), revealing the open mouth.
 
 import { MOBS, PLAYER, CHUNK } from '../config.js';
-import { BLOCK } from '../world/blocks.js';
+import { isWater } from '../world/blocks.js';
 import { lineOfSight } from '../systems/combat.js';
 import { standableAt } from './pathfinding.js';
 
@@ -63,7 +63,7 @@ export function createEndermanBehaviour({
   function dryStandable(x, y, z, clearance) {
     if (!standableAt(getBlock, x, y, z, clearance)) return false;
     for (let i = 0; i < clearance; i++) {
-      if (getBlock(x, y + i, z) === BLOCK.WATER) return false;
+      if (isWater(getBlock(x, y + i, z))) return false;
     }
     return true;
   }

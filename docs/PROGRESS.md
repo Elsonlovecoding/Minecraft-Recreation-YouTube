@@ -15,7 +15,81 @@ into the End, destroy the crystals, kill the Ender Dragon, and step through
 the activated exit portal to the victory screen. The SPEC's success test is
 met end to end.
 
-Phase last completed: **Phase 20 — the final fight: the End rebuilt
+Phase last completed: **Phase 21 — POLISH: the building set, and the
+reported bugs.
+
+CRAFTING AND COMBAT — gold tools in all four classes (the real Minecraft
+trade: speed 12, the fastest of any tier, on 33 durability, with WOOD's
+harvest level so a golden pickaxe still can't touch diamond ore); the hoe
+in all five tiers (craftable, inert — this game has no farming); the
+SHIELD (6 planks + 1 iron): hold right-click to raise it after a 0.25s
+delay, and any melee, arrow or blast arriving from the front is negated
+outright for one point of durability, with the guard slowing the walk and
+dropping on attack/eat/draw; SHEARS (2 iron) now craftable, shearing sheep
+as before and harvesting leaf blocks.
+
+BUILDING BLOCKS — stairs and slabs in all five materials (cobblestone,
+planks, stone brick, sandstone, nether brick), oak fences and fence gates,
+cobblestone walls; every one of them a REAL SHAPE: one box table per block
+(`world/shape_tables.js`) feeds BOTH the mesher's new generic shape emitter
+and the collision sweep in `player/body.js` and `entities/entity.js`, so
+stairs are walked up in two half steps, slabs are half height, and fences
+and walls stand 1.5 blocks so a jump cannot clear them and mobs cannot path
+onto them. Stairs rotate to the way the player faces; a second slab of the
+same material on a matching slab makes the full block.
+
+UTILITY — LADDERS (7 sticks) that hang on a wall face and climb at the
+vanilla 2.35 b/s while you hold forward into them (jump climbs, sneak
+holds, letting go slides down slowly, and a ladder resets fall distance);
+DOORS, two blocks tall, both halves swinging together on right-click and
+breaking together; TRAPDOORS; BEDS (3 wool + 3 planks) that set the respawn
+point on use and, at night with nothing hostile within 8 blocks, fade the
+screen and skip to dawn; SIGNS with a four-line entry panel on placement
+and the text rendered onto the board face.
+
+DECORATION — bookshelves (6 planks + 3 books, books being 3 leather since
+this game has no paper), item frames that mount and pop out any item, and
+flower pots (empty and potted-sapling).
+
+MATERIALS — CHARCOAL from smelting any log, burning exactly like coal and
+lighting torches through its own recipe; stone bricks from 4 stone;
+sandstone from 4 sand; iron/gold/diamond/coal block forms, both ways.
+
+THE SIX REPORTED BUGS —
+(1) water buckets: the placement path tested green as it stood, so it was
+hardened rather than rewritten (it now lives in `player/placement.js` with
+the rest of the placement rules) and given the regression test it never
+had; what was actually missing was that placed water DID NOTHING, which is
+(6);
+(2) the Ender Dragon's framerate: the model was never rebuilt per frame
+(it has been a driven rig since Phase 20), so the measurable costs were cut
+instead — hitboxes now write into a preallocated pool behind a
+bounding-sphere ray reject, the ten crystals share ONE material and cache
+their blast-target list, and End chunk generation tests only the pillars
+whose cylinder can actually reach the chunk. Measured: the whole fight
+costs ~0.1ms of JS per frame;
+(3) the boss bar: Minecraft's purple bar with the "Ender Dragon" caption
+across the top of the screen, easing down as it takes damage, shown for
+exactly as long as the dragon lives;
+(4) the perch: the dragon now settles ONTO the fountain — front claws
+splayed onto the raised rim, rear feet folded on the bedrock base, neck
+arched DOWN so the head comes to the player, which is what makes melee the
+perch-phase answer;
+(5) the End island: 88-106 blocks across measured, now 102-118 (SPEC's
+"roughly 100" as a floor rather than an average), and the pillars cut from
+40-70 blocks of shaft to the vanilla 14-40 above the surface, rooted 26
+deep so the column itself is still 40-66 blocks of obsidian — with
+DRAGON.HEAL.RANGE retuned 40 -> 30 so the perch stays out of crystal range;
+(6) fluid flow: WATER now runs the same automaton lava has since Phase 12
+— spreading 7 with a 0.25s tick, falling when unsupported, receding when
+its feed is cut, vanilla's two-sources-make-a-source rule — and both
+fluids render at their own partial height per level on their own scrolling
+texture, so a stream reads as moving and each step visibly lower.
+
+Five ARCHITECTURE cuts came with it, including the ARROW split out of
+combat.js that has been mandated since Phase 17.**
+
+Previous phase: **Phase 20 — the final fight: the End rebuilt
 complete (dimensions/end.js — the ~110-block end-stone island floating
 over void with a ragged coast and a dead-flat central plateau, TEN
 obsidian pillars ringing the centre at radius ~33 with heights climbing
@@ -161,6 +235,20 @@ normal flood fill), and the mandated ui/screens.js split
 
 - `index.html` — importmap pinned to three@0.160.0 (unpkg), fullscreen canvas,
   pointer-lock hint overlay.
+- **Phase 21 building set** — `world/shapes.js` (ids + registry entries) and
+  `world/shape_tables.js` (the box tables) hold stairs/slabs/fences/gates/
+  walls/ladders/doors/trapdoors/beds/signs/pots/frames; the mesher's generic
+  `emitShape` (world/emitters.js) and the collision sweeps in
+  `player/body.js` + `entities/entity.js` read the SAME boxes.
+  `player/placement.js` owns where they go. WORKING and covered by 88
+  automated checks.
+- **Phase 21 fluids** — `world/fluids.js` runs lava AND water on one
+  parameterised automaton; `world/emitters.js` renders both at partial
+  height on their own scrolling texture. WORKING.
+- **Phase 21 combat/utility** — the shield (systems/combat.js
+  `setBlocking`/`shieldBlocks`), shears on leaves, charcoal, the block
+  forms, the boss bar (`ui/hud.js setBossBar`) and beds (main.js `trySleep`
+  + `stats.setSpawnPoint`). WORKING.
 - `src/config.js` — all SPEC-implied global tunables: world dimensions, chunks,
   view distance, terrain/cave/ore ranges, player physics and stats, tool tiers,
   weapon damage, armour, mob spawn rules, item drops, day length, lighting
@@ -3125,6 +3213,64 @@ suites + the reviewers' own probes), zero console errors.
 
 ---
 
+## Phase 21 deliberate slices
+
+- Shaped blocks (stairs, slabs, fences, doors...) pass light freely
+  (`opacity` 0, the transparent default). A slab roof does not darken the
+  room under it and hostiles will not spawn there. The alternative — opacity
+  15 — would render the block's own faces black, because the small-box
+  emitters light themselves from their own cell (the same rule the torch,
+  the brewing stand and the end portal frame have always used).
+- Stairs have no upside-down variant and no inner/outer corner shapes; a
+  stair is always bottom-half and straight. Slabs DO have both halves, and
+  two of a kind stack into the full block.
+- Fences/walls/gates connect to solid blocks, each other and gates — not to
+  glass or other transparent blocks. Their collision is the post plus the
+  arms they actually connect to, so a straight run is sealed but a lone post
+  is only 4/16 wide (vanilla).
+- A/* mob pathing treats any block with collision above its own cell
+  (fences, walls, gates) as NOT standable and any shaped block as
+  impassable, so mobs walk round slabs and stairs instead of over them.
+  They still stand on them fine — the restriction is only on the integer
+  path grid.
+- Doors and trapdoors have no hinge side: a door's two states are the
+  closed slab and the same slab given a quarter turn. No double doors, no
+  redstone (out of scope), and mobs never open them.
+- Beds do not render a pillow/blanket model or lay the player down: they
+  are a 9/16 slab in wool + planks, and sleeping is a screen fade. There is
+  no "leave the bed" position — the player never moves.
+- Signs carry four lines of 15 characters, entered through a DOM panel (the
+  established generated-UI pattern). Text is drawn in the browser's
+  monospace font rather than the Minecraft font (none ships), renders on the
+  FRONT face only, and — like every block entity here — does not survive a
+  session (there is no world saving).
+- Item frames hold one item, show no rotation states, and are not
+  rotated by right-clicking a filled frame (that pops the item out instead).
+- Flower pots take the sapling only, because the sapling is the only plant
+  item in the game.
+- Hoes are craftable and inert, as the brief asked; there is no tilled soil
+  block and no crop but nether wart.
+- The shield is negation, not vanilla's damage-scaling knockback rules: a
+  frontal hit does nothing at all and costs 1 durability. It does not block
+  explosions' block damage, does not have a cooldown after an axe hit (no
+  axe-disable mechanic), and its guard drops the moment the button releases.
+- Gold tools sit at wood's HARVEST level (vanilla) but keep their own
+  12x speed — so a golden pickaxe mines stone faster than diamond does and
+  still cannot harvest gold ore. That reads as a bug to anyone who does not
+  know Minecraft; it is exactly right.
+- Water flow: no water-source removal by flowing lava (vanilla makes stone),
+  no vanilla "falling water spreads at full strength one level lower" edge
+  cases beyond the landed-column rule lava already had, and no biome tint —
+  the flow uses the still-water tile scrolled on its own repeating copy,
+  since the atlas ships no water_flow tile.
+- Both fluids share ONE per-tick update budget (FLUIDS.MAX_UPDATES_PER_TICK),
+  so a busy waterfall cannot add its cost on top of a busy lava lake — the
+  frame cost is one number whatever is flowing.
+- The item-frame and sign meshes live in the scene, not in chunk meshes, so
+  they do not take baked light (the chest/dropped-item rule).
+
+---
+
 ## Partially built
 
 - No stub modules remain — entities/dragon.js, the last one, became the
@@ -3265,10 +3411,10 @@ suites + the reviewers' own probes), zero console errors.
   - The portal ambience hum keeps sounding through the Esc pause (one
     quiet loop; every other sound is a one-shot). The pause gate freezes
     the swirl/particles/timer correctly.
-  - Waterfall springs exist only inside mega caverns and water remains
-    static everywhere — the column IS the fall. Real flowing water (and
-    rivers, still the one unplaced SPEC world feature) remains future
-    work; the fluids automaton generalises when it comes.
+  - ~~Waterfall springs exist only inside mega caverns and water remains
+    static everywhere~~ — Phase 21: water flows on the same automaton as
+    lava (range 7, 0.25s tick, infinite-source rule). RIVERS remain the one
+    unplaced SPEC world feature — they need a carver pass, not a fluid one.
   - Exiting lava in the Nether restores the OVERWORLD fog for one frame
     before the dimension override rewrites it (edge-triggered restore vs
     per-frame override — invisible in practice).
@@ -3324,10 +3470,9 @@ suites + the reviewers' own probes), zero console errors.
   - Mobs don't push the player or each other (no entity-entity collision);
     melee reach compensates. Mob-vs-mob damage now exists ONLY from
     explosions (a creeper blast hurts nearby mobs).
-  - Only lava flows. Water stays static (generation seals its lakes; water
-    flow + springs are a later phase — the fluids.js automaton generalises
-    when needed). Lava meeting water makes nothing (no obsidian/cobble
-    yet); flows hover where a fall lands on water.
+  - ~~Only lava flows. Water stays static~~ — Phase 21: both fluids run the
+    one automaton. Lava meeting water has made obsidian/cobblestone since
+    Phase 15.
   - Flowing lava has flat partial-height tops per level (no corner-sloped
     surfaces), and sources keep the static still-lava tile.
   - ~~Mob melee ignores armour... no attack exhaustion cost yet~~ —
@@ -3359,14 +3504,18 @@ suites + the reviewers' own probes), zero console errors.
   - ~~Dying with an inventory/crafting screen open preserves the cursor
     stack...~~ — Phase 11: death closes any open screen first (grids and
     cursor return to the inventory) and everything drops at the death site.
-- `ui/screens.js` has the inventory, crafting, chest, furnace and death
-  screens; the victory screen is the dragon phase. The brewing stand should
+- `ui/screens.js` has the inventory, crafting, chest, furnace, brewing,
+  death and victory screens. The Phase 21 sign editor is deliberately NOT
+  one of them — it is a small self-contained panel in world/signs.js, which
+  owns signs end to end (state, art, entry). The brewing stand should
   reuse the Phase 10 container machinery (SlotContainer with slot gates +
   a screen mode with indicator art — the furnace is the template).
 - Phase 8 deliberate slices:
-  - Crafting recipes only cover what the item set supports — no golden
-    tools (gold tier isn't in SPEC's tool table), no shield/ladder/door.
-    (~~no chest recipe~~ — shipped in Phase 10 with the chest UI.)
+  - ~~Crafting recipes only cover what the item set supports — no golden
+    tools, no shield/ladder/door~~ — Phase 21 shipped all of them, plus
+    hoes, shears, stairs/slabs/fences/gates/walls, trapdoors, beds, signs,
+    bookshelves, item frames, flower pots, charcoal, stone bricks,
+    sandstone and the four block forms.
   - Vanilla's drag-to-distribute across grid cells (holding a button and
     sweeping) isn't implemented — click/right-click per cell is.
   - Recipe unlocking/recipe book: none, by design.
@@ -3437,7 +3586,10 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._
+_Nothing known broken._ All six Phase 20 follow-up reports are closed (see
+the Phase 21 status entry); the water-bucket one turned out to be a
+symptom of water not flowing rather than a fault in the placement path,
+which tested green as it stood and now carries a regression test.
 
 ---
 
@@ -3451,15 +3603,40 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **THE GAME IS COMPLETE.** Phase 20 shipped the finale: the full End,
-  the dragon fight, the victory screen, the trip home. There is no next
-  build phase — anything below is polish/maintenance context for a
-  future session, in rough priority order:
-  - `systems/combat.js` (808) is the ONE file still over the
-    ARCHITECTURE cap; the arrow-machinery split has been mandated since
-    Phase 17 and remains the required first move of any session that
-    touches combat. Phase 20 deliberately did NOT touch it — the dragon
-    integrates through a target facade in main.js (see below).
+- **THE GAME IS COMPLETE AND POLISHED.** Phase 20 shipped the finale;
+  Phase 21 shipped the building set and cleared every reported bug. What
+  is left is maintenance context, in rough priority order:
+  - TWO files are over the ARCHITECTURE cap and both carry a MANDATED CUT:
+    `entities/dragon.js` (878 — cut the rig: spawnDragon/attach/
+    layoutChain/animate plus localToWorld/worldToLocal, into
+    `entities/dragon_rig.js`) and `world/blocks.js` (908 — cut the fluid
+    families: the lava/water id tables and their predicates; pass BLOCK/
+    BLOCKS in the way `world/shapes.js` takes `register`, or the import
+    cycle bites). Phase 21 cleared combat.js (572 now) with the arrow
+    split that had been mandated since Phase 17, and made four more cuts
+    (arrows, placement, body, shapes/shape_tables).
+  - Phase 21 API notes: a block's shape is written ONCE. Add a non-cube
+    block by giving it a `shape` in `world/shapes.js` and marking it
+    `special: 'shape'` — the mesher's `emitShape` and `collisionBoxesAt`
+    both read it, so there is nothing else to write. `collisionBoxesAt(id,
+    getBlock, x, y, z)` is the physics entry (it takes getBlock because
+    fences/walls resolve their connections per cell, cached per 4-bit
+    mask); `MAX_COLLISION_OVERHANG` is why the sweeps scan one cell
+    further "behind" a face. `hasCollision(id)` is the cheap pre-check.
+  - Anything that displays per-position STATE follows world/signs.js and
+    world/frames.js: a Map keyed by cell, a block listener that tears the
+    entry down when the block stops being that block, `swapDimensionState`,
+    and registration in BOTH main.js's listener list and its dimension
+    managers list. Forgetting the managers list leaks state across
+    dimensions (the Phase 15 rule).
+  - `render/item_art.js` is where an item with no shipped texture gets its
+    sprite; add a painter there and `itemVisualInfo` routes dropped items,
+    the held hand and the UI icons through it automatically.
+  - The sign editor releases pointer lock while typing and re-requests it
+    on Done, and main.js's `isPaused()` excludes `signs.isEditing` so the
+    world keeps running. A headless test that edits a sign will lose the
+    lock for later right-click cases — run those first (this cost real
+    time this session).
   - The stronghold-rooms report from Phase 19 remains open: the library
     should become a two-storey room (bookshelf walls, wooden walkways,
     ladder) and the portal room a taller chamber with a raised walkway
@@ -3761,8 +3938,9 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   `findSpawnPosition(world, overrides)` is also pure and node-testable.
 - Movement/physics tuning all lives in `config.js` `PLAYER` (response rates,
   water feel, bob, spawn search); fly mode in `DEBUG`. `STEP_HEIGHT` and
-  `SNEAK_EDGE_DROP` are the vanilla 0.6 as of Phase 6 — when slabs/stairs
-  arrive they will auto-step for free; full blocks require a jump.
+  `SNEAK_EDGE_DROP` are the vanilla 0.6 as of Phase 6 — and as predicted,
+  Phase 21's slabs and stairs auto-step for free on it; full blocks still
+  require a jump.
 - Browser-chrome caveat: reserved Ctrl+W (close tab) cannot be prevented —
   that's why the hint leads with double-tap sprint, and why fly mode's
   Ctrl-fast + W is a known sharp edge (debug-only, left as is). All other
@@ -3843,3 +4021,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 19 | The stronghold (dimensions/stronghold.js): seeded 11-block-cell blueprint grown from the portal room anchored at strongholdCenter (walkway-safe dig-down anchor), corridors/staircases/junctions/libraries/storage in weathered stone brick with iron bars, per-chunk order-independent emission as the overworld's last pass, support piers, deterministic loot chests via the new world/chests.js chunk-scan; the portal room (12-frame ring, 10% pre-filled, 3x3 lava pool, bar niches); the end portal (eye-on-frame filling through the real use chain, activation on the 12th eye, fall-in travel); the End island + obsidian arrival platform + END_SKY + endermen + void death (dimensions/end.js); emitters for the brewing stand's REAL model, iron-bar panes, the 13/16 frame (+eye box, atlas tile 58 generated) and the portal sheet; bug fixes: brewing verified end-to-end + eager fuel loading, enderman weight 20→60 + common in the Nether (2:1 override) + the End, Nether fog 8/72→20/140; mandated splits: player/fluid_actions.js out of interaction.js, spawn profiles out of mobs.js into spawning.js; the portals.js 'end' registry crash caught by the suite and fixed. 83 node + 20 browser checks, zero console errors | The End's pillars/crystals/exit portal/dragon/victory (Phase 20); combat.js still over the cap (arrow cut mandated); TEST_CHEST removal moved to the victory-screen session |
 | 20 | **The finale — the game is feature complete.** The End rebuilt whole (dimensions/end.js): ~110-block island with a flat central plateau, 10 obsidian pillars (heights 40→70 climbing the ring, bedrock crystal seats), the inactive bedrock exit-portal fountain (base disc, rim, 20-cell well, torch-lit column), deterministic and shared with the fight via one EndGenerator instance. End crystals (entities/crystals.js): the real-sheet spinning cage/core/base display on every pillar, poppable by any hit through the combat facade, exploding for real. The Ender Dragon (entities/dragon.js + DRAGON_MODEL/END_CRYSTAL_MODEL in models.js, converted from the vanilla rigs with the wing-membrane texOffs trick): a kinematic banked flyer with driven bezier neck/tail chains, circling/strafing/perching phases, wing knockback, the perch breath cone, 200hp with head-only full damage (body 0.25x), perch projectile-immunity, crystal healing at 3/s over a visible beam with the feeder-pop sting, a 5.5s death sequence (glide to centre, nine wheeling light beams, white-out) that fills the exit portal and spawns the layered-box dragon egg. Victory (ui/screens.js): entering the active portal shows the victory screen; Return Home lands at the overworld spawn, inventory intact. Combat integration via the main.js combatTargets facade — combat.js untouched. TEST_CHEST removed (mandated; restored by request in the follow-up with an expanded End-fight kit). 25 node fight checks + 21 browser end-to-end checks green, zero console errors; screenshot-verified (island, dragon in flight, crystals, healing beam, perch, breath, death beams, active portal + egg, victory screen) | Polish only: combat.js arrow split (the standing cap mandate), stronghold room upgrades (Phase 19 report), sounds/rivers/water flow (SPEC "feel"), no XP/egg-block (documented deviations) |
 | 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |
+| 21 | **Polish: the building set.** Gold tools + hoes in five tiers, the shield (raise to negate frontal melee/arrows/blasts), craftable shears (sheep AND leaf blocks). Stairs and slabs in five materials, fences, fence gates, cobblestone walls, ladders, doors, trapdoors, beds, signs, bookshelves, item frames, flower pots — every one a REAL SHAPE from ONE box table (`world/shapes.js` + `world/shape_tables.js`) that feeds both the mesher's new generic `emitShape` and the collision sweeps, so fences really are 1.5 tall and slabs really are half height. Ladders climb at the vanilla 2.35 b/s; doors/gates/trapdoors toggle; beds set spawn and skip the night; signs take four lines of text on placement. Charcoal from any log (fuel + torches), stone bricks, sandstone, the four block forms both ways, books from leather. The six reported bugs: water bucket placement hardened + regression-tested, the End fight's per-frame cost cut to ~0.1ms (preallocated hitboxes behind a ray reject, one shared crystal material, cached blast targets, chunk-local pillar tests), the purple boss bar, the dragon now GRIPPING the fountain with its head craned down, the island 102-118 across with vanilla 14-40 pillars (HEAL.RANGE 40->30), and WATER FLOW on the lava automaton with both fluids rendering at partial height on their own scrolling texture. Five ARCHITECTURE cuts: systems/arrows.js (mandated since Phase 17), player/placement.js, player/body.js, world/shapes.js + world/shape_tables.js. 88 automated checks green, zero console errors, screenshot-verified. | dragon.js (878) and blocks.js (908) over the cap with their cuts mandated; rivers; sounds; no upside-down/corner stairs, no door hinges, no sign font |

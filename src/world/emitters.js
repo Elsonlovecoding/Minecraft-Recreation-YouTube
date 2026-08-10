@@ -10,7 +10,10 @@
 import {
   CHUNK, OVERWORLD, LIGHTING, SHAPES, FLUIDS,
 } from '../config.js';
-import { BLOCK, BLOCKS, LAVA_LEVEL_OF, WART_STAGE } from './blocks.js';
+import {
+  BLOCK, BLOCKS, LAVA_LEVEL_OF, WATER_LEVEL_OF, WART_STAGE,
+  HAS_SHAPE, FLUSH_RECTS, shapeBoxesAt, fluidHeight,
+} from './blocks.js';
 import { getUV, TILE } from '../render/atlas.js';
 
 const SIZE = CHUNK.SIZE;
@@ -28,6 +31,9 @@ export const PASS_CUTOUT = 2;  // alpha-tested: leaves, cactus, glass, torch, ba
 export const PASS_WATER = 3;   // alpha-blended
 export const PASS_LAVA = 4;    // flowing lava (partial-height animated cells)
 export const PASS_PORTAL = 5;  // nether portal interior (animated swirl)
+export const PASS_WATER_FLOW = 6; // flowing water (Phase 21 — the lava pass's
+                                  // twin, on its own scrolling water texture)
+export const PASS_COUNT = 7;
 
 const NUM_IDS = BLOCKS.length;
 export const IS_TRANSPARENT = new Uint8Array(NUM_IDS); // does not occlude neighbours
@@ -52,13 +58,23 @@ for (let id = 0; id < NUM_IDS; id++) {
     : PASS_OPAQUE;
 }
 
-// Lava family tables (Phase 12): flowing/falling cells render through their
-// own partial-height emitter in the PASS_LAVA bucket; the SOURCE keeps its
-// normal full-cube path (lakes look exactly as before). Heights per id come
-// from FLUIDS config — each horizontal step visibly lower.
+// Fluid family tables (Phase 12 for lava; Phase 21 added water on the same
+// machinery): flowing/falling cells render through the partial-height fluid
+// emitter, lava into PASS_LAVA and water into PASS_WATER_FLOW; SOURCES keep
+// their normal full-cube path (lakes and oceans look exactly as before).
+// Heights per id come from FLUIDS config — each horizontal step visibly
+// lower, which is what makes a spreading pool read as a slope.
 export const IS_LAVA_CELL = new Uint8Array(NUM_IDS);   // source, flows and falls
 export const IS_LAVA_FLOW = new Uint8Array(NUM_IDS);   // flows and falls only
 export const LAVA_HEIGHT = new Float32Array(NUM_IDS);  // rendered surface height
+export const IS_WATER_CELL = new Uint8Array(NUM_IDS);
+export const IS_WATER_FLOW = new Uint8Array(NUM_IDS);
+// Every fluid cell of either family, and the surface height of each — the
+// emitter is shared, so it reads these rather than a per-family table.
+export const IS_FLUID_CELL = new Uint8Array(NUM_IDS);
+export const IS_FLUID_FLOW = new Uint8Array(NUM_IDS);
+export const FLUID_HEIGHT = new Float32Array(NUM_IDS);
+export const FLUID_PASS = new Uint8Array(NUM_IDS);
 for (let id = 0; id < NUM_IDS; id++) {
   const level = LAVA_LEVEL_OF[id];
   if (level < 0) continue;
@@ -69,6 +85,25 @@ for (let id = 0; id < NUM_IDS; id++) {
     IS_LAVA_FLOW[id] = 1;
     LAVA_HEIGHT[id] =
       id === BLOCK.LAVA_FALL ? FLUIDS.FALL_HEIGHT : FLUIDS.FLOW_HEIGHTS[level - 1];
+  }
+}
+for (let id = 0; id < NUM_IDS; id++) {
+  const level = WATER_LEVEL_OF[id];
+  if (level < 0) continue;
+  IS_WATER_CELL[id] = 1;
+  if (id !== BLOCK.WATER) IS_WATER_FLOW[id] = 1;
+}
+for (let id = 0; id < NUM_IDS; id++) {
+  if (IS_LAVA_CELL[id]) {
+    IS_FLUID_CELL[id] = 1;
+    IS_FLUID_FLOW[id] = IS_LAVA_FLOW[id];
+    FLUID_HEIGHT[id] = fluidHeight(id);
+    FLUID_PASS[id] = PASS_LAVA;
+  } else if (IS_WATER_CELL[id]) {
+    IS_FLUID_CELL[id] = 1;
+    IS_FLUID_FLOW[id] = IS_WATER_FLOW[id];
+    FLUID_HEIGHT[id] = fluidHeight(id);
+    FLUID_PASS[id] = PASS_WATER_FLOW;
   }
 }
 // Flow side faces sit a hair inside their cell so they can never z-fight a
@@ -218,16 +253,19 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     }
   };
 
-  // Flowing/falling lava (Phase 12): a partial-height cell in the PASS_LAVA
-  // bucket, lit flat by its own cell (it IS an emitter, like the torch).
-  // UVs are in repeating tile units with v running downstream — the shared
-  // material scroll animates every face along its own flow. Top faces sit at
-  // the level's height; sides are pulled a hair into the cell so they can't
-  // z-fight a transparent neighbour's face on the boundary plane.
-  const emitLavaFlow = (lx, iy, lz, id) => {
-    const bucket = buckets[PASS_LAVA];
+  // Flowing/falling fluid (Phase 12 lava; Phase 21 water on the same
+  // emitter): a partial-height cell in the fluid's animated bucket, lit flat
+  // by its own cell for lava (it IS an emitter, like the torch) and by the
+  // real baked light for water. UVs are in repeating tile units with v
+  // running downstream — the shared material scroll animates every face
+  // along its own flow. Top faces sit at the level's height; sides are
+  // pulled a hair into the cell so they can't z-fight a transparent
+  // neighbour's face on the boundary plane.
+  const emitFluidFlow = (lx, iy, lz, id) => {
+    const pass = FLUID_PASS[id];
+    const bucket = buckets[pass];
     const y = iy + MIN_Y;
-    const h = LAVA_HEIGHT[id];
+    const h = FLUID_HEIGHT[id];
     const own = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + iy;
     const sky = wSky[own] * (1 / 15);
     const blk = wBlk[own] * (1 / 15);
@@ -249,7 +287,7 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     // axis aligned to the local downstream direction. Downhill is read from
     // the neighbours — lower lava and open air pull the flow toward them.
     const above = iy + 1 < HEIGHT ? getId(lx, y + 1, lz) : BLOCK.AIR;
-    if (!IS_LAVA_CELL[above]) {
+    if (!IS_FLUID_CELL[above]) {
       // gx/gz accumulate the DOWNSTREAM direction: open air counts as fully
       // downhill, lava neighbours pull toward the lower surface. (Phase 12
       // review fix: the original sign pointed uphill, so flow tops animated
@@ -261,9 +299,9 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
         if (nid === BLOCK.AIR) {
           gx += dx * h;
           gz += dz * h;
-        } else if (IS_LAVA_CELL[nid]) {
-          gx += dx * (h - LAVA_HEIGHT[nid]);
-          gz += dz * (h - LAVA_HEIGHT[nid]);
+        } else if (IS_FLUID_CELL[nid]) {
+          gx += dx * (h - FLUID_HEIGHT[nid]);
+          gz += dz * (h - FLUID_HEIGHT[nid]);
         }
       }
       // Downstream as a cardinal direction (flows spread cardinally); an
@@ -293,7 +331,7 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     for (const face of [FACES[0], FACES[1], FACES[4], FACES[5]]) {
       const d = face.dir;
       const nid = getId(lx + d[0], y, lz + d[2]);
-      if (IS_LAVA_CELL[nid] && LAVA_HEIGHT[nid] >= h - 1e-4) continue;
+      if (IS_FLUID_CELL[nid] && FLUID_HEIGHT[nid] >= h - 1e-4) continue;
       if (!IS_TRANSPARENT[nid]) continue;
       const ox = -d[0] * LAVA_SIDE_INSET;
       const oz = -d[2] * LAVA_SIDE_INSET;
@@ -308,7 +346,7 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     // or a canopy) — lifted by the same inset as the sides so it can never
     // z-fight the support block's coplanar top face.
     const below = iy > 0 ? getId(lx, y - 1, lz) : BLOCK.AIR;
-    if (iy > 0 && IS_TRANSPARENT[below] && !IS_LAVA_CELL[below]) {
+    if (iy > 0 && IS_TRANSPARENT[below] && !IS_FLUID_CELL[below]) {
       pushQuad(
         FACES[3].corners.map((c) => [lx + c[0], y + LAVA_SIDE_INSET, lz + c[2]]),
         FACES[3].corners.map((c) => [c[3], c[4]]),
@@ -630,8 +668,114 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     bucket.count += 4;
   };
 
+  // -------------------------------------------------------------------------
+  // The generic SHAPE emitter (Phase 21) — one emitter for every
+  // building block: stairs, slabs, fences, gates, walls, ladders, doors,
+  // trapdoors, beds, signs, pots and item frames. It renders exactly the box
+  // list world/blocks.js hands the collision sweep, so the shape a player
+  // sees and the shape they bump into can never drift apart.
+  //
+  // UVs are the vanilla auto-unwrap: each face samples the sub-rectangle of
+  // its tile that the box actually occupies, so a slab shows the bottom half
+  // of its side texture and a stair's step lines up with the block below it.
+  // -------------------------------------------------------------------------
+
+  // The in-plane (a, b) rect a box covers on face fi, or null when the box
+  // is not flush with that face (world/blocks.js buildFlushRects's twin —
+  // kept here so the emitter needs no per-cell allocation).
+  const faceRectOf = (b, fi) => {
+    switch (fi) {
+      case 0: return b[3] >= 1 ? [b[2], b[1], b[5], b[4]] : null;
+      case 1: return b[0] <= 0 ? [b[2], b[1], b[5], b[4]] : null;
+      case 2: return b[4] >= 1 ? [b[0], b[2], b[3], b[5]] : null;
+      case 3: return b[1] <= 0 ? [b[0], b[2], b[3], b[5]] : null;
+      case 4: return b[5] >= 1 ? [b[0], b[1], b[3], b[4]] : null;
+      default: return b[2] <= 0 ? [b[0], b[1], b[3], b[4]] : null;
+    }
+  };
+  const OPPOSITE_FACE = [1, 0, 3, 2, 5, 4];
+  const EPS_R = 1e-6;
+
+  // Is this flush face hidden by the neighbouring shape? A neighbour rect
+  // that strictly contains mine always wins; identical rects break the tie
+  // by id (and by direction for two blocks of the same id) so exactly one of
+  // the pair emits and coplanar quads never z-fight.
+  const coveredByNeighbour = (rect, id, nid, fi) => {
+    const rects = FLUSH_RECTS[nid];
+    if (!rects) return false;
+    for (const n of rects[OPPOSITE_FACE[fi]]) {
+      if (n[0] > rect[0] + EPS_R || n[1] > rect[1] + EPS_R ||
+          n[2] < rect[2] - EPS_R || n[3] < rect[3] - EPS_R) continue;
+      const same = Math.abs(n[0] - rect[0]) < EPS_R && Math.abs(n[1] - rect[1]) < EPS_R &&
+        Math.abs(n[2] - rect[2]) < EPS_R && Math.abs(n[3] - rect[3]) < EPS_R;
+      if (!same) return true;                     // strictly bigger: hidden
+      if (nid !== id) return id > nid;             // lower id draws the plane
+      return fi === 1 || fi === 3 || fi === 5;     // same id: positive face draws
+    }
+    return false;
+  };
+
+  const emitShape = (lx, iy, lz, id) => {
+    const y = iy + MIN_Y;
+    const boxes = shapeBoxesAt(id, (bx, by, bz) => getId(bx, by, bz), lx, y, lz);
+    if (!boxes) return;
+    const bucket = buckets[PASS_CUTOUT];
+    const [sky, blk] = ownLight(lx, iy, lz);
+    const FB = LIGHTING.FACE_BRIGHTNESS;
+    for (const entry of boxes) {
+      const b = entry.box;
+      const [x0, y0, z0, x1, y1, z1] = b;
+      for (let fi = 0; fi < 6; fi++) {
+        const face = FACES[fi];
+        const d = face.dir;
+        const rect = faceRectOf(b, fi);
+        if (rect) {
+          // A face flush with the cell boundary behaves like a cube face:
+          // an opaque neighbour hides it, and a shaped neighbour covering
+          // the same plane wins the tie-break above.
+          const nid = getId(lx + d[0], y + d[1], lz + d[2]);
+          if (!IS_TRANSPARENT[nid]) continue;
+          if (HAS_SHAPE[nid] && coveredByNeighbour(rect, id, nid, fi)) continue;
+        }
+        const { u0, v0, u1, v1 } = tileUV(entry.tiles[fi]);
+        const du = u1 - u0;
+        const dv = v1 - v0;
+        // Vanilla auto-UV: the face samples the slice of its tile the box
+        // actually spans (v runs up the tile, matching FACES' corner frame).
+        let ua;
+        let ub;
+        let va;
+        let vb;
+        if (fi === 0) { ua = 1 - z1; ub = 1 - z0; va = y0; vb = y1; }
+        else if (fi === 1) { ua = z0; ub = z1; va = y0; vb = y1; }
+        else if (fi === 2) { ua = x0; ub = x1; va = 1 - z1; vb = 1 - z0; }
+        else if (fi === 3) { ua = x0; ub = x1; va = z0; vb = z1; }
+        else if (fi === 4) { ua = x0; ub = x1; va = y0; vb = y1; }
+        else { ua = 1 - x1; ub = 1 - x0; va = y0; vb = y1; }
+        const base = bucket.count;
+        const bright = d[1] > 0 ? FB.top : d[1] < 0 ? FB.bottom : FB.side;
+        for (let k = 0; k < 4; k++) {
+          const c = face.corners[k];
+          bucket.pos.push(
+            lx + (c[0] ? x1 : x0),
+            y + (c[1] ? y1 : y0),
+            lz + (c[2] ? z1 : z0),
+          );
+          bucket.uv.push(
+            u0 + du * (c[3] ? ub : ua),
+            v0 + dv * (c[4] ? vb : va),
+          );
+          bucket.col.push(bright, bright, bright);
+          bucket.lig.push(sky, blk);
+        }
+        bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+        bucket.count += 4;
+      }
+    }
+  };
+
   return {
-    emitTorch, emitLavaFlow, emitPortal, emitWart,
-    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal,
+    emitTorch, emitFluidFlow, emitPortal, emitWart,
+    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal, emitShape,
   };
 }

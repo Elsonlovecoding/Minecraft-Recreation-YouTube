@@ -56,6 +56,8 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   // player just spawned there), so this is nearly free — computing it
   // lazily on death instead would synchronously regenerate the whole
   // (long-unloaded) spawn area inside one frame.
+  // The respawn point. Phase 21: sleeping in a bed moves it (SPEC "respawn
+  // at spawn point or bed"), so it is a mutable record rather than a const.
   const spawn = findSpawnPosition(world);
 
   function bodyTouches(matches, grow) {
@@ -384,6 +386,16 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     exhaust,
     canEatFood,
     respawn,
+    // Phase 21 — beds. `setSpawnPoint` moves the respawn point; the getter
+    // is test/debug scaffolding.
+    setSpawnPoint(x, y, z) {
+      spawn.x = x;
+      spawn.y = y;
+      spawn.z = z;
+    },
+    get spawnPoint() {
+      return { x: spawn.x, y: spawn.y, z: spawn.z };
+    },
     get health() {
       return health;
     },

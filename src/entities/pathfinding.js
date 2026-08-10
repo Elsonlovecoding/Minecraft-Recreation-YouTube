@@ -12,7 +12,7 @@
 // feet is solid ground and `clearance` cells from the feet up are passable.
 
 import { MOBS } from '../config.js';
-import { blockDef, isSolid, isLava } from '../world/blocks.js';
+import { blockDef, isSolid, isLava, MAX_BOX_TOP } from '../world/blocks.js';
 
 // A cell a mob's body can occupy (feet or head): no collision box, no lava.
 function passable(getBlock, x, y, z) {
@@ -22,8 +22,13 @@ function passable(getBlock, x, y, z) {
 
 // A cell a mob can stand in: solid, harmless floor below + body clearance.
 export function standableAt(getBlock, x, y, z, clearance = 2) {
-  const floor = blockDef(getBlock(x, y - 1, z));
+  const floorId = getBlock(x, y - 1, z);
+  const floor = blockDef(floorId);
   if (!floor.solid || floor.damagesOnContact) return false;
+  // Phase 21: blocks whose collision reaches above their own cell (fences,
+  // walls, gates) are never a floor — a mob "standing" there would be
+  // embedded in the post, which is exactly what makes fences mob-proof.
+  if (MAX_BOX_TOP[floorId] > 1) return false;
   for (let i = 0; i < clearance; i++) {
     if (!passable(getBlock, x, y + i, z)) return false;
   }

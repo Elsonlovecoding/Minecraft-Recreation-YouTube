@@ -22,7 +22,7 @@
 // manager.
 
 import { MOBS, OVERWORLD, CHUNK } from '../config.js';
-import { BLOCK, blockDef } from '../world/blocks.js';
+import { BLOCK, blockDef, isWater } from '../world/blocks.js';
 import { MOB_TYPES } from './registry.js';
 import { standableAt } from './pathfinding.js';
 
@@ -178,7 +178,7 @@ export function createSpawner({ world, player, dayNight, mobs, spawnAt }) {
     // no spawning submerged.
     const floor = blockDef(getBlock(x, y - 1, z));
     if (floor.transparent) return false; // no leaves/chest/glass tops
-    if (getBlock(x, y, z) === BLOCK.WATER || getBlock(x, y + 1, z) === BLOCK.WATER) {
+    if (isWater(getBlock(x, y, z)) || isWater(getBlock(x, y + 1, z))) {
       return false;
     }
     if (!hostile && getBlock(x, y - 1, z) !== BLOCK.GRASS_BLOCK) return false;

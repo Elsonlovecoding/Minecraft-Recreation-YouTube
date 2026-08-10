@@ -40,7 +40,13 @@
 //                water and leaves absorb partially
 
 import { TILE } from '../render/atlas.js';
-import { SHAPES } from '../config.js';
+import { SHAPES, FLUIDS } from '../config.js';
+// Phase 21: the shaped building blocks (stairs, slabs, fences, gates, walls,
+// ladders, doors, trapdoors, beds, signs, pots, frames) live in their own
+// module per the ARCHITECTURE size cap. It imports nothing from here — this
+// file hands it `register` and BLOCK — so the pair is cycle-free.
+import { SHAPED_BLOCK_IDS, registerBuildingBlocks } from './shapes.js';
+import { buildShapeTables } from './shape_tables.js';
 
 // Numeric block ids. Chunk data is a Uint8Array of these, so keep ids < 256.
 // Append new blocks at the end — never renumber existing ids.
@@ -132,6 +138,19 @@ export const BLOCK = {
   // a frame with an eye fills it; some generate pre-filled). The base
   // END_PORTAL_FRAME id 33 stays the empty frame.
   END_PORTAL_FRAME_EYE: 68,
+  // Phase 21: flowing WATER, the lava family's twin (world/fluids.js runs
+  // both on one automaton now). A water SOURCE stays id 10; flowing cells
+  // carry their horizontal spread level 1..7 (each a step lower) and
+  // falling columns get their own id. None is scoopable or targetable.
+  WATER_FLOW_1: 69,
+  WATER_FLOW_2: 70,
+  WATER_FLOW_3: 71,
+  WATER_FLOW_4: 72,
+  WATER_FLOW_5: 73,
+  WATER_FLOW_6: 74,
+  WATER_FLOW_7: 75,
+  WATER_FALL: 76,
+  ...SHAPED_BLOCK_IDS,
 };
 
 export const BLOCKS = [];
@@ -164,7 +183,11 @@ function register(id, name, displayName, props) {
     fluid = false,
     damagesOnContact = false,
     slows = false,
+    climbable = false,
     special = null,
+    shape = null,
+    collision = null,
+    shearDrops = null,
   } = props;
 
   BLOCKS[id] = Object.freeze({
@@ -178,6 +201,9 @@ function register(id, name, displayName, props) {
     minTier,
     // Default: drops one of itself.
     drops: drops ?? [{ item: name, count: 1 }],
+    // What the block yields when broken with shears instead (Phase 21:
+    // leaves give leaf blocks). null = the normal drop table.
+    shearDrops,
     solid,
     transparent,
     selfCull,
@@ -189,7 +215,16 @@ function register(id, name, displayName, props) {
     fluid,
     damagesOnContact,
     slows,
+    climbable,
     special,
+    // Phase 21 — the ONE shape table. `shape` is the render box list
+    // ([{ box: [x0,y0,z0,x1,y1,z1], tiles: {top,bottom,side}|tile }]) and
+    // `collision` the physics box list; when only `shape` is given the
+    // physics boxes derive from it, so what you see is what you walk into.
+    // Both may be the string 'dynamic:<kind>' for connection-shaped blocks
+    // (fences, walls) — resolved per cell by shapeBoxesAt/collisionBoxesAt.
+    shape,
+    collision,
   });
 }
 
@@ -241,6 +276,8 @@ register(BLOCK.OAK_LEAVES, 'oak_leaves', 'Oak Leaves', {
     { item: 'oak_sapling', count: 1, chance: 0.05 },
     { item: 'apple', count: 1, chance: 0.005 },
   ],
+  // Phase 21: shears harvest the leaf block itself (vanilla).
+  shearDrops: [{ item: 'oak_leaves', count: 1 }],
 });
 register(BLOCK.WATER, 'water', 'Water', {
   faces: { all: TILE.WATER_STILL }, solid: false, transparent: true, opacity: 1,
@@ -494,6 +531,32 @@ register(BLOCK.ANDESITE, 'andesite', 'Andesite', {
   faces: { all: TILE.ANDESITE }, hardness: 1.5, tool: 'pickaxe', minTier: 'wood',
 });
 
+// ---------------------------------------------------------------------------
+// Phase 21 — flowing water (world/fluids.js). The mirror of the lava family:
+// faces null keeps the cube emitter away (the fluid emitter renders the
+// partial-height cell), transparent for culling, opacity 1 like the source
+// so depth still darkens, never targetable, never scoopable.
+// ---------------------------------------------------------------------------
+
+function registerWaterFlow(id, name) {
+  register(id, name, 'Water', {
+    faces: null, solid: false, transparent: true, opacity: 1,
+    fluid: true, drops: [], special: 'water_flow',
+  });
+}
+registerWaterFlow(BLOCK.WATER_FLOW_1, 'water_flow_1');
+registerWaterFlow(BLOCK.WATER_FLOW_2, 'water_flow_2');
+registerWaterFlow(BLOCK.WATER_FLOW_3, 'water_flow_3');
+registerWaterFlow(BLOCK.WATER_FLOW_4, 'water_flow_4');
+registerWaterFlow(BLOCK.WATER_FLOW_5, 'water_flow_5');
+registerWaterFlow(BLOCK.WATER_FLOW_6, 'water_flow_6');
+registerWaterFlow(BLOCK.WATER_FLOW_7, 'water_flow_7');
+registerWaterFlow(BLOCK.WATER_FALL, 'water_fall');
+
+// Phase 21 building blocks (world/shapes.js) — registered here so their ids
+// keep their place in the one registration order.
+registerBuildingBlocks(register, BLOCK);
+
 Object.freeze(BLOCKS);
 Object.freeze(BLOCK);
 
@@ -501,8 +564,45 @@ Object.freeze(BLOCK);
 // Lookups
 // ---------------------------------------------------------------------------
 
+// The Phase 21 shape tables (world/shapes.js): the ONE box list the mesher
+// renders and the collision sweep reads, plus every family lookup the
+// placement and use paths need. Re-exported from here so callers keep
+// importing block data from the block registry.
+export const {
+  SHAPE_BOXES, COLLISION_BOXES, FLUSH_RECTS, MAX_BOX_TOP, HAS_SHAPE,
+  MAX_COLLISION_OVERHANG, shapeBoxesAt, collisionBoxesAt, hasCollision,
+  isClimbable,
+  STAIRS_BY_MATERIAL, SLAB_FAMILIES, SIGN_IDS, ITEM_FRAME_IDS,
+  STAIRS_ITEM_IDS, SLAB_ITEM_FAMILIES, SLAB_FAMILY_OF, GATE_AXIS,
+  GATE_TOGGLE, DOOR_INFO, DOOR_TOGGLE, DOOR_LOWER_BY_FACING,
+  DOOR_UPPER_BY_FACING, isDoor, TRAPDOOR_TOGGLE, TRAPDOOR_BY_FACING,
+  isTrapdoor, LADDER_BY_FACING, BED_INFO, BED_FOOT_BY_FACING,
+  BED_HEAD_BY_FACING, isBed, FACING_DELTA, isSign, isItemFrame,
+  WALL_MOUNT_FACING,
+} = buildShapeTables({ BLOCKS, BLOCK, blockDef, FACE_ORDER, resolveFaceTile });
+
 const AIR_DEF = BLOCKS[BLOCK.AIR];
 const ID_BY_NAME = new Map(BLOCKS.map((def) => [def.name, def.id]));
+// Phase 21: item names for the multi-variant families resolve to their base
+// variant; placementVariant picks the real one from the click. (Stairs,
+// gates, ladders, doors, trapdoors, beds, signs and frames all ship as ONE
+// item.)
+for (const [item, id] of [
+  ['cobblestone_stairs', BLOCK.COBBLESTONE_STAIRS_N],
+  ['oak_stairs', BLOCK.OAK_STAIRS_N],
+  ['stone_brick_stairs', BLOCK.STONE_BRICK_STAIRS_N],
+  ['sandstone_stairs', BLOCK.SANDSTONE_STAIRS_N],
+  ['nether_brick_stairs', BLOCK.NETHER_BRICK_STAIRS_N],
+  ['oak_fence_gate', BLOCK.OAK_FENCE_GATE_X],
+  ['ladder', BLOCK.LADDER_N],
+  ['oak_door', BLOCK.OAK_DOOR_LOWER_N],
+  ['oak_trapdoor', BLOCK.OAK_TRAPDOOR_N],
+  ['bed', BLOCK.BED_FOOT_N],
+  ['sign', BLOCK.SIGN_N],
+  ['item_frame', BLOCK.ITEM_FRAME_N],
+]) {
+  ID_BY_NAME.set(item, id);
+}
 
 export function blockDef(id) {
   return BLOCKS[id] ?? AIR_DEF;
@@ -536,6 +636,59 @@ export function lightOpacity(id) {
 // blocks without a cube texture.
 export function faceTiles(id) {
   return blockDef(id).tiles;
+}
+
+// ---------------------------------------------------------------------------
+// Water family (Phase 21) — the mirror of the lava tables above
+// ---------------------------------------------------------------------------
+
+export const WATER_LEVEL_OF = (() => {
+  const table = new Int8Array(BLOCKS.length).fill(-1);
+  table[BLOCK.WATER] = 0;
+  for (let level = 1; level <= 7; level++) {
+    table[BLOCK.WATER_FLOW_1 + level - 1] = level;
+  }
+  table[BLOCK.WATER_FALL] = 0;
+  return table;
+})();
+
+export function isWater(id) {
+  return WATER_LEVEL_OF[id] >= 0;
+}
+
+export function isWaterSource(id) {
+  return id === BLOCK.WATER;
+}
+
+export function waterFlowLevel(id) {
+  const level = WATER_LEVEL_OF[id];
+  return level >= 1 ? level : null;
+}
+
+export const WATER_FLOW_BY_LEVEL = [
+  null,
+  BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
+  BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FLOW_7,
+];
+
+// Surface height of a fluid cell as a fraction of its block — 1 for sources
+// and falling columns, stepping down per horizontal flow level. The mesher
+// renders at this height and the player's fluid line reads it, so a 1/8-deep
+// film can't make anyone swim (Phase 21: one table, two consumers).
+export function fluidHeight(id) {
+  const lava = LAVA_LEVEL_OF[id];
+  if (lava >= 0) {
+    if (id === BLOCK.LAVA) return 1;
+    return id === BLOCK.LAVA_FALL
+      ? FLUIDS.FALL_HEIGHT : FLUIDS.FLOW_HEIGHTS[lava - 1];
+  }
+  const water = WATER_LEVEL_OF[id];
+  if (water >= 0) {
+    if (id === BLOCK.WATER) return 1;
+    return id === BLOCK.WATER_FALL
+      ? FLUIDS.FALL_HEIGHT : FLUIDS.WATER_FLOW_HEIGHTS[water - 1];
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -694,5 +847,62 @@ export function placementVariant(id, cell, pos, face) {
     if (fy === -1) return null; // no torches on ceilings
     return TORCH_WALL_BY_FACE[`${fx},${fz}`] ?? BLOCK.TORCH;
   }
+  // --- Phase 21 oriented shapes -------------------------------------------
+  const toward = facingToward(cell, pos);      // from the block to the player
+  const away = OPPOSITE[toward];               // the way the player looks
+  const faceFacing = face ? FACE_TO_FACING[`${face[0]},${face[2]}`] ?? null : null;
+
+  const stairFamily = STAIRS_FAMILY_OF[id];
+  if (stairFamily) return stairFamily[FACING_INDEX[away]];
+
+  const slab = SLAB_FAMILY_OF[id];
+  if (slab) {
+    if (face && face[1] === -1) return slab.top; // clicked a ceiling
+    return slab.bottom;
+  }
+  if (GATE_AXIS[id] !== undefined) {
+    // The panel spans across the way the player is walking, so they open it
+    // to pass through.
+    return (toward === 'E' || toward === 'W')
+      ? BLOCK.OAK_FENCE_GATE_Z : BLOCK.OAK_FENCE_GATE_X;
+  }
+  if (LADDER_FACING_OF[id] !== undefined) {
+    if (!faceFacing) return null;              // ladders only hang on walls
+    return LADDER_BY_FACING[faceFacing];
+  }
+  if (DOOR_INFO[id]) return DOOR_LOWER_BY_FACING[FACING_INDEX[toward]];
+  if (isTrapdoor(id)) return TRAPDOOR_BY_FACING[FACING_INDEX[toward]];
+  if (isBed(id)) return BED_FOOT_BY_FACING[FACING_INDEX[away]];
+  if (isSign(id)) {
+    if (faceFacing) return SIGN_IDS.wall[FACING_INDEX[faceFacing]];
+    if (face && face[1] === 1) return SIGN_IDS.stand[FACING_INDEX[toward]];
+    return null;                               // never hangs from a ceiling
+  }
+  if (isItemFrame(id)) {
+    if (!faceFacing) return null;
+    return ITEM_FRAME_IDS[FACING_INDEX[faceFacing]];
+  }
   return id;
+}
+
+// Facing letters in the order every family table uses, and their opposites.
+const FACING_INDEX = { N: 0, S: 1, E: 2, W: 3 };
+const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' };
+
+// Horizontal face normal -> facing letter (the outward direction).
+const FACE_TO_FACING = {
+  '0,1': 'S', '0,-1': 'N', '1,0': 'E', '-1,0': 'W',
+};
+
+// stairs id -> its family's 4 ids; ladder id -> its facing.
+const STAIRS_FAMILY_OF = new Array(BLOCKS.length).fill(null);
+for (const ids of Object.values(STAIRS_BY_MATERIAL)) {
+  for (const id of ids) STAIRS_FAMILY_OF[id] = ids;
+}
+export function isStairs(id) {
+  return STAIRS_FAMILY_OF[id] !== null;
+}
+const LADDER_FACING_OF = {};
+for (const [facing, id] of Object.entries(LADDER_BY_FACING)) {
+  LADDER_FACING_OF[id] = facing;
 }

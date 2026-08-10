@@ -10,10 +10,14 @@
 
 import * as THREE from 'three';
 import { ITEMS, LIGHTING, RENDER, OVERWORLD, PLAYER, CHUNK, ATLAS } from '../config.js';
-import { BLOCK, blockIdByName, faceTiles, isSolid, isLava } from '../world/blocks.js';
+import {
+  BLOCK, blockIdByName, faceTiles, isSolid, isLava, isWater,
+  collisionBoxesAt, hasCollision,
+} from '../world/blocks.js';
 import { getUV, getAtlasTexture, TILE } from '../render/atlas.js';
 import { createChestMesh } from '../world/chests.js';
 import { POTIONS } from '../player/inventory.js';
+import { hasGeneratedSprite, generatedSpriteCanvas } from '../render/item_art.js';
 
 const EPS = 1e-5;
 const TAU = Math.PI * 2;
@@ -35,6 +39,9 @@ const MODEL_ITEMS = { chest: 'chest' };
 export const ATLAS_SPRITE_ITEMS = {
   torch: TILE.TORCH,
   iron_bars: TILE.IRON_BARS, // Phase 19: bars mesh as panes, not a cube
+  // Phase 21: a ladder's rung lattice is the closest thing the atlas has to
+  // ladder art, and it reads correctly as a flat item sprite.
+  ladder: TILE.IRON_BARS,
 };
 
 const atlasSpriteCanvases = new Map(); // item name -> 16x16 canvas
@@ -237,6 +244,10 @@ function getSpriteMaterial(name) {
   let texture;
   if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
     texture = new THREE.CanvasTexture(atlasSpriteCanvas(name));
+  } else if (hasGeneratedSprite(name)) {
+    // Phase 21: items with no shipped texture use generated pixel art
+    // (render/item_art.js) rather than a misleading stand-in.
+    texture = new THREE.CanvasTexture(generatedSpriteCanvas(name));
   } else {
     texture = new THREE.TextureLoader().load(
       `assets/items/${name}.png`,
@@ -269,6 +280,7 @@ export function itemVisualInfo(name) {
   if (ATLAS_SPRITE_ITEMS[name] !== undefined) {
     return { sprite: name, atlas: true };
   }
+  if (hasGeneratedSprite(name)) return { sprite: name, generated: true };
   const alias = VISUAL_ALIAS[name];
   const blockId = alias?.block ?? (alias?.sprite ? null : blockIdByName(name));
   if (blockId !== null && blockId !== undefined && faceTiles(blockId)) {
@@ -424,6 +436,18 @@ export function createExtrudedItemMesh(name, size, onReady) {
     });
     return group;
   }
+  // Phase 21: generated art is already a canvas — extrude it synchronously
+  // (the cache-hit rule below still applies: declare the group with `let`).
+  if (hasGeneratedSprite(name)) {
+    let built = extrudedCache.get(name);
+    if (!built) {
+      built = buildExtrudedGeometry(generatedSpriteCanvas(name));
+      extrudedCache.set(name, built);
+    }
+    group.add(new THREE.Mesh(built.geometry, built.material));
+    onReady?.();
+    return group;
+  }
   const img = new Image();
   img.onload = () => {
     let built = extrudedCache.get(name);
@@ -459,6 +483,17 @@ function createItemVisual(name) {
   }
   const size = ITEMS.SPRITE_SCALE;
   return { mesh: createExtrudedItemMesh(info.sprite, size), halfHeight: size / 2 };
+}
+
+// A mesh showing any item at a given size, for anything that DISPLAYS an
+// item rather than dropping it (Phase 21: world/frames.js mounts one in an
+// item frame). Block items come back as their mini-cube, everything else as
+// the extruded sprite slab.
+export function createItemDisplayMesh(name, size) {
+  const info = itemVisualInfo(name);
+  if (info.model) return createModelMesh(info.model, size);
+  if (info.blockId !== undefined) return createBlockMesh(info.blockId, size);
+  return createExtrudedItemMesh(info.sprite, size);
 }
 
 // ---------------------------------------------------------------------------
@@ -512,8 +547,24 @@ export function createItemManager({ world, scene }) {
     entities.splice(index, 1);
   }
 
+  // Phase 21: a point is "solid" only where a collision box actually is, so
+  // a dropped item settles ON a slab instead of hovering half a block over
+  // it, and falls through a ladder or an open trapdoor.
+  const getBlockFn = (x, y, z) => world.getBlock(x, y, z);
   function solidAt(x, y, z) {
-    return isSolid(world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
+    const cx = Math.floor(x);
+    const cy = Math.floor(y);
+    const cz = Math.floor(z);
+    const id = world.getBlock(cx, cy, cz);
+    if (!hasCollision(id)) return false;
+    const fx = x - cx;
+    const fy = y - cy;
+    const fz = z - cz;
+    for (const b of collisionBoxesAt(id, getBlockFn, cx, cy, cz)) {
+      if (fx >= b[0] && fx <= b[3] && fy >= b[1] && fy <= b[4] &&
+          fz >= b[2] && fz <= b[5]) return true;
+    }
+    return false;
   }
 
   function stepPhysics(e, dt) {
@@ -528,9 +579,9 @@ export function createItemManager({ world, scene }) {
       e.grounded = true;
     }
 
-    const inWater =
-      world.getBlock(Math.floor(p.x), Math.floor(midY), Math.floor(p.z)) ===
-      BLOCK.WATER;
+    const inWater = isWater(
+      world.getBlock(Math.floor(p.x), Math.floor(midY), Math.floor(p.z)),
+    );
     if (inWater) {
       // Items float: rise gently toward the surface, heavily damped.
       const k = 1 - Math.exp(-ITEMS.WATER_FLOAT_RESPONSE * dt);
