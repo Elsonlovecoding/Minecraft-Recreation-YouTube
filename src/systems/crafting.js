@@ -73,10 +73,14 @@ shaped(['CCC', 'C C', 'CCC'], { C: 'cobblestone' }, 'furnace');
 shaped(['PPP', 'P P', 'PPP'], { P: 'oak_planks' }, 'chest');
 
 // Tools: one recipe per material tier, vanilla shapes. S = stick.
+// Phase 21 added the GOLD tier (fastest mining of any tier, 33 durability —
+// the real Minecraft trade) and the hoe in all five tiers (craftable, with
+// no function in a game without farming — SPEC has no crops).
 const TOOL_MATERIALS = {
   wooden: 'oak_planks',
   stone: 'cobblestone',
   iron: 'iron_ingot',
+  golden: 'gold_ingot',
   diamond: 'diamond',
 };
 for (const [tier, M] of Object.entries(TOOL_MATERIALS)) {
@@ -85,9 +89,13 @@ for (const [tier, M] of Object.entries(TOOL_MATERIALS)) {
   shaped(['M', 'M', 'S'], key, `${tier}_sword`);
   shaped(['MM', 'MS', ' S'], key, `${tier}_axe`); // mirrored matches too
   shaped(['M', 'S', 'S'], key, `${tier}_shovel`);
+  shaped(['MM', ' S', ' S'], key, `${tier}_hoe`); // mirrored matches too
 }
 
+// Phase 21: coal OR charcoal lights a torch (vanilla — charcoal is the
+// no-mining path to light, and smelting a log is its only source here).
 shaped(['C', 'S'], { C: 'coal', S: 'stick' }, 'torch', 4);
+shaped(['C', 'S'], { C: 'charcoal', S: 'stick' }, 'torch', 4);
 shapeless(['iron_ingot', 'flint'], 'flint_and_steel');
 shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket');
 shaped([' SX', 'S X', ' SX'], { S: 'stick', X: 'string' }, 'bow');
@@ -111,6 +119,73 @@ shaped([' B ', 'CCC'], { B: 'blaze_rod', C: 'cobblestone' }, 'brewing_stand');
 shapeless(['blaze_rod'], 'blaze_powder', 2);
 shapeless(['blaze_powder', 'ender_pearl'], 'ender_eye');
 shaped(['G G', ' G '], { G: 'glass' }, 'glass_bottle'); // SPEC: 1 bottle from 3 glass
+
+// ---------------------------------------------------------------------------
+// Phase 21 — the polish pass: everything a Minecraft player reaches for once
+// the critical path is done, restricted to materials this game actually
+// yields (no farming, no redstone, no dyes, no paper).
+// ---------------------------------------------------------------------------
+
+// --- combat and utility tools ---------------------------------------------
+
+shaped(['PIP', 'PPP', ' P '], { P: 'oak_planks', I: 'iron_ingot' }, 'shield');
+shaped([' I', 'I '], { I: 'iron_ingot' }, 'shears'); // mirrored matches too
+
+// --- building blocks -------------------------------------------------------
+
+// Stairs (4 per recipe) and slabs (6) for every material the game mines.
+// The step pattern's mirror matches too, so either hand works.
+const BUILDING_MATERIALS = {
+  cobblestone: 'cobblestone',
+  oak: 'oak_planks',
+  stone_brick: 'stone_bricks',
+  sandstone: 'sandstone',
+  nether_brick: 'nether_bricks',
+};
+for (const [key, M] of Object.entries(BUILDING_MATERIALS)) {
+  shaped(['M  ', 'MM ', 'MMM'], { M }, `${key}_stairs`, 4);
+  shaped(['MMM'], { M }, `${key}_slab`, 6);
+}
+
+shaped(['PSP', 'PSP'], { P: 'oak_planks', S: 'stick' }, 'oak_fence', 3);
+shaped(['SPS', 'SPS'], { P: 'oak_planks', S: 'stick' }, 'oak_fence_gate');
+shaped(['CCC', 'CCC'], { C: 'cobblestone' }, 'cobblestone_wall', 6);
+
+// --- utility ---------------------------------------------------------------
+
+shaped(['S S', 'SSS', 'S S'], { S: 'stick' }, 'ladder', 3); // 7 sticks
+shaped(['PP', 'PP', 'PP'], { P: 'oak_planks' }, 'oak_door', 3);
+shaped(['PPP', 'PPP'], { P: 'oak_planks' }, 'oak_trapdoor', 2);
+shaped(['WWW', 'PPP'], { W: 'white_wool', P: 'oak_planks' }, 'bed');
+shaped(['PPP', 'PPP', ' S '], { P: 'oak_planks', S: 'stick' }, 'sign', 3);
+
+// --- decoration ------------------------------------------------------------
+
+// Paper has no source in this game, so a book is three leather (the session
+// brief's substitution) — cows are the supply line.
+shapeless(['leather', 'leather', 'leather'], 'book');
+shaped(['PPP', 'BBB', 'PPP'], { P: 'oak_planks', B: 'book' }, 'bookshelf');
+shaped(['SSS', 'SLS', 'SSS'], { S: 'stick', L: 'leather' }, 'item_frame');
+// Vanilla's flower pot is fired clay, which this game can't make; sandstone
+// is the closest obtainable earthenware (and the tile the pot renders with).
+shaped(['S S', ' S '], { S: 'sandstone' }, 'flower_pot');
+
+// --- materials -------------------------------------------------------------
+
+shaped(['SS', 'SS'], { S: 'stone' }, 'stone_bricks', 4);
+shaped(['SS', 'SS'], { S: 'sand' }, 'sandstone');
+
+// Block forms, both ways (9 ingots to a block, a block back to 9).
+const BLOCK_FORMS = [
+  ['iron_ingot', 'iron_block'],
+  ['gold_ingot', 'gold_block'],
+  ['diamond', 'diamond_block'],
+  ['coal', 'coal_block'],
+];
+for (const [item, block] of BLOCK_FORMS) {
+  shaped(['MMM', 'MMM', 'MMM'], { M: item }, block);
+  shapeless([block], item, 9);
+}
 
 Object.freeze(RECIPES);
 

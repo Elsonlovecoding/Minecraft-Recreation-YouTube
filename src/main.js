@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, TEST_CHEST,
+  MOBS, TERRAIN, TEST_CHEST, BEDS, DRAGON,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -13,14 +13,20 @@ import {
   CHUNK_LIGHT_UNIFORMS,
 } from './render/lighting.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
-import { initHud, updateHud } from './ui/hud.js';
+import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
-import { BLOCK, isFurnace, isTorch, torchSupportCell, isSolid } from './world/blocks.js';
+import {
+  BLOCK, isFurnace, isTorch, torchSupportCell, isSolid,
+  GATE_TOGGLE, DOOR_TOGGLE, DOOR_INFO, TRAPDOOR_TOGGLE, BED_INFO,
+  FACING_DELTA, isSign, isItemFrame, isBed,
+} from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createFluids } from './world/fluids.js';
 import { createChests } from './world/chests.js';
 import { createSpawners } from './world/spawners.js';
+import { createSigns } from './world/signs.js';
+import { createFrames } from './world/frames.js';
 import { createWart } from './world/wart.js';
 import { createPlayerController } from './player/controller.js';
 import { createInteraction } from './player/interaction.js';
@@ -129,6 +135,38 @@ async function init() {
   world.addBlockListener(spawners.onBlockChanged);
   const wart = createWart({ world, items });
   world.addBlockListener(wart.onBlockChanged);
+  // Phase 21 block entities: sign text and item-frame contents (the blocks
+  // themselves mesh through the generic shape emitter).
+  const signs = createSigns({ world, scene, canvas });
+  world.addBlockListener(signs.onBlockChanged);
+  const frames = createFrames({ world, scene, items });
+  world.addBlockListener(frames.onBlockChanged);
+  // Breaking either half of a door or a bed removes the other half, so a
+  // stray upper door slab or bed head can never be left standing.
+  world.addBlockListener((x, y, z, id) => {
+    for (const [dx, dy, dz] of [
+      [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
+    ]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const nz = z + dz;
+      const nid = world.getBlock(nx, ny, nz);
+      const door = DOOR_INFO[nid];
+      if (door) {
+        const otherY = door.half === 'lower' ? ny + 1 : ny - 1;
+        if (!DOOR_INFO[world.getBlock(nx, otherY, nz)]) {
+          world.setBlock(nx, ny, nz, BLOCK.AIR);
+        }
+        continue;
+      }
+      const bed = BED_INFO[nid];
+      if (!bed) continue;
+      const [bdx, bdz] = FACING_DELTA[bed.facing];
+      const sign = bed.part === 'foot' ? 1 : -1;
+      const other = world.getBlock(nx + bdx * sign, ny, nz + bdz * sign);
+      if (!BED_INFO[other]) world.setBlock(nx, ny, nz, BLOCK.AIR);
+    }
+  });
   // Phase 11: torches pop off as items when their support goes — the block
   // below a floor torch, the wall behind a wall torch. Cascades (a pillar of
   // sand under a torch collapsing) ride the listener chain naturally.
@@ -210,7 +248,53 @@ async function init() {
     // right-clicked ON an empty portal frame, it fills the frame instead.
     onThrowEye: () => enderEyes.throwEye(),
     onFillFrame: (target) => endPortal.fillFrame(target),
-    onUseBlock: (target) => {
+    // A freshly placed sign opens its text entry right away (vanilla).
+    onPlaceSign: (cell) => signs.beginEdit(cell),
+    onUseBlock: (target, hand) => {
+      // Phase 21 openables: doors, fence gates and trapdoors swap to their
+      // other state in place. Both halves of a door move together.
+      if (DOOR_TOGGLE[target.id] !== undefined) {
+        const info = DOOR_INFO[target.id];
+        const baseY = info.half === 'lower' ? target.y : target.y - 1;
+        const lower = world.getBlock(target.x, baseY, target.z);
+        const upper = world.getBlock(target.x, baseY + 1, target.z);
+        if (DOOR_TOGGLE[lower] !== undefined) {
+          world.setBlock(target.x, baseY, target.z, DOOR_TOGGLE[lower]);
+        }
+        if (DOOR_TOGGLE[upper] !== undefined) {
+          world.setBlock(target.x, baseY + 1, target.z, DOOR_TOGGLE[upper]);
+        }
+        return true;
+      }
+      if (GATE_TOGGLE[target.id] !== undefined) {
+        world.setBlock(target.x, target.y, target.z, GATE_TOGGLE[target.id]);
+        return true;
+      }
+      if (TRAPDOOR_TOGGLE[target.id] !== undefined) {
+        world.setBlock(target.x, target.y, target.z, TRAPDOOR_TOGGLE[target.id]);
+        return true;
+      }
+      if (isItemFrame(target.id)) {
+        return frames.use(target.x, target.y, target.z, hand);
+      }
+      if (isSign(target.id)) {
+        signs.beginEdit({ x: target.x, y: target.y, z: target.z });
+        return true;
+      }
+      if (isBed(target.id)) return trySleep(target);
+      // Flower pots take the one plant this game has (Phase 21).
+      if (target.id === BLOCK.FLOWER_POT && hand?.name === 'oak_sapling') {
+        world.setBlock(target.x, target.y, target.z, BLOCK.FLOWER_POT_SAPLING);
+        hand.consume(1);
+        return true;
+      }
+      if (target.id === BLOCK.FLOWER_POT_SAPLING) {
+        world.setBlock(target.x, target.y, target.z, BLOCK.FLOWER_POT);
+        items.spawn('oak_sapling', 1, {
+          x: target.x + 0.5, y: target.y + ITEMS.DROP_SPAWN_Y_OFFSET, z: target.z + 0.5,
+        });
+        return true;
+      }
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
         return true;
@@ -236,6 +320,56 @@ async function init() {
       return false;
     },
   });
+
+  // --- beds (Phase 21) -------------------------------------------------------
+
+  // Right-clicking a bed sets the respawn point (always) and, at night with
+  // nothing hostile nearby, skips to morning. `sleeping` runs the fade.
+  let sleeping = 0; // seconds left in the sleep transition
+  let sleepJumped = false;
+  function trySleep(target) {
+    const info = BED_INFO[target.id];
+    if (!info) return false;
+    const p = player.body.position;
+    if (Math.hypot(p.x - (target.x + 0.5), p.z - (target.z + 0.5)) > BEDS.USE_RANGE) {
+      return true;
+    }
+    // The spawn point is the bed's foot cell — the same rule as vanilla's
+    // "respawn beside the bed", and always safe because the bed stood there.
+    stats.setSpawnPoint(target.x + 0.5, target.y, target.z + 0.5);
+    showToast('Respawn point set');
+    const t = dayNight.timeOfDay;
+    if (t < BEDS.NIGHT_START || t >= BEDS.NIGHT_END) {
+      showToast('You can only sleep at night');
+      return true;
+    }
+    const near = mobs.mobs.some((m) => {
+      if (!m.type.hostile || m.entity.dead || m.entity.removed) return false;
+      const mp = m.entity.position;
+      return Math.hypot(mp.x - p.x, mp.y - p.y, mp.z - p.z) < BEDS.MONSTER_RADIUS;
+    });
+    if (near) {
+      showToast('You may not rest now, there are monsters nearby');
+      return true;
+    }
+    sleeping = BEDS.SLEEP_SECONDS;
+    sleepJumped = false;
+    return true;
+  }
+
+  // The fade: dark to black, the night passes at the peak, then back.
+  function updateSleep(dt) {
+    if (sleeping <= 0) return;
+    sleeping = Math.max(0, sleeping - dt);
+    const half = BEDS.SLEEP_SECONDS / 2;
+    const elapsed = BEDS.SLEEP_SECONDS - sleeping;
+    if (!sleepJumped && elapsed >= half) {
+      sleepJumped = true;
+      dayNight.setTimeOfDay(BEDS.WAKE_TIME_OF_DAY);
+    }
+    setSleepFade(elapsed < half ? elapsed / half : sleeping / half);
+    if (sleeping === 0) setSleepFade(0);
+  }
   mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
   const endGenerator = new EndGenerator(TERRAIN.SEED);
 
@@ -249,7 +383,7 @@ async function init() {
     world, dayNight, mobs, fluids,
     managers: [
       items, mobs, falling, combat, fluids, smelting, brewing, chests,
-      spawners, wart, enderEyes,
+      spawners, wart, enderEyes, signs, frames,
     ],
     defs: {
       overworld: { group: overworldGroup, sky: null, spawning: true },
@@ -382,6 +516,7 @@ async function init() {
   logColumn(world, 40, 40);
   logBlockCensus(world);
   window.__world = world; // poke at the world from the browser console
+  window.__BLOCK = BLOCK;  // block ids, for the console and the test harness
   window.__camera = camera;
   window.__renderer = renderer;
   window.__dayNight = dayNight; // e.g. __dayNight.setTimeOfDay(0.75) = midnight
@@ -401,11 +536,19 @@ async function init() {
   window.__chests = chests;
   window.__spawners = spawners;
   window.__wart = wart;
+  window.__signs = signs;
+  window.__frames = frames;
   window.__dimensions = dimensions;
   window.__portals = portals;
   window.__stronghold = stronghold;
   window.__endPortal = endPortal;
   window.__dragonFight = dragonFight;
+
+  // The sign panel suppresses the pointer-lock hint while it is open
+  // (world/signs.js toggles the class).
+  const hintStyle = document.createElement('style');
+  hintStyle.textContent = '#lock-hint.mc-suppressed { display: none; }';
+  document.head.appendChild(hintStyle);
 
   initDebug();
   initHud(inventory);
@@ -467,7 +610,7 @@ async function init() {
   const isPaused = () =>
     document.pointerLockElement !== canvas &&
     !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
-    !player.inputOverridden;
+    !signs.isEditing && !player.inputOverridden;
   // Esc while paused resumes, like vanilla. The lock request can reject
   // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
   // up and a click resumes instead (same swallow as the click path).
@@ -540,7 +683,16 @@ async function init() {
       scene.fog.far = SKY.FOG_FAR;
       wasEyeInLava = false;
     }
-    updateHud(player, stats);
+    if (!paused) updateSleep(delta);
+    // The boss bar: shown for as long as the dragon lives (Phase 21).
+    const dragonHealth = dragonFight.health;
+    setBossBar(
+      dimensions.activeKey === 'end' && dragonHealth !== null && dragonHealth > 0
+        ? { fraction: dragonHealth / DRAGON.HEALTH }
+        : null,
+      paused ? 0 : delta,
+    );
+    updateHud(player, stats, paused ? 0 : delta);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     renderer.render(scene, camera);
     interaction.renderHand(renderer); // hand pass over the finished frame

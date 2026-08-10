@@ -17,6 +17,7 @@ import { ATLAS, UI } from '../config.js';
 import { getAtlasTexture } from '../render/atlas.js';
 import { faceTiles } from '../world/blocks.js';
 import { itemVisualInfo, atlasSpriteCanvas, getPotionCanvas } from '../entities/items.js';
+import { generatedSpriteCanvas } from '../render/item_art.js';
 import { itemMaxDurability } from '../player/inventory.js';
 import { CHEST_TEXTURE_PATH } from '../world/chests.js';
 
@@ -224,6 +225,8 @@ export function createItemIcon(name, sizePx) {
     img.src = blockIconDataURL(info.blockId);
   } else if (info.atlas) {
     img.src = atlasSpriteDataUrl(info.sprite);
+  } else if (info.generated) {
+    img.src = generatedSpriteDataUrl(info.sprite);
   } else {
     img.src = `assets/items/${info.sprite}.png`;
   }
@@ -249,6 +252,18 @@ function setPotionIcon(imgEl, name) {
     }
     imgEl.src = url;
   });
+}
+
+const generatedSpriteUrlCache = new Map(); // item name -> data URL
+
+// Icon for an item whose art is generated (render/item_art.js).
+function generatedSpriteDataUrl(name) {
+  let url = generatedSpriteUrlCache.get(name);
+  if (!url) {
+    url = generatedSpriteCanvas(name).toDataURL();
+    generatedSpriteUrlCache.set(name, url);
+  }
+  return url;
 }
 
 const atlasSpriteUrlCache = new Map(); // item name -> data URL

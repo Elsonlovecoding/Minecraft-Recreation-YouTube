@@ -13,7 +13,14 @@
 // writing `wishX/wishZ` (wanted horizontal velocity) before step().
 
 import { MOBS, CHUNK } from '../config.js';
-import { BLOCK, blockDef, isLava } from '../world/blocks.js';
+import {
+  BLOCK, blockDef, isLava, isWater, fluidHeight,
+  collisionBoxesAt, hasCollision, MAX_COLLISION_OVERHANG,
+} from '../world/blocks.js';
+
+// Collision boxes can reach above their own cell (fences stand 1.5 blocks),
+// so the sweep looks this many cells further "behind" a face.
+const OVERHANG_CELLS = Math.ceil(MAX_COLLISION_OVERHANG);
 
 const EPS = 1e-7;
 const AXIS = ['x', 'y', 'z'];
@@ -23,6 +30,9 @@ export class Entity {
   constructor(world, pos, def) {
     this.world = world;
     this.def = def;
+    // Bound once: connection-shaped blocks (fences, walls) read their
+    // neighbours through this during every collision sweep.
+    this._getBlock = (x, y, z) => world.getBlock(x, y, z);
     this.position = { x: pos.x, y: pos.y, z: pos.z }; // feet centre
     this.velocity = { x: 0, y: 0, z: 0 };
     this.wishX = 0;             // AI steering: wanted horizontal velocity
@@ -214,9 +224,10 @@ export class Entity {
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
           const id = this.world.getBlock(x, y, z);
-          if (id === BLOCK.WATER) {
+          if (isWater(id)) {
             water = true;
-            if (y + 1 > topWater) topWater = y + 1;
+            const surface = y + fluidHeight(id);
+            if (surface > topWater) topWater = surface;
           } else if (isLava(id)) {
             lava = true;
           }
@@ -230,8 +241,10 @@ export class Entity {
       : 0;
   }
 
-  // Exact swept AABB move along one axis (the PlayerBody scan without the
-  // cactus-inset refinement — mobs treat every solid cell as a full cube).
+  // Exact swept AABB move along one axis. Phase 21: shape-aware like
+  // PlayerBody — mobs collide against the same collision-box lists, so a
+  // fence really is 1.5 blocks tall to them (they cannot step over it) and a
+  // slab really is half height (they can).
   _sweep(axis, amount) {
     if (amount === 0) return false;
     const p = this.position;
@@ -241,26 +254,43 @@ export class Entity {
     const dir = amount > 0 ? 1 : -1;
     const face = dir > 0 ? max[axis] : min[axis];
     const c0 = Math.floor(face + dir * EPS);
-    const c1 = Math.floor(face + amount + dir * EPS);
+    let c1 = Math.floor(face + amount + dir * EPS);
+    if (dir < 0) c1 -= OVERHANG_CELLS;
     const u = (axis + 1) % 3;
     const w = (axis + 2) % 3;
-    const u0 = Math.floor(min[u] + EPS);
+    const u0 = Math.floor(min[u] + EPS) - (u === 1 ? OVERHANG_CELLS : 0);
     const u1 = Math.floor(max[u] - EPS);
-    const w0 = Math.floor(min[w] + EPS);
+    const w0 = Math.floor(min[w] + EPS) - (w === 1 ? OVERHANG_CELLS : 0);
     const w1 = Math.floor(max[w] - EPS);
     const cell = [0, 0, 0];
+    const getBlock = this._getBlock;
     for (let ci = c0; dir > 0 ? ci <= c1 : ci >= c1; ci += dir) {
       cell[axis] = ci;
+      let plane = null;
       for (let ui = u0; ui <= u1; ui++) {
         cell[u] = ui;
         for (let wi = w0; wi <= w1; wi++) {
           cell[w] = wi;
-          if (!blockDef(this.world.getBlock(cell[0], cell[1], cell[2])).solid) continue;
-          let moved = (dir > 0 ? ci : ci + 1) - face;
-          if (dir > 0 ? moved < 0 : moved > 0) moved = 0; // embedded: no shove
-          p[AXIS[axis]] += moved;
-          return true;
+          const id = this.world.getBlock(cell[0], cell[1], cell[2]);
+          if (!hasCollision(id)) continue;
+          for (const b of collisionBoxesAt(id, getBlock, cell[0], cell[1], cell[2])) {
+            if (min[u] >= cell[u] + b[u + 3] - EPS ||
+                max[u] <= cell[u] + b[u] + EPS) continue;
+            if (min[w] >= cell[w] + b[w + 3] - EPS ||
+                max[w] <= cell[w] + b[w] + EPS) continue;
+            const candidate = dir > 0 ? ci + b[axis] : ci + b[axis + 3];
+            if (dir > 0 ? candidate - face > amount : candidate - face < amount) continue;
+            if (plane === null || (dir > 0 ? candidate < plane : candidate > plane)) {
+              plane = candidate;
+            }
+          }
         }
+      }
+      if (plane !== null) {
+        let moved = plane - face;
+        if (dir > 0 ? moved < 0 : moved > 0) moved = 0; // embedded: no shove
+        p[AXIS[axis]] += moved;
+        return true;
       }
     }
     p[AXIS[axis]] += amount;

@@ -24,16 +24,24 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  OVERWORLD, CHUNK, STATS, MOBS,
+  STATS, MOBS, SHIELD,
 } from '../config.js';
-import {
-  BLOCK, blockDef, blockIdByName, placementVariant, PLANTABLE,
-} from '../world/blocks.js';
+import { BLOCK, blockDef, blockIdByName, PLANTABLE } from '../world/blocks.js';
 import { consumableValue, armourSlotIndex } from './inventory.js';
 import { createHand } from './hand.js';
 import { createFluidActions } from './fluid_actions.js';
+import {
+  createPlacement, isReplaceable, placementBlockedByPlayer,
+} from './placement.js';
 
-const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
+// Re-exported: the bucket actions and the node harness import them from here
+// (Phase 21 moved the bodies into player/placement.js with the rest of the
+// placement rules).
+export { isReplaceable, placementBlockedByPlayer };
+
+// Harvest ranks. Gold sits at WOOD's level (vanilla): golden tools are the
+// fastest but harvest the least — no gold, redstone or diamond ore.
+const TIER_RANK = { hand: 0, wood: 1, gold: 1, stone: 2, iron: 3, diamond: 4 };
 
 // ---------------------------------------------------------------------------
 // Pure logic (node-testable)
@@ -43,11 +51,6 @@ const TIER_RANK = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 };
 // air, fluids or portal interiors, but torches and leaves count.
 export function isTargetable(id) {
   return blockDef(id).hardness !== null;
-}
-
-// A cell a new block may replace: air and fluids only.
-export function isReplaceable(id) {
-  return id === BLOCK.AIR || blockDef(id).fluid;
 }
 
 // Voxel raycast (Amanatides & Woo grid traversal): walks every cell the ray
@@ -96,10 +99,14 @@ export function raycastVoxel(getBlock, origin, dir, maxDist, targetable = isTarg
 // Held tool item name -> { toolClass, tier }, or null for anything that isn't
 // a tool (bare hand, blocks, food). Tool item ids follow the texture names:
 // wooden_pickaxe, stone_axe, iron_shovel, diamond_sword...
+const TOOL_TIER_OF = {
+  wooden: 'wood', stone: 'stone', iron: 'iron', golden: 'gold', diamond: 'diamond',
+};
 export function parseHeldTool(itemName) {
-  const m = /^(wooden|stone|iron|diamond)_(pickaxe|axe|shovel|sword)$/.exec(itemName ?? '');
+  const m = /^(wooden|stone|iron|golden|diamond)_(pickaxe|axe|shovel|sword|hoe)$/
+    .exec(itemName ?? '');
   if (!m) return null;
-  return { toolClass: m[2], tier: m[1] === 'wooden' ? 'wood' : m[1] };
+  return { toolClass: m[2], tier: TOOL_TIER_OF[m[1]] };
 }
 
 // How long a block takes to break with the held item, and whether it drops.
@@ -117,17 +124,6 @@ export function miningPlan(def, heldItemName) {
   if (matchesClass) speed *= TOOL_TIERS[tool.tier].speedMultiplier;
   if (!harvests) speed *= WRONG_TIER_SPEED_MULTIPLIER;
   return { time: def.hardness === 0 ? 0 : def.hardness / speed, drops: harvests };
-}
-
-// Would a block at cell (x, y, z) overlap the player's AABB? feet is the
-// body position (feet centre). Exact face contact does not block placement.
-export function placementBlockedByPlayer(x, y, z, feet) {
-  const hw = PLAYER.WIDTH / 2;
-  return (
-    feet.x - hw < x + 1 && feet.x + hw > x &&
-    feet.y < y + 1 && feet.y + PLAYER.HEIGHT > y &&
-    feet.z - hw < z + 1 && feet.z + hw > z
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +185,7 @@ function loadCrackTextures(stages) {
 // block is NOT consumed, vanilla). Potions drink through the eating hold.
 export function createInteraction({
   world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
-  onUseMob, onIgnite, onThrowEye, onFillFrame, combat,
+  onUseMob, onIgnite, onThrowEye, onFillFrame, onPlaceSign, combat,
 }) {
   // --- targeting state
   let target = null;
@@ -210,6 +206,7 @@ export function createInteraction({
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
   let eating = null;        // { name, slot, t, source } during a hold-to-eat
+  let shieldHold = 0;       // seconds the shield has been raised (Phase 21)
 
   // --- the two hands (Phase 14). Right-click actions act through a hand
   // source: name, consumption, replacement (buckets) and wear all route to
@@ -250,6 +247,7 @@ export function createInteraction({
     if (name === 'ender_eye') return !!onThrowEye; // thrown toward the stronghold
     if (name === 'bow') return combat ? combat.hasArrow : true;
     if (name === 'shears') return !!mobHit; // no block/air use in this game
+    if (name === 'shield') return true;     // raising the guard (Phase 21)
     if (name === 'flint_and_steel') return true; // portal lighting (Phase 15)
     if (armourSlotIndex(name) !== null) return true;
     // Food, or a potion (always drinkable — Phase 18).
@@ -416,12 +414,12 @@ export function createInteraction({
     breakProgress = 0;
   }
 
-  function spawnDrops(def, x, y, z) {
+  function spawnDrops(def, x, y, z, drops = def.drops) {
     // chance entries roll independently; `fallback: true` entries drop only
     // when no chance entry succeeded (registry doc in world/blocks.js —
     // vanilla-style exclusive drops like gravel's flint-or-gravel).
     let chanceDropped = false;
-    for (const drop of def.drops) {
+    for (const drop of drops) {
       if (drop.fallback && chanceDropped) continue;
       if (drop.chance !== undefined) {
         if (Math.random() >= drop.chance) continue;
@@ -440,8 +438,15 @@ export function createInteraction({
 
   function finishBreak() {
     const def = blockDef(target.id);
+    const held = inventory.selectedName;
     world.setBlock(target.x, target.y, target.z, BLOCK.AIR);
-    if (breakPlan.drops) spawnDrops(def, target.x, target.y, target.z);
+    // Shears harvest their own drop table where a block has one (Phase 21:
+    // leaves give leaf blocks) and wear one durability for it, vanilla.
+    const shearing = held === 'shears' && def.shearDrops;
+    if (breakPlan.drops || shearing) {
+      spawnDrops(def, target.x, target.y, target.z, shearing ? def.shearDrops : def.drops);
+    }
+    if (shearing) inventory.damageSelected(1);
     // Breaking a real block with a tool wears it (instant-break blocks like
     // torches don't, matching vanilla). damageSelected is a no-op for items
     // without durability; a tool that hits 0 vanishes from the slot.
@@ -485,52 +490,13 @@ export function createInteraction({
   // --- placing (Phase 14: acts through the given hand — the offhand can
   // place its blocks when the main hand item has no right-click use)
 
-  function tryPlace(hand) {
-    if (!target) return;
-    const [fx, fy, fz] = target.face;
-    if (fx === 0 && fy === 0 && fz === 0) return; // ray started inside it
-    const name = hand.name;
-    if (!name) return;
-    const id = blockIdByName(name);
-    if (id === null) {
-      // Plantable items (Phase 17: nether wart) place their crop block on
-      // their soil's TOP face only, into air only — never displacing a
-      // fluid, never sideways off a bed's edge.
-      const plant = PLANTABLE[name];
-      if (!plant) return; // the held item isn't placeable at all
-      if (fy !== 1 || target.id !== plant.soil) return;
-      // Same out-of-range guard as the block path below: setBlock above the
-      // world ceiling is a silent no-op and must not eat the stack count.
-      if (target.y + 1 >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
-      if (world.getBlock(target.x, target.y + 1, target.z) !== BLOCK.AIR) return;
-      world.setBlock(target.x, target.y + 1, target.z, plant.block);
-      hand.consume(1);
-      startSwing(hand.key);
-      return;
-    }
-    // Torches need solid support (the clicked block IS the support).
-    if (id === BLOCK.TORCH && !blockDef(target.id).solid) return;
-    const x = target.x + fx;
-    const y = target.y + fy;
-    const z = target.z + fz;
-    // Outside the world's vertical range setBlock is a silent no-op — don't
-    // let it eat the stack count.
-    if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return;
-    if (!isReplaceable(world.getBlock(x, y, z))) return;
-    // Torches can't stand in a fluid (vanilla) — the generic rule lets
-    // blocks displace fluid cells, but a torch would burn underwater and
-    // silently delete the source.
-    if (id === BLOCK.TORCH && world.getBlock(x, y, z) !== BLOCK.AIR) return;
-    if (placementBlockedByPlayer(x, y, z, player.body.position)) return;
-    // Oriented blocks place their variant: furnaces face the player, torches
-    // become the wall variant leaning out of the clicked face; null = the
-    // clicked face can't hold this block (torch on a ceiling).
-    const placed = placementVariant(id, { x, y, z }, player.body.position, target.face);
-    if (placed === null) return;
-    world.setBlock(x, y, z, placed);
-    hand.consume(1); // the hand visuals refresh via the subscription
-    startSwing(hand.key);
-  }
+  // Placement (Phase 21: player/placement.js owns the rules — the
+  // multi-cell, support and slab-stacking cases joined the single-cell path
+  // that used to live here).
+  const { tryPlace } = createPlacement({
+    world, player, getTarget: () => target, startSwing,
+    onPlaceSign: (cell) => onPlaceSign?.(cell),
+  });
 
   // --- bucket and bottle fluid actions (Phase 19: split into
   // player/fluid_actions.js per the ARCHITECTURE cap note — moved
@@ -618,7 +584,9 @@ export function createInteraction({
         // bucket-scoop rule (Phase 18).
         mouseRight = false;
         startSwing(useHand.key);
-      } else if (target && !player.body.sneaking && onUseBlock && onUseBlock(target)) {
+      } else if (
+        target && !player.body.sneaking && onUseBlock && onUseBlock(target, useHand)
+      ) {
         mouseRight = false;
         startSwing();
       } else if (
@@ -712,11 +680,23 @@ export function createInteraction({
       eating = null;
     }
 
+    // Shield (Phase 21): holding right click with a shield raises the
+    // guard after a short delay (vanilla). While raised it blocks melee and
+    // projectile damage arriving from the front (systems/combat.js reads
+    // `combat.blocking`) and slows the walk (PlayerBody reads
+    // `body.blocking`). Attacking, eating and drawing all drop it.
+    const raisingShield =
+      mouseRight && useHand.name === 'shield' && !eating && !combat?.isDrawing;
+    shieldHold = raisingShield ? shieldHold + dt : 0;
+    const blocking = raisingShield && shieldHold >= SHIELD.RAISE_SECONDS;
+    player.body.blocking = blocking;
+    combat?.setBlocking?.(blocking, rayDir);
+
     // Using an item blocks attacking (vanilla): while eating or drawing a
     // bow, mining stops and its progress resets; placing pauses too. A mob
     // in the crosshair also holds mining (the swing is an attack, not a
     // dig).
-    const usingItem = eating || !!combat?.isDrawing;
+    const usingItem = eating || !!combat?.isDrawing || raisingShield;
     if (usingItem || mobHit) resetBreak();
     else updateBreaking(dt);
     if (!usingItem) updatePlacing(dt, useHand);
@@ -736,7 +716,7 @@ export function createInteraction({
       crackMesh.visible = false;
     }
 
-    hand.update(dt, eating);
+    hand.update(dt, eating, blocking);
   }
 
   return {

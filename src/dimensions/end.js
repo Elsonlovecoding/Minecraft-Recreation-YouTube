@@ -1,10 +1,17 @@
 // dimensions/end.js — the End, complete (Phase 20; the Phase 19 island was
-// reported far too small and is replaced wholesale here). SPEC: a central
-// end-stone island ~100 blocks across floating in void, 10 obsidian pillars
-// ringing the centre 40-70 blocks tall (an end crystal on each — the
-// crystals themselves are entities, entities/crystals.js), the inactive
-// bedrock exit portal fountain at the centre, and the obsidian arrival
-// platform on the island margin.
+// reported far too small and was replaced wholesale). A central end-stone
+// island floating in void, 10 obsidian pillars ringing the centre with an
+// end crystal on each (the crystals themselves are entities,
+// entities/crystals.js), the inactive bedrock exit portal fountain at the
+// centre, and the obsidian arrival platform on the island margin.
+//
+// Phase 21 re-measured both after a report that the island was too small
+// and the pillars too tall for it: the island now runs 102-118 blocks
+// across on every bearing (SPEC's "roughly 100" as a floor, not an
+// average), and the pillar SHAFTS stand the vanilla 14-40 blocks above the
+// surface, rooted ROOT_DEPTH deep so each column is still 40-66 blocks of
+// obsidian. Generation also skips the pillar/fountain/platform tests for
+// chunks they cannot reach, which is most of them.
 //
 // Same generator interface as dimensions/nether.js (World consumes it):
 // generateChunk(chunk), heightAt(x, z), biomeAt(x, z). Everything is a
@@ -131,7 +138,20 @@ export class EndGenerator {
     const z0 = chunk.cz * size;
     const P = END.PLATFORM;
     const E = END.EXIT_PORTAL;
-    const pillars = this.pillars();
+    // Phase 21 (End framerate): only the pillars whose cylinder can reach
+    // THIS chunk are worth testing per column — the old loop ran all ten
+    // 256 times per chunk across the whole island. Same for the fountain and
+    // the arrival platform, which touch one chunk each.
+    const pillars = this.pillars().filter((p) =>
+      p.x + p.radius >= x0 && p.x - p.radius < x0 + size &&
+      p.z + p.radius >= z0 && p.z - p.radius < z0 + size);
+    const fountainR = Math.ceil(Math.sqrt(E.BASE_RADIUS_SQ));
+    const nearFountain =
+      E.X + fountainR >= x0 && E.X - fountainR < x0 + size &&
+      E.Z + fountainR >= z0 && E.Z - fountainR < z0 + size;
+    const nearPlatform =
+      P.X + P.RADIUS >= x0 && P.X - P.RADIUS < x0 + size &&
+      P.Z + P.RADIUS >= z0 && P.Z - P.RADIUS < z0 + size;
     for (let lz = 0; lz < size; lz++) {
       for (let lx = 0; lx < size; lx++) {
         const wx = x0 + lx;
@@ -163,7 +183,7 @@ export class EndGenerator {
         const ex = wx - E.X;
         const ez = wz - E.Z;
         const e2 = ex * ex + ez * ez;
-        if (e2 <= E.BASE_RADIUS_SQ) {
+        if (nearFountain && e2 <= E.BASE_RADIUS_SQ) {
           const baseY = END.ISLAND_TOP_Y;
           chunk.set(lx, baseY, lz, BLOCK.BEDROCK);
           for (let d = 1; d <= E.CLEARANCE; d++) {
@@ -189,6 +209,7 @@ export class EndGenerator {
         // The obsidian arrival platform (on the island margin, so stepping
         // off it can never soft-lock over the void), clear air above.
         if (
+          nearPlatform &&
           Math.abs(wx - P.X) <= P.RADIUS && Math.abs(wz - P.Z) <= P.RADIUS
         ) {
           chunk.set(lx, END.ISLAND_TOP_Y, lz, BLOCK.OBSIDIAN);

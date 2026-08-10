@@ -37,6 +37,9 @@ export const SMELT_RECIPES = {
   raw_gold: 'gold_ingot',
   sand: 'glass',
   cobblestone: 'stone',
+  // Phase 21: smelting any log makes charcoal — the second torch/fuel
+  // source, and the one a player without a cave can reach.
+  oak_log: 'charcoal',
   beef: 'cooked_beef',
   porkchop: 'cooked_porkchop',
   chicken: 'cooked_chicken',
@@ -47,7 +50,17 @@ export const SMELT_RECIPES = {
 // lava bucket 100). Burn seconds = value * SMELTING.SMELT_SECONDS.
 export const FUEL_ITEMS = {
   coal: 8,
+  charcoal: 8,        // Phase 21: charcoal burns exactly like coal (vanilla)
+  oak_log: 1.5,
   oak_planks: 1.5,
+  oak_slab: 0.75,     // wooden building blocks burn (vanilla), a slab for half
+  oak_stairs: 1.5,
+  oak_fence: 1.5,
+  oak_fence_gate: 1.5,
+  oak_trapdoor: 1.5,
+  crafting_table: 1.5,
+  bookshelf: 1.5,
+  ladder: 1.5,
   stick: 0.5,
   lava_bucket: 100,
 };

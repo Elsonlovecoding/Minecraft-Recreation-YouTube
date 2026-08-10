@@ -27,6 +27,14 @@ const CRYSTAL_DEF = {
 // `combat` supplies explode + the boom.
 export function createCrystals({ root, combat }) {
   const crystals = [];
+  // Phase 21: the ten crystals are identical and never tinted individually,
+  // so they share ONE material — ten fewer materials for the renderer to
+  // switch between in the busiest scene in the game.
+  let sharedMaterial = null;
+  // The blast-target list only changes when a crystal pops; combat's
+  // explosion sweep reads it per blast, so it is cached rather than
+  // filter/mapped on every access.
+  let blastCache = null;
 
   // A crystal presents the mob-facade shape combat's paths expect:
   // entity.damage() from melee swings and arrows, entity.position/def from
@@ -68,6 +76,7 @@ export function createCrystals({ root, combat }) {
   function pop(crystal) {
     crystal.alive = false;
     crystal.group.visible = false;
+    blastCache = null;
     combat.explode(
       { x: crystal.x, y: crystal.centerY(), z: crystal.z },
       END_CRYSTAL.EXPLODE_DAMAGE,
@@ -80,9 +89,18 @@ export function createCrystals({ root, combat }) {
   // crystal sits on the bedrock cap at the pillar top.
   function init(pillars) {
     if (crystals.length > 0) return;
+    blastCache = null;
     for (const p of pillars) {
       const { group, parts, material } = createMobModel(CRYSTAL_DEF);
-      material.side = THREE.DoubleSide; // the cage reads from inside too
+      if (!sharedMaterial) {
+        material.side = THREE.DoubleSide; // the cage reads from inside too
+        sharedMaterial = material;
+      } else {
+        material.dispose();
+        for (const pivot of Object.values(parts)) {
+          for (const mesh of pivot.children) mesh.material = sharedMaterial;
+        }
+      }
       const baseY = p.top + 1;
       group.position.set(p.x + 0.5, baseY, p.z + 0.5);
       // The classic tilted-cube look: spin around Y with a corner-forward
@@ -100,7 +118,7 @@ export function createCrystals({ root, combat }) {
         alive: true,
         group,
         parts,
-        material,
+        material: sharedMaterial,
         phase: Math.random() * Math.PI * 2,
         bob: 0,
         centerY() {
@@ -163,9 +181,13 @@ export function createCrystals({ root, combat }) {
     update,
     nearestLiving,
     raycast,
-    // Living-crystal facades for combat.explode's target sweep.
+    // Living-crystal facades for combat.explode's target sweep (cached —
+    // rebuilt only when one pops).
     get blastTargets() {
-      return crystals.filter((c) => c.alive).map((c) => c.facade);
+      if (!blastCache) {
+        blastCache = crystals.filter((c) => c.alive).map((c) => c.facade);
+      }
+      return blastCache;
     },
     get livingCount() {
       return crystals.filter((c) => c.alive).length;

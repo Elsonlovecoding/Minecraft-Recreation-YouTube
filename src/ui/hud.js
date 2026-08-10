@@ -36,6 +36,13 @@ let syncSelection = null; // repositions selectEl; also guarded per frame
 let lavaEl = null;       // fullscreen overlay while the eye is in lava
 let effectsRow = null;   // active potion effects, top-right (Phase 18)
 let lastEffectsKey = ''; // rebuilt only when the countdowns change
+let bossBar = null;      // the Ender Dragon boss bar (Phase 21)
+let bossFill = null;
+let bossShown = 0;       // eased health fraction so the bar drains smoothly
+let sleepEl = null;      // full-screen wash while a night passes in a bed
+let sleepFade = 0;
+let toastEl = null;      // transient message line above the hotbar
+let toastTimer = 0;
 
 // The lava overlay art: the real still-lava atlas tile, darkened, tiled
 // across the screen (vanilla draws the block texture over the whole view).
@@ -199,6 +206,37 @@ export function initHud(inventory) {
     }
     #hud-crosshair::before, #hud-crosshair::after {
       content: ''; position: absolute; background: #ddd;
+    }
+    /* The boss bar: a purple fill in a dark track, captioned above. */
+    #hud-boss {
+      position: fixed; left: 50%; top: ${UI.BOSS_BAR.TOP_PX}px;
+      transform: translateX(-50%); display: none; z-index: 6;
+      pointer-events: none; text-align: center;
+    }
+    #hud-boss-label {
+      color: #fff; font: bold ${UI.BOSS_BAR.LABEL_PX}px monospace;
+      text-shadow: 2px 2px 0 #000; margin-bottom: 3px;
+    }
+    #hud-boss-track {
+      width: ${UI.BOSS_BAR.WIDTH_PX}px; height: ${UI.BOSS_BAR.HEIGHT_PX}px;
+      background: #1b0d24; border: 2px solid #000; box-sizing: content-box;
+    }
+    #hud-boss-fill {
+      height: 100%; width: 100%;
+      background: linear-gradient(#d17bff, #8b13cf 60%, #5a0a8c);
+    }
+    /* A transient message line, vanilla's action-bar text. */
+    #hud-toast {
+      position: fixed; left: 50%; bottom: ${statsBottom + 46}px;
+      transform: translateX(-50%); color: #fff; opacity: 0;
+      font: 15px monospace; text-shadow: 2px 2px 0 #000;
+      pointer-events: none; z-index: 6; transition: opacity 0.25s;
+      white-space: nowrap;
+    }
+    /* The sleep wash: a full-screen fade while the night passes. */
+    #hud-sleep {
+      position: fixed; inset: 0; background: ${UI.SLEEP_FADE_COLOR};
+      opacity: 0; display: none; z-index: 30; pointer-events: none;
     }
     #hud-crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
     #hud-crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
@@ -428,6 +466,32 @@ export function initHud(inventory) {
   effectsRow.id = 'hud-effects';
   document.body.appendChild(effectsRow);
   lastEffectsKey = '';
+
+  // --- the boss bar (Phase 21): Minecraft's purple bar across the top of
+  // the screen while the Ender Dragon lives, depleting as it takes damage.
+  bossBar = document.createElement('div');
+  bossBar.id = 'hud-boss';
+  const bossLabel = document.createElement('div');
+  bossLabel.id = 'hud-boss-label';
+  bossLabel.textContent = 'Ender Dragon';
+  const bossTrack = document.createElement('div');
+  bossTrack.id = 'hud-boss-track';
+  bossFill = document.createElement('div');
+  bossFill.id = 'hud-boss-fill';
+  bossTrack.appendChild(bossFill);
+  bossBar.appendChild(bossLabel);
+  bossBar.appendChild(bossTrack);
+  document.body.appendChild(bossBar);
+
+  // --- the sleep fade (Phase 21 — beds)
+  sleepEl = document.createElement('div');
+  sleepEl.id = 'hud-sleep';
+  document.body.appendChild(sleepEl);
+
+  // --- transient message line (Phase 21): the bed's "you may not rest now"
+  toastEl = document.createElement('div');
+  toastEl.id = 'hud-toast';
+  document.body.appendChild(toastEl);
 }
 
 // The potion item whose tinted-bottle icon stands for each effect.
@@ -463,8 +527,45 @@ function updateEffects(stats) {
 // Call once per frame with the player controller and (Phase 9) the stats.
 // The breath meter only shows while air is missing (underwater or just
 // surfaced), like vanilla.
-export function updateHud(player, stats) {
+// Phase 21: the boss bar and the sleep fade ride the same per-frame call.
+// `boss` is { name, fraction } | null (main.js passes the dragon fight's
+// health while it lives); `sleep` is a 0..1 fade.
+export function setBossBar(boss, dt = 0) {
+  if (!bossBar) return;
+  if (!boss) {
+    bossBar.style.display = 'none';
+    bossShown = 1;
+    return;
+  }
+  bossBar.style.display = 'block';
+  const target = Math.max(0, Math.min(1, boss.fraction));
+  const k = dt > 0 ? 1 - Math.exp(-UI.BOSS_BAR.EASE_RATE * dt) : 1;
+  bossShown += (target - bossShown) * k;
+  if (Math.abs(bossShown - target) < 0.002) bossShown = target;
+  bossFill.style.width = `${(bossShown * 100).toFixed(1)}%`;
+}
+
+// A short message over the hotbar (the bed's refusals).
+export function showToast(text, seconds = 2.5) {
+  if (!toastEl) return;
+  toastEl.textContent = text;
+  toastEl.style.opacity = '1';
+  toastTimer = seconds;
+}
+
+export function setSleepFade(fraction) {
+  if (!sleepEl) return;
+  sleepFade = Math.max(0, Math.min(1, fraction));
+  sleepEl.style.display = sleepFade > 0 ? 'block' : 'none';
+  sleepEl.style.opacity = String(sleepFade);
+}
+
+export function updateHud(player, stats, dt = 0) {
   if (!breathRow) return;
+  if (toastTimer > 0) {
+    toastTimer -= dt;
+    if (toastTimer <= 0) toastEl.style.opacity = '0';
+  }
   // Per-frame guard on the selection highlight (belt and braces with the
   // subscription — see the header note on the repaint bug).
   syncSelection?.();

@@ -14,7 +14,7 @@
 // on items that wear out (tools, armour, bows...), and such stacks always
 // have count 1 and never merge.
 
-import { INVENTORY, TOOL_TIERS, COMBAT } from '../config.js';
+import { INVENTORY, TOOL_TIERS, COMBAT, SHIELD } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Item registry — stack caps and durability (per-item data lives here, like
@@ -23,8 +23,10 @@ import { INVENTORY, TOOL_TIERS, COMBAT } from '../config.js';
 
 // Tool item names follow the texture names (wooden_pickaxe ... diamond_sword);
 // durability comes from the SPEC tier table (config TOOL_TIERS).
-const TOOL_RE = /^(wooden|stone|iron|diamond)_(pickaxe|axe|shovel|sword)$/;
-const TOOL_TIER_NAME = { wooden: 'wood', stone: 'stone', iron: 'iron', diamond: 'diamond' };
+const TOOL_RE = /^(wooden|stone|iron|golden|diamond)_(pickaxe|axe|shovel|sword|hoe)$/;
+const TOOL_TIER_NAME = {
+  wooden: 'wood', stone: 'stone', iron: 'iron', golden: 'gold', diamond: 'diamond',
+};
 
 // Armour durability = per-piece factor x material factor (the vanilla
 // formula: leather helmet 5x11 = 55, diamond chestplate 33x16 = 528...).
@@ -42,7 +44,9 @@ export function armourSlotIndex(name) {
 }
 
 // Everything else that doesn't stack to 64 (vanilla values).
-const SPECIAL_DURABILITY = { bow: 384, flint_and_steel: 64, shears: 238 };
+const SPECIAL_DURABILITY = {
+  bow: 384, flint_and_steel: 64, shears: 238, shield: SHIELD.DURABILITY,
+};
 const SPECIAL_MAX_STACK = {
   bucket: 1, water_bucket: 1, lava_bucket: 1, milk_bucket: 1,
   mushroom_stew: 1, potion: 1,

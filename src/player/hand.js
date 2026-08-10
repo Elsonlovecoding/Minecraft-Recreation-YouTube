@@ -126,6 +126,7 @@ export function createHand({ inventory, combat }) {
       showBareArm,
       swingT: 1,   // 0..1, animation finished at >= 1
       eatBlend: 0, // eased 0..1 into the eating pose
+      blockBlend: 0, // eased 0..1 into the raised-shield guard (Phase 21)
       drawBlend: 0, // eased 0..1 into the bow-drawing pose
     };
     hand.position.copy(rig.base);
@@ -224,7 +225,7 @@ export function createHand({ inventory, combat }) {
 
   // One rig's pose for this frame. `eatingHere` is the interaction eating
   // state when THIS hand eats; `drawingHere` mirrors the combat draw.
-  function updateRig(rig, dt, eatingHere, drawingHere) {
+  function updateRig(rig, dt, eatingHere, drawingHere, blockingHere) {
     if (rig.swingT < 1) rig.swingT = Math.min(1, rig.swingT + dt / H.SWING_SECONDS);
     const s = Math.sin(Math.PI * Math.min(rig.swingT, 1));
     // Eating pose: the hand eases toward the mouth and nibbles (a quick
@@ -235,6 +236,11 @@ export function createHand({ inventory, combat }) {
     const drawTarget = drawingHere ? 1 : 0;
     rig.drawBlend += (drawTarget - rig.drawBlend) * (1 - Math.exp(-H.DRAW_ENGAGE_RATE * dt));
     const drawPull = rig.drawBlend * (combat ? 0.5 + 0.5 * combat.drawCharge : 0);
+    // Raised shield (Phase 21): the hand swings across the view and turns
+    // its face toward the camera — the vanilla guard.
+    const blockTarget = blockingHere ? 1 : 0;
+    rig.blockBlend += (blockTarget - rig.blockBlend) *
+      (1 - Math.exp(-H.SHIELD_ENGAGE_RATE * dt));
     const nibble = eatingHere
       ? Math.abs(Math.sin(eatingHere.t * Math.PI * 2 * H.EAT_NIBBLE_HZ)) * H.EAT_NIBBLE_AMP
       : 0;
@@ -243,27 +249,31 @@ export function createHand({ inventory, combat }) {
     const mirror = rig === offRig ? -1 : 1;
     rig.hand.position.set(
       rig.base.x - mirror * H.SWING_SIDE * H.SWING_DIP * s +
-        mirror * H.EAT_OFFSET[0] * rig.eatBlend + mirror * H.DRAW_OFFSET[0] * drawPull,
+        mirror * H.EAT_OFFSET[0] * rig.eatBlend + mirror * H.DRAW_OFFSET[0] * drawPull +
+        mirror * H.SHIELD_OFFSET[0] * rig.blockBlend,
       rig.base.y - H.SWING_DIP * s + (H.EAT_OFFSET[1] + nibble) * rig.eatBlend +
-        H.DRAW_OFFSET[1] * drawPull,
+        H.DRAW_OFFSET[1] * drawPull + H.SHIELD_OFFSET[1] * rig.blockBlend,
       rig.base.z - H.SWING_FORWARD * H.SWING_DIP * s + H.EAT_OFFSET[2] * rig.eatBlend +
-        H.DRAW_OFFSET[2] * drawPull,
+        H.DRAW_OFFSET[2] * drawPull + H.SHIELD_OFFSET[2] * rig.blockBlend,
     );
     rig.hand.rotation.set(
       rig.tilt.x - H.SWING_ROTATION * s + H.EAT_TIP * rig.eatBlend + H.DRAW_TIP * drawPull,
-      rig.tilt.y + mirror * H.SWING_YAW * H.SWING_ROTATION * s,
+      rig.tilt.y + mirror * H.SWING_YAW * H.SWING_ROTATION * s +
+        mirror * H.SHIELD_YAW * rig.blockBlend,
       rig.tilt.z,
     );
   }
 
   // Per frame (interaction.js): `eating` is its { name, t, source } state
   // or null. The draw pose lands on whichever hand combat says is drawing.
-  function update(dt, eating) {
+  function update(dt, eating, blocking = false) {
     const drawSource = combat?.isDrawing ? (combat.drawSource ?? 'main') : null;
+    const blockMain = blocking && inventory.selectedName === 'shield';
+    const blockOff = blocking && !blockMain && inventory.offhandName === 'shield';
     updateRig(mainRig, dt, eating && eating.source !== 'off' ? eating : null,
-      drawSource === 'main');
+      drawSource === 'main', blockMain);
     updateRig(offRig, dt, eating && eating.source === 'off' ? eating : null,
-      drawSource === 'off');
+      drawSource === 'off', blockOff);
   }
 
   return {

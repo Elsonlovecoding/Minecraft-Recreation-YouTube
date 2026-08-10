@@ -17,13 +17,14 @@ import * as THREE from 'three';
 import {
   CHUNK, OVERWORLD, LIGHTING, RENDER, ATLAS, FLUIDS, PORTALS,
 } from '../config.js';
-import { BLOCK, BLOCKS, TORCH_LEAN } from './blocks.js';
+import { BLOCK, BLOCKS, TORCH_LEAN, HAS_SHAPE } from './blocks.js';
 import { TILE } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
 import {
   PASS_NONE, PASS_OPAQUE, PASS_CUTOUT, PASS_WATER, PASS_LAVA, PASS_PORTAL,
+  PASS_WATER_FLOW, PASS_COUNT,
   IS_TRANSPARENT, OCCLUDES_AO, SELF_CULL, INSET, PASS, TILES,
-  IS_LAVA_FLOW, WART_HEIGHT, FACES, tileUV, createSpecialEmitters,
+  IS_FLUID_FLOW, IS_WATER_CELL, WART_HEIGHT, FACES, tileUV, createSpecialEmitters,
 } from './emitters.js';
 
 const SIZE = CHUNK.SIZE;
@@ -118,26 +119,42 @@ export function createChunkMaterials(atlasTexture) {
   // writes UVs in tile units with v running downstream, so one shared
   // offset.y slides every flow face along its own local flow direction.
   const P = ATLAS.TILE_PIXELS;
-  const lavaCanvas = document.createElement('canvas');
-  lavaCanvas.width = P;
-  lavaCanvas.height = P;
-  if (atlasTexture?.image) {
-    const tile = TILE.LAVA_STILL;
-    const col = tile % ATLAS.TILES_PER_ROW;
-    const row = Math.floor(tile / ATLAS.TILES_PER_ROW);
-    lavaCanvas.getContext('2d')
-      .drawImage(atlasTexture.image, col * P, row * P, P, P, 0, 0, P, P);
-  }
-  const lavaTexture = new THREE.CanvasTexture(lavaCanvas);
-  lavaTexture.magFilter = THREE.NearestFilter;
-  lavaTexture.minFilter = THREE.NearestFilter;
-  lavaTexture.generateMipmaps = false;
-  lavaTexture.wrapS = THREE.RepeatWrapping;
-  lavaTexture.wrapT = THREE.RepeatWrapping;
-  lavaTexture.colorSpace = THREE.SRGBColorSpace;
+  // One repeating copy of an atlas tile, for the scrolling fluid materials.
+  const tileCanvasTexture = (tile) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = P;
+    canvas.height = P;
+    if (atlasTexture?.image) {
+      const col = tile % ATLAS.TILES_PER_ROW;
+      const row = Math.floor(tile / ATLAS.TILES_PER_ROW);
+      canvas.getContext('2d')
+        .drawImage(atlasTexture.image, col * P, row * P, P, P, 0, 0, P, P);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  };
+  const lavaTexture = tileCanvasTexture(TILE.LAVA_STILL);
   const lava = new THREE.MeshBasicMaterial({
     map: lavaTexture,
     vertexColors: true,
+    side: THREE.DoubleSide,
+  });
+  // Phase 21: flowing water rides the same machinery on its own repeating
+  // copy of the water tile — translucent like the still surface, but
+  // scrolling downstream so a running stream reads as moving.
+  const waterFlowTexture = tileCanvasTexture(TILE.WATER_STILL);
+  const waterFlow = new THREE.MeshBasicMaterial({
+    map: waterFlowTexture,
+    vertexColors: true,
+    transparent: true,
+    opacity: RENDER.WATER_OPACITY,
+    depthWrite: false,
     side: THREE.DoubleSide,
   });
   // Phase 15: the nether-portal interior. No portal tile ships in the atlas,
@@ -193,11 +210,13 @@ export function createChunkMaterials(atlasTexture) {
   patchChunkMaterial(cutout);
   patchChunkMaterial(water);
   patchChunkMaterial(lava);
+  patchChunkMaterial(waterFlow);
   return {
     opaque,
     cutout,
     water,
     lava,
+    waterFlow,
     portal,
     // main.js calls this once per un-paused frame: the animated flow.
     // offset.y decreasing slides the pattern toward +v — downstream on flow
@@ -205,6 +224,8 @@ export function createChunkMaterials(atlasTexture) {
     scrollLava(dt) {
       lavaTexture.offset.y =
         (((lavaTexture.offset.y - FLUIDS.SCROLL_TILES_PER_SECOND * dt) % 1) + 1) % 1;
+      waterFlowTexture.offset.y = (((waterFlowTexture.offset.y -
+        FLUIDS.WATER_SCROLL_TILES_PER_SECOND * dt) % 1) + 1) % 1;
     },
     // The portal swirl drifts upward and shimmers sideways.
     scrollPortal(dt) {
@@ -276,9 +297,8 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     }
   }
 
-  const buckets = [
-    null, newBucket(), newBucket(), newBucket(), newBucket(), newBucket(),
-  ];
+  const buckets = new Array(PASS_COUNT).fill(null)
+    .map((_, i) => (i === PASS_NONE ? null : newBucket()));
   const aoStrength = LIGHTING.AO_STRENGTH;
   const waterSink = RENDER.WATER_SURFACE_SINK;
   const blocks = chunk.blocks;
@@ -290,8 +310,8 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   // flowing-lava cells, the portal slab, the nether wart crop. They close
   // over this mesh's buckets/light window through the ctx.
   const {
-    emitTorch, emitLavaFlow, emitPortal, emitWart,
-    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal,
+    emitTorch, emitFluidFlow, emitPortal, emitWart,
+    emitBrewingStand, emitBars, emitEndFrame, emitEndPortal, emitShape,
   } = createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W });
 
   // One window cell sampled for AO + vertex light, written to the s* outs.
@@ -323,8 +343,16 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           emitTorch(lx, iy, lz, lean);
           continue;
         }
-        if (IS_LAVA_FLOW[id]) {
-          emitLavaFlow(lx, iy, lz, id);
+        if (IS_FLUID_FLOW[id]) {
+          emitFluidFlow(lx, iy, lz, id);
+          continue;
+        }
+        // Phase 21: every building block (stairs, slabs, fences, walls,
+        // gates, ladders, doors, trapdoors, beds, signs, pots, frames)
+        // renders through the ONE generic shape emitter, from the same box
+        // list the collision sweep reads.
+        if (HAS_SHAPE[id]) {
+          emitShape(lx, iy, lz, id);
           continue;
         }
         if (id === BLOCK.NETHER_PORTAL) {
@@ -363,7 +391,9 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
 
         // Water surface sits slightly below the block top wherever the
         // block above isn't water (top face and the lip of side faces).
-        const topY = pass === PASS_WATER && getId(lx, y + 1, lz) !== id
+        // Phase 21: any water cell above counts — a falling column over a
+        // source must not leave a seam mid-waterfall.
+        const topY = pass === PASS_WATER && !IS_WATER_CELL[getId(lx, y + 1, lz)]
           ? y + 1 - waterSink
           : y + 1;
 
@@ -500,6 +530,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   addMesh(buckets[PASS_OPAQUE], materials.opaque);
   addMesh(buckets[PASS_CUTOUT], materials.cutout);
   addMesh(buckets[PASS_WATER], materials.water);
+  addMesh(buckets[PASS_WATER_FLOW], materials.waterFlow);
   addMesh(buckets[PASS_LAVA], materials.lava);
   addMesh(buckets[PASS_PORTAL], materials.portal);
 
