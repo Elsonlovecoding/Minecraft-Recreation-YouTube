@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN,
+  MOBS, TERRAIN, TEST_CHEST,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -311,6 +311,70 @@ async function init() {
     `[world] prebuilt ${world.streamStats().meshed} chunk meshes in ` +
     `${(performance.now() - buildStart).toFixed(0)}ms`,
   );
+
+  // TEMPORARY, MUST REMOVE (config TEST_CHEST): chests at the spawn point
+  // stocked so the portal, the Nether, brewing, eyes of ender, the
+  // stronghold AND the dragon fight can all be tested without a full
+  // playthrough. (Removed at the end of Phase 20 as mandated, restored by
+  // request for End-fight testing with the fight kit expanded.)
+  if (TEST_CHEST) {
+    const p = player.body.position;
+    // The kit, in slot order. Durability items (tools, armour, bows)
+    // arrive at full durability through `add`, one per slot. Water
+    // bottles and buckets stack to 1, so they cost a slot each — the kit
+    // runs past one chest's 27, and the overflow fills a second chest
+    // beside the first.
+    const TEST_KIT = [
+      ['obsidian', 14],
+      ['flint_and_steel', 1],
+      ['brewing_stand', 1],
+      ['blaze_rod', 64],
+      ['blaze_powder', 8],
+      ['nether_wart', 8],
+      ['ender_pearl', 16],
+      ['ender_eye', 16],
+      ['glass_bottle', 6],
+      ['water_bottle', 6],
+      ['bucket', 3],
+      ['diamond_helmet', 1],
+      ['diamond_chestplate', 1],
+      ['diamond_leggings', 1],
+      ['diamond_boots', 1],
+      ['diamond_sword', 1],
+      ['diamond_pickaxe', 1],
+      ['diamond_axe', 1],
+      ['diamond_shovel', 1],
+      ['iron_sword', 1],
+      ['bow', 3],          // End-fight kit: spares against durability
+      ['arrow', 128],      // the dragon + ten crystals want volume
+      ['golden_apple', 5], // fight sustain
+      ['torch', 64],
+      ['cobblestone', 64],
+      ['oak_planks', 64],
+    ];
+    // Prefer a column whose surface is level with the player — leaves count
+    // as solid, so a bare offset could sit a chest on a tree canopy. The
+    // two offset lists never overlap, so the chests can't collide.
+    const placeChest = (offsets) => {
+      const level = offsets.find(([ox, oz]) => {
+        const x = Math.floor(p.x) + ox;
+        const z = Math.floor(p.z) + oz;
+        return Math.abs((world.getHighestSolidY(x, z) + 1) - p.y) <= 2;
+      });
+      const [ox, oz] = level ?? offsets[0];
+      const x = Math.floor(p.x) + ox;
+      const z = Math.floor(p.z) + oz;
+      const y = world.getHighestSolidY(x, z) + 1;
+      world.setBlock(x, y, z, BLOCK.CHEST);
+      return chests.chestAt(x, y, z);
+    };
+    const chest = placeChest([[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]);
+    const spare = placeChest([[3, 0], [-3, 0], [0, 3], [0, -3], [3, 1], [-3, -1]]);
+    for (const [name, count] of TEST_KIT) {
+      const leftover = chest.container.add(name, count);
+      if (leftover > 0) spare.container.add(name, leftover);
+    }
+  }
 
   // Terrain diagnostics (dev scaffolding — they make regressions visible)
   logTerrainProfile(world);
