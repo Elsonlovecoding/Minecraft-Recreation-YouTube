@@ -1830,6 +1830,18 @@ export const END_CRYSTAL = {
 };
 
 // ---------------------------------------------------------------------------
+// TEMPORARY, MUST REMOVE — spawn test chests
+// ---------------------------------------------------------------------------
+
+// Places stocked chests at the player's spawn point so the endgame — the
+// portal, the Nether, brewing, eyes of ender, the stronghold and the
+// DRAGON FIGHT — can be tested without a full playthrough (main.js reads
+// it at boot). Removed at the end of Phase 20 as originally mandated,
+// then restored by request for End-fight testing; delete the flag and the
+// main.js block together when it goes again.
+export const TEST_CHEST = true;
+
+// ---------------------------------------------------------------------------
 // Debug / development
 // ---------------------------------------------------------------------------
 
