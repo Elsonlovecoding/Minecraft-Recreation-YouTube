@@ -5,6 +5,9 @@ Index = row * 16 + column, row-major from top-left.
 
 **Do not renumber these.** The game code references them directly.
 
+Indices 0-57 are unchanged from the previous atlas.
+Indices 58-68 are new: deepslate variants and ground plants.
+
 | Index | Texture | Status |
 |---|---|---|
 | 0 | grass_block_top | ok |
@@ -65,28 +68,14 @@ Index = row * 16 + column, row-major from top-left.
 | 55 | gold_block | ok |
 | 56 | diamond_block | ok |
 | 57 | coal_block | ok |
-| 58 | end_portal_frame_eye | ok (generated in Phase 19: frame top + the ender-eye item art centred) |
-
----
-
-## Phase 21 — tiles reused, none added
-
-The building-block pass added ~90 block ids and did NOT rebuild the atlas, per
-the session brief ("if a required tile is not in ATLAS_MAP.md, use the closest
-existing one"). Every new block samples a tile already listed above:
-
-| New block | Tile reused |
-|---|---|
-| cobblestone stairs / slab / wall | 4 cobblestone |
-| oak stairs / slab / fence / gate / door / trapdoor / sign / item frame | 9 oak_planks |
-| stone brick stairs / slab | 42 stone_bricks |
-| sandstone stairs / slab / flower pot | 13 sandstone + 14 sandstone_top |
-| nether brick stairs / slab | 35 nether_bricks |
-| ladder | 46 iron_bars (the closest rung lattice in the atlas) |
-| bed | 49 white_wool (top/sides) + 9 oak_planks (underside) |
-| potted sapling foliage | 10 oak_leaves |
-| flowing water | 11 water_still, scrolled on its own repeating copy |
-
-Items with no shipped sprite (the five hoes, the shield, and the
-door/trapdoor/sign/bed/frame/pot item forms) are drawn in code —
-`src/render/item_art.js` — rather than substituted with a misleading texture.
+| 58 | deepslate | ok |
+| 59 | cobbled_deepslate | ok |
+| 60 | deepslate_coal_ore | ok |
+| 61 | deepslate_iron_ore | ok |
+| 62 | deepslate_gold_ore | ok |
+| 63 | deepslate_redstone_ore | ok |
+| 64 | deepslate_diamond_ore | ok |
+| 65 | short_grass | ok |
+| 66 | dandelion | ok |
+| 67 | poppy | ok |
+| 68 | dead_bush | ok |
