@@ -11,7 +11,9 @@
 // not a per-slot ::after class — the class toggle sometimes didn't repaint
 // under pointer lock, leaving the box on the old slot.
 
-import { PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS, COMBAT } from '../config.js';
+import {
+  PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS, COMBAT, EFFECTS,
+} from '../config.js';
 import { renderSlotContent, createItemIcon } from './icons.js';
 import { getAtlasTexture, TILE } from '../render/atlas.js';
 
@@ -38,7 +40,15 @@ let effectsRow = null;   // active potion effects, top-right (Phase 18)
 let lastEffectsKey = ''; // rebuilt only when the countdowns change
 let bossBar = null;      // the Ender Dragon boss bar (Phase 21)
 let bossFill = null;
-let bossShown = 0;       // eased health fraction so the bar drains smoothly
+let bossShown = 1;       // eased health fraction so the bar drains smoothly
+                         // (starts FULL: the bar must be solid the instant
+                         // it appears, never an empty track easing up)
+let absorbEls = [];      // yellow absorption hearts above the health row
+let absorbUrls = null;
+let absorbRow = null;
+let lastAbsorb = -1;
+let armourBaseBottom = 0;   // armour row offset with no absorption showing
+let armourAbsorbBottom = 0; // ...and with the absorption row in between
 let sleepEl = null;      // full-screen wash while a night passes in a bed
 let sleepFade = 0;
 let toastEl = null;      // transient message line above the hotbar
@@ -76,7 +86,11 @@ const HEART_SHAPE = [
   '...oo...',
 ];
 
-function heartDataUrl(variant) {
+// `palette` is { outline, fill, highlight } — the health row is red, the
+// Phase 22 absorption row the same shape in vanilla's gold.
+function heartDataUrl(variant, palette = {
+  outline: '#1f0000', fill: '#e02222', highlight: '#ff6a6a',
+}) {
   const rows = HEART_SHAPE.length;
   const cols = HEART_SHAPE[0].length;
   const scale = 3;
@@ -89,12 +103,12 @@ function heartDataUrl(variant) {
       const c = HEART_SHAPE[y][x];
       if (c === '.') continue;
       let color;
-      if (c === 'o') color = '#1f0000';
+      if (c === 'o') color = palette.outline;
       else {
-        // Fill pixels: full = red (highlight lighter), empty = dark grey,
-        // half = red on the left half only.
-        const red = variant === 'full' || (variant === 'half' && x < cols / 2);
-        if (red) color = c === 'R' ? '#ff6a6a' : '#e02222';
+        // Fill pixels: full = coloured (highlight lighter), empty = dark
+        // grey, half = coloured on the left half only.
+        const lit = variant === 'full' || (variant === 'half' && x < cols / 2);
+        if (lit) color = c === 'R' ? palette.highlight : palette.fill;
         else color = c === 'R' ? '#4d4d4d' : '#3a3a3a';
       }
       ctx.fillStyle = color;
@@ -103,6 +117,11 @@ function heartDataUrl(variant) {
   }
   return canvas.toDataURL();
 }
+
+// Vanilla's absorption hearts: the same heart in gold.
+const ABSORB_PALETTE = {
+  outline: '#2a1c00', fill: '#e8b21a', highlight: '#ffe066',
+};
 
 // Pixel-art drumstick in the vanilla hunger-bar style: browned meat blob to
 // the top-left, pale bone poking out toward the bottom-right. 'o' outline,
@@ -192,8 +211,12 @@ export function initHud(inventory) {
   hudInventory = inventory;
   const iconPx = Math.round(UI.HOTBAR_SLOT_PX * UI.ICON_SCALE);
   const statsBottom = UI.HOTBAR_BOTTOM_PX + UI.HOTBAR_SLOT_PX + 10;
-  // Armour sits above the hearts on the left, like breath above hunger.
-  const armourBottom = statsBottom + STATS.HEART_PX + 4;
+  // Absorption (Phase 22) sits directly above the health row; armour rides
+  // above whichever of the two is showing (updateHud moves it).
+  const absorbBottom = statsBottom + STATS.HEART_PX + 4;
+  const armourBottom = absorbBottom;
+  armourBaseBottom = armourBottom;
+  armourAbsorbBottom = absorbBottom + STATS.ABSORPTION_PX + 4;
   // Bubbles sit above the hunger row (vanilla), which mirrors the hearts on
   // the right half of the hotbar.
   const breathBottom = statsBottom + STATS.HUNGER_PX + 4;
@@ -207,23 +230,31 @@ export function initHud(inventory) {
     #hud-crosshair::before, #hud-crosshair::after {
       content: ''; position: absolute; background: #ddd;
     }
-    /* The boss bar: a purple fill in a dark track, captioned above. */
+    /* The boss bar: a MAGENTA fill in a dark track, captioned above. It sits
+       over everything the HUD draws, so nothing can hide it in the End. */
     #hud-boss {
       position: fixed; left: 50%; top: ${UI.BOSS_BAR.TOP_PX}px;
-      transform: translateX(-50%); display: none; z-index: 6;
+      transform: translateX(-50%); display: none; z-index: 12;
       pointer-events: none; text-align: center;
     }
     #hud-boss-label {
       color: #fff; font: bold ${UI.BOSS_BAR.LABEL_PX}px monospace;
-      text-shadow: 2px 2px 0 #000; margin-bottom: 3px;
+      text-shadow: 2px 2px 0 #000; margin-bottom: 4px; letter-spacing: 1px;
+      white-space: nowrap;
     }
     #hud-boss-track {
       width: ${UI.BOSS_BAR.WIDTH_PX}px; height: ${UI.BOSS_BAR.HEIGHT_PX}px;
-      background: #1b0d24; border: 2px solid #000; box-sizing: content-box;
+      background: ${UI.BOSS_BAR.TRACK}; border: 2px solid #000;
+      box-sizing: content-box;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
     }
     #hud-boss-fill {
       height: 100%; width: 100%;
-      background: linear-gradient(#d17bff, #8b13cf 60%, #5a0a8c);
+      background: linear-gradient(
+        ${UI.BOSS_BAR.FILL_TOP}, ${UI.BOSS_BAR.FILL_MID} 55%,
+        ${UI.BOSS_BAR.FILL_BOTTOM}
+      );
+      box-shadow: 0 0 8px ${UI.BOSS_BAR.FILL_MID};
     }
     /* A transient message line, vanilla's action-bar text. */
     #hud-toast {
@@ -302,6 +333,19 @@ export function initHud(inventory) {
     #hud-hearts .heart {
       width: ${STATS.HEART_PX}px; height: ${STATS.HEART_PX}px; margin-right: 1px;
       background-size: contain; background-repeat: no-repeat;
+      image-rendering: pixelated;
+    }
+    #hud-absorb {
+      /* Phase 22 — the golden apple's absorption hearts, directly above the
+         health row and hidden whenever there is no absorption to show */
+      position: fixed; left: 50%; bottom: ${absorbBottom}px;
+      transform: translateX(-${Math.round((UI.HOTBAR_SLOT_PX * INVENTORY.HOTBAR_SIZE + 8) / 2)}px);
+      display: none; z-index: 5; pointer-events: none;
+      filter: drop-shadow(1px 1px 0 rgba(0,0,0,0.5));
+    }
+    #hud-absorb .heart {
+      width: ${STATS.ABSORPTION_PX}px; height: ${STATS.ABSORPTION_PX}px;
+      margin-right: 1px; background-size: contain; background-repeat: no-repeat;
       image-rendering: pixelated;
     }
     #hud-armour {
@@ -411,6 +455,25 @@ export function initHud(inventory) {
   document.body.appendChild(hearts);
   lastHealth = -1;
 
+  // --- absorption hearts (Phase 22 — the golden apple): the same heart in
+  // gold, one row above the health bar, shown only while absorption is up.
+  absorbUrls = {
+    full: heartDataUrl('full', ABSORB_PALETTE),
+    half: heartDataUrl('half', ABSORB_PALETTE),
+  };
+  absorbRow = document.createElement('div');
+  absorbRow.id = 'hud-absorb';
+  absorbEls = [];
+  // Sized to the largest absorption this game grants (the golden apple's).
+  for (let i = 0; i < Math.ceil(EFFECTS.GOLDEN_APPLE.ABSORPTION_HEALTH / 2); i++) {
+    const h = document.createElement('div');
+    h.className = 'heart';
+    absorbRow.appendChild(h);
+    absorbEls.push(h);
+  }
+  document.body.appendChild(absorbRow);
+  lastAbsorb = -1;
+
   // --- armour bar (Phase 13) — one plate per 2 protection points
   armourUrls = {
     full: armourDataUrl('full'),
@@ -473,7 +536,7 @@ export function initHud(inventory) {
   bossBar.id = 'hud-boss';
   const bossLabel = document.createElement('div');
   bossLabel.id = 'hud-boss-label';
-  bossLabel.textContent = 'Ender Dragon';
+  bossLabel.textContent = UI.BOSS_BAR.LABEL;
   const bossTrack = document.createElement('div');
   bossTrack.id = 'hud-boss-track';
   bossFill = document.createElement('div');
@@ -498,6 +561,7 @@ export function initHud(inventory) {
 const EFFECT_ICON_ITEM = {
   fire_resistance: 'fire_resistance_potion',
   strength: 'strength_potion',
+  regeneration: 'healing_potion', // the golden apple's burst (Phase 22)
 };
 
 // Rebuilt only when the whole-second countdowns change (cheap, and the
@@ -537,10 +601,17 @@ export function setBossBar(boss, dt = 0) {
     bossShown = 1;
     return;
   }
+  // Belt and braces (Phase 22 report — "an empty space where it should be"):
+  // force the whole subtree visible every frame it is shown, so nothing
+  // another screen or overlay does can leave the caption and track blank.
   bossBar.style.display = 'block';
-  const target = Math.max(0, Math.min(1, boss.fraction));
+  bossBar.style.visibility = 'visible';
+  bossBar.style.opacity = '1';
+  const raw = Number(boss.fraction);
+  const target = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 1;
   const k = dt > 0 ? 1 - Math.exp(-UI.BOSS_BAR.EASE_RATE * dt) : 1;
   bossShown += (target - bossShown) * k;
+  if (!Number.isFinite(bossShown)) bossShown = target;
   if (Math.abs(bossShown - target) < 0.002) bossShown = target;
   bossFill.style.width = `${(bossShown * 100).toFixed(1)}%`;
 }
@@ -600,6 +671,26 @@ export function updateHud(player, stats, dt = 0) {
       const points = stats.hunger - (hungerEls.length - 1 - i) * 2;
       const url = points >= 2 ? hungerUrls.full : points === 1 ? hungerUrls.half : hungerUrls.empty;
       hungerEls[i].style.backgroundImage = `url(${url})`;
+    }
+  }
+  // Absorption hearts (Phase 22): yellow hearts above the health row while
+  // the golden apple's buffer holds. They empty before real health does.
+  const absorb = stats.absorption ?? 0;
+  if (absorb !== lastAbsorb) {
+    const wasShown = lastAbsorb > 0;
+    lastAbsorb = absorb;
+    absorbRow.style.display = absorb > 0 ? 'block' : 'none';
+    for (let i = 0; i < absorbEls.length; i++) {
+      const points = absorb - i * 2;
+      absorbEls[i].style.display = points > 0 ? 'inline-block' : 'none';
+      if (points > 0) {
+        absorbEls[i].style.backgroundImage =
+          `url(${points >= 2 ? absorbUrls.full : absorbUrls.half})`;
+      }
+    }
+    // The armour bar rides above whichever rows are showing.
+    if ((absorb > 0) !== wasShown) {
+      armourRow.style.bottom = `${absorb > 0 ? armourAbsorbBottom : armourBaseBottom}px`;
     }
   }
   // Armour bar: shown only while wearing anything (vanilla), one plate per

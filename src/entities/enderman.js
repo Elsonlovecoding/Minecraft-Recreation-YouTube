@@ -16,6 +16,7 @@ import { MOBS, PLAYER, CHUNK } from '../config.js';
 import { isWater } from '../world/blocks.js';
 import { lineOfSight } from '../systems/combat.js';
 import { standableAt } from './pathfinding.js';
+import { particles } from '../render/particles.js';
 
 const PX = 1 / 16;
 
@@ -89,6 +90,9 @@ export function createEndermanBehaviour({
       for (let dy = 0; dy <= cfg.TELEPORT_Y_RANGE; dy++) {
         for (const y of dy === 0 ? [yBase] : [yBase + dy, yBase - dy]) {
           if (!dryStandable(x, y, z, clearance)) continue;
+          // Phase 22: a purple column at BOTH ends of the blink — the
+          // trail is what makes a teleport read as a teleport.
+          particles.enderTrail(e.position.x, e.position.y, e.position.z, e.def.height);
           e.position.x = x + 0.5;
           e.position.y = y;
           e.position.z = z + 0.5;
@@ -96,6 +100,7 @@ export function createEndermanBehaviour({
           e.velocity.y = 0;
           e.velocity.z = 0;
           mob.path = null; // stale A* waypoints point at the old spot
+          particles.enderTrail(e.position.x, e.position.y, e.position.z, e.def.height);
           combat.sfx.warp(Math.max(0.15, 1 - playerDistance(mob) / 24));
           return true;
         }

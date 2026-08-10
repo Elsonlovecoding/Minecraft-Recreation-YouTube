@@ -82,7 +82,9 @@ export function itemMaxStack(name) {
 // eating (rotten flesh 80%; the effect itself lives in player/stats.js).
 const FOODS = {
   apple:           { hunger: 4, saturation: 2.4 },
-  golden_apple:    { hunger: 4, saturation: 9.6, always: true },
+  // `golden` (Phase 22): eating it grants the vanilla absorption hearts and
+  // a short regeneration burst — player/stats.js reads EFFECTS.GOLDEN_APPLE.
+  golden_apple:    { hunger: 4, saturation: 9.6, always: true, golden: true },
   bread:           { hunger: 5, saturation: 6.0 },
   beef:            { hunger: 3, saturation: 1.8 },
   cooked_beef:     { hunger: 8, saturation: 12.8 },

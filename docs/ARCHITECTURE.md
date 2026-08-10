@@ -71,6 +71,14 @@ src/
     renderer.js          Three.js setup, tone mapping, shadows, post
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night
+    particles.js         the particle system (Phase 22): ONE fixed, capped,
+                         pooled simulation drawn in two instanced draw calls
+                         — textured cubes cropped from a block's own atlas
+                         tile (break debris, footstep scuffs, landing
+                         bursts) and flat coloured cubes (smoke, embers,
+                         splashes, damage, death puffs, sparkles, portal
+                         swirls). Module-level `particles` singleton; every
+                         call before init() is a no-op
     item_art.js          generated 16x16 sprites for items this project
                          ships no texture for (Phase 21: the five hoes, the
                          shield, door/trapdoor/sign/bed/frame/pot) — the
@@ -119,6 +127,9 @@ src/
     passive.js           passive-herd behaviour: wander/flee AI, sheep
                          shear + wool regrow, chicken eggs, quadruped/
                          chicken animation (Phase 14 addition)
+    ender_pearl.js       thrown ender pearls (Phase 22): the gravity arc,
+                         the sub-stepped sweep that can't tunnel, and the
+                         teleport-on-landing with its 2.5 hearts
     ghast.js             ghast behaviour: flying wander, fireball attack,
                          tentacle animation (Phase 16 split out of mobs.js
                          per the size cap — the passive.js injection
@@ -157,6 +168,21 @@ src/
     falling.js           falling sand/gravel entities (Phase 9 addition)
 
   systems/
+    audio.js             ALL sound (Phase 22), synthesised with the Web
+                         Audio API — no files ship and none load. One
+                         AudioContext, a layered-voice synth (each sound is
+                         2-4 oscillator/noise components), a bus compressor,
+                         distance falloff + stereo pan from the camera, a
+                         voice budget, and the sound catalogue. Module-level
+                         `audio` singleton; dimensions/portals.js and
+                         systems/combat.js both route through it
+    ambience.js          continuous, position-driven feel (Phase 22): the
+                         player's footsteps/landing/splash/bubbles, vanilla's
+                         randomDisplayTick over cells near the player (torch
+                         flames, lava embers and pops, glowstone sparkles,
+                         end-portal swirls + hum), the looping water/lava
+                         ambience beds and the rare underground cave tone.
+                         Purely reactive — it reads state, never writes it
     crafting.js          recipes, grid matching
     smelting.js          furnace logic, fuel
     brewing.js           brewing stand (Phase 18): the 5-slot BrewingStand
@@ -255,7 +281,12 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 21 made five cuts: the long-mandated
+in this document. Phase 22 added four files rather than growing any (render/
+particles.js 655, systems/audio.js 646, systems/ambience.js 288,
+entities/ender_pearl.js 178) and deliberately did NOT touch the two files
+already over the cap — `entities/dragon.js` (878) and `world/blocks.js` (908)
+still carry the mandated cuts below. systems/combat.js lost its private
+WebAudio helpers to systems/audio.js and is 513 now. Phase 21 made five cuts: the long-mandated
 `systems/arrows.js` out of combat.js (which is 572 now, finally under),
 `player/placement.js` out of interaction.js (745), `player/body.js` out of
 controller.js (259), and `world/shapes.js` + `world/shape_tables.js` out of
@@ -301,6 +332,15 @@ tables) and sits at 908 — also OVER; **the fluid families (the lava/water
 id tables and their predicates) are its mandated cut**, and it needs the
 BLOCK/BLOCKS bindings passed in the way shapes.js takes `register`, or the
 import cycle bites.
+
+**Feel goes through the two singletons.** Anything that wants a particle or a
+sound imports `particles` (render/particles.js) or `audio` (systems/audio.js)
+directly and calls it — no wiring through factories, the CHUNK_LIGHT_UNIFORMS
+pattern. Both are inert until main.js initialises them, which is what keeps
+node-testable modules (player/body.js, entities/entity.js) free of three.js:
+those two deliberately emit NOTHING, and their feedback is edge-detected by
+their managers instead (entities/mobs.js watches mob health, systems/ambience.js
+watches the player body).
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.

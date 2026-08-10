@@ -39,6 +39,8 @@ import { rayAABB } from '../systems/combat.js';
 import { createExtrudedItemMesh } from './items.js';
 import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
 import { blockDef } from '../world/blocks.js';
+import { particles } from '../render/particles.js';
+import { audio } from '../systems/audio.js';
 
 // MOB_TYPES (stats/drops) lives in entities/registry.js as of Phase 15.
 
@@ -91,6 +93,8 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
       meleeTimer: 0,
       burnTimer: 0,          // lava AND daylight fire ticks
       suffocateTimer: 0,
+      shownHealth: type.maxHealth, // last health the hurt feedback reacted to
+                                   // (Phase 22 — the edge detector in update)
       onFire: false,         // daylight burning (drives the flicker tint)
       provoked: false,       // hit by the player — neutral spiders retaliate
       // skeleton state (Phase 14: a real draw-and-release cycle)
@@ -730,6 +734,23 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
           mob.suffocateTimer = 0;
         }
       }
+
+      // Phase 22 feedback: entities/entity.js stays three-free, so the
+      // hurt/death particles and sounds are edge-detected here, where the
+      // manager already walks every mob. One place covers EVERY damage
+      // source — melee, arrows, blasts, burning, suffocation.
+      if (e.health < mob.shownHealth) {
+        const mid = { x: ep.x, y: ep.y + e.def.height * 0.6, z: ep.z };
+        const pitch = Math.max(0.6, Math.min(1.7, 1.7 / e.def.height));
+        particles.damage(mid.x, mid.y, mid.z);
+        if (e.dead) {
+          particles.death(ep.x, ep.y, ep.z, e.def.height);
+          audio.death(mid, pitch);
+        } else {
+          audio.mobHurt(mid, pitch);
+        }
+      }
+      mob.shownHealth = e.health;
 
       e.updateLifecycle(dt, playerPos);
       if (e.removed) {

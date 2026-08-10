@@ -29,6 +29,8 @@
 import { PLAYER, STATS, EFFECTS } from '../config.js';
 import { BLOCK, isLava } from '../world/blocks.js';
 import { findSpawnPosition } from './controller.js';
+import { particles } from '../render/particles.js';
+import { audio } from '../systems/audio.js';
 
 export function createStats({ world, player, inventory, items, onDeath }) {
   let health = PLAYER.MAX_HEALTH;
@@ -42,7 +44,13 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   // effect type. Fire resistance suppresses ALL fire/lava damage (the one
   // that matters for the run); strength adds melee damage (combat reads
   // strengthBonus); healing is instant on drink (no entry here).
-  const effects = { fire_resistance: 0, strength: 0 };
+  const effects = { fire_resistance: 0, strength: 0, regeneration: 0 };
+  // Absorption (Phase 22 — the golden apple): extra health points that soak
+  // damage BEFORE real health and expire on their own timer. Shown as the
+  // yellow heart row above the health bar (ui/hud.js).
+  let absorption = 0;
+  let absorptionSeconds = 0;
+  let regenEffectTimer = 0; // countdown to the next regeneration heal
   let flash = 0;         // damage screen-flash countdown
   let contactTimer = 0;  // countdown until the next contact damage tick
   let fireTimer = STATS.FIRE_TICK_SECONDS;
@@ -102,8 +110,20 @@ export function createStats({ world, player, inventory, items, onDeath }) {
 
   function damage(amount) {
     if (amount <= 0 || dead) return;
-    health = Math.max(0, health - amount);
+    // Absorption first (vanilla): the yellow hearts empty before any real
+    // health is touched, and whatever they can't cover carries through.
+    if (absorption > 0) {
+      const soaked = Math.min(absorption, amount);
+      absorption -= soaked;
+      amount -= soaked;
+      if (absorption <= 0) absorptionSeconds = 0;
+    }
     flash = STATS.DAMAGE_FLASH_SECONDS;
+    const p = player.body.position;
+    particles.damage(p.x, p.y + PLAYER.HEIGHT * 0.55, p.z);
+    audio.playerHurt();
+    if (amount <= 0) return; // fully absorbed — the hit still stings visually
+    health = Math.max(0, health - amount);
     gainExhaustion(STATS.EXHAUST_DAMAGE); // being hurt costs a little food
     if (health === 0) die();
   }
@@ -116,7 +136,11 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     dead = true;
     burnSeconds = 0;
     poisonSeconds = 0;
+    absorption = 0;
+    absorptionSeconds = 0;
     const body = player.body;
+    particles.death(body.position.x, body.position.y, body.position.z, PLAYER.HEIGHT);
+    audio.death(null, 1, 1);
     body.velocity.x = 0;
     body.velocity.y = 0;
     body.velocity.z = 0;
@@ -158,6 +182,10 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     poisonSeconds = 0;
     effects.fire_resistance = 0;
     effects.strength = 0;
+    effects.regeneration = 0;
+    absorption = 0;
+    absorptionSeconds = 0;
+    regenEffectTimer = 0;
     flash = 0;
     contactTimer = 0;
     regenTimer = STATS.REGEN_INTERVAL_SECONDS;
@@ -178,6 +206,21 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     saturation = Math.min(hunger, saturation + food.saturation);
     if (food.poisonChance && Math.random() < food.poisonChance) {
       poisonSeconds = STATS.HUNGER_POISON.SECONDS;
+    }
+    audio.eat(player.body.position, 0.9);
+    // The golden apple (Phase 22): vanilla's Absorption I for 2:00 — 2
+    // yellow hearts that soak damage before real health — plus a short
+    // Regeneration II burst. Re-eating refreshes both rather than stacking.
+    if (food.golden) {
+      const G = EFFECTS.GOLDEN_APPLE;
+      absorption = Math.max(absorption, G.ABSORPTION_HEALTH);
+      absorptionSeconds = Math.max(absorptionSeconds, G.ABSORPTION_SECONDS);
+      effects.regeneration = Math.max(effects.regeneration, G.REGENERATION_SECONDS);
+      regenEffectTimer = Math.min(regenEffectTimer, G.REGENERATION_INTERVAL);
+      audio.levelUp(0.4);
+      const p = player.body.position;
+      particles.sparkle(p.x, p.y + 1, p.z, 0xffd44a);
+      particles.pickup(p.x, p.y + 1, p.z);
     }
     const potion = food.potion;
     if (potion) {
@@ -260,6 +303,23 @@ export function createStats({ world, player, inventory, items, onDeath }) {
       if (effects[key] > 0) effects[key] = Math.max(0, effects[key] - dt);
     }
     const fireProof = effects.fire_resistance > 0;
+
+    // --- absorption + regeneration (Phase 22 — the golden apple). The
+    // yellow hearts run down on their own clock and vanish when it expires;
+    // regeneration heals a point every REGENERATION_INTERVAL while it lasts.
+    if (absorptionSeconds > 0) {
+      absorptionSeconds = Math.max(0, absorptionSeconds - dt);
+      if (absorptionSeconds === 0) absorption = 0;
+    }
+    if (effects.regeneration > 0) {
+      regenEffectTimer -= dt;
+      if (regenEffectTimer <= 0) {
+        regenEffectTimer = EFFECTS.GOLDEN_APPLE.REGENERATION_INTERVAL;
+        health = Math.min(PLAYER.MAX_HEALTH, health + 1);
+      }
+    } else {
+      regenEffectTimer = 0;
+    }
 
     // --- contact damage (lava first — it dominates — then cactus). Fire
     // resistance (the run-critical potion) suppresses lava AND fire damage
@@ -401,6 +461,14 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     },
     get maxHealth() {
       return PLAYER.MAX_HEALTH;
+    },
+    // Phase 22 — the golden apple's absorption buffer, in health points
+    // (2 per yellow heart). ui/hud.js draws the row; damage() spends it.
+    get absorption() {
+      return absorption;
+    },
+    get absorptionSeconds() {
+      return absorptionSeconds;
     },
     get hunger() {
       return hunger;

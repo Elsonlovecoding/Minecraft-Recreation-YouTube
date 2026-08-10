@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { COMBAT, PLAYER, CHUNK } from '../config.js';
 import { isSolid } from '../world/blocks.js';
 import { raycastVoxel } from '../player/interaction.js';
+import { audio } from './audio.js';
 
 // ---------------------------------------------------------------------------
 // The arrow model — two crossed quads sampling the side-view art of the real
@@ -200,6 +201,7 @@ export function createArrows({
         if (mob) {
           mob.provoked = true;
           mob.entity.damage(arrow.damage, dir.x, dir.z);
+          audio.arrowHit(arrow.pos);
           removeArrow(i);
           continue;
         }
@@ -207,6 +209,7 @@ export function createArrows({
         const t = rayAABB(arrow.pos, dir, playerAABB(), range);
         if (t !== null) {
           damagePlayer(arrow.damage, dir.x, dir.z);
+          audio.arrowHit(arrow.pos);
           removeArrow(i);
           continue;
         }
@@ -223,6 +226,7 @@ export function createArrows({
         arrow.pos.z += dir.z * depth;
         arrow.stuck = true;
         arrow.stuckFor = 0;
+        audio.arrowHit(arrow.pos); // the thunk into a block (Phase 22)
         arrow.vel = { x: 0, y: 0, z: 0 };
         arrow.stuckCell = { x: blockHit.x, y: blockHit.y, z: blockHit.z };
         const tint = lightTintAt(arrow.pos.x, arrow.pos.y, arrow.pos.z);
@@ -267,6 +271,7 @@ export function createArrows({
         return;
       }
       draw = { t: 0, slot, source };
+      audio.bowDraw(); // the creak of the string coming back (Phase 22)
       return;
     }
     draw.t += dt;
@@ -301,6 +306,7 @@ export function createArrows({
       damage,
       fromPlayer: true,
     });
+    audio.bowRelease(0.6 + 0.4 * charge);
     if (source === 'off') {
       if (inventory.offhandName === 'bow') {
         inventory.damageOffhand(COMBAT.BOW.WEAR_PER_SHOT);

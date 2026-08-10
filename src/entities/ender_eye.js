@@ -15,6 +15,25 @@
 import * as THREE from 'three';
 import { ENDER_EYE, PORTALS, PLAYER } from '../config.js';
 import { createExtrudedItemMesh } from './items.js';
+import { particles } from '../render/particles.js';
+
+// Phase 22: a thrown eye must be visible THROUGH terrain — following its
+// bearing is the whole point of throwing one, and an eye that vanishes
+// behind the hill it is flying over tells the player nothing. The extruded
+// item meshes share cached materials with the hand, the drops and the UI
+// icons, so the depth-free copy has to be a CLONE — mutating the shared one
+// would make every ender eye in the game render through walls.
+function makeSeeThrough(group) {
+  group.renderOrder = ENDER_EYE.RENDER_ORDER;
+  group.traverse((child) => {
+    if (!child.isMesh) return;
+    child.material = child.material.clone();
+    child.material.depthTest = false;
+    child.material.depthWrite = false;
+    child.material.transparent = true;
+    child.renderOrder = ENDER_EYE.RENDER_ORDER;
+  });
+}
 
 export function createEnderEyes({ scene, player, items, sfx, getTarget }) {
   const eyes = [];
@@ -36,10 +55,16 @@ export function createEnderEyes({ scene, player, items, sfx, getTarget }) {
       y: from.y + ENDER_EYE.RISE_BLOCKS,
       z: from.z + (dz / h) * ENDER_EYE.TRAVEL_BLOCKS,
     };
-    const mesh = createExtrudedItemMesh('ender_eye', ENDER_EYE.SPRITE_SIZE);
+    // `let` before the factory call: onReady fires SYNCHRONOUSLY on a cache
+    // hit, and a `const` would still be in its temporal dead zone (the
+    // recurring held-item lesson in PROGRESS.md).
+    let mesh;
+    mesh = createExtrudedItemMesh(
+      'ender_eye', ENDER_EYE.SPRITE_SIZE, () => makeSeeThrough(mesh),
+    );
     mesh.position.set(from.x, from.y, from.z);
     scene.add(mesh);
-    eyes.push({ from, signal, t: 0, mesh });
+    eyes.push({ from, signal, t: 0, trailCarry: 0, mesh });
     return true;
   }
 
@@ -84,6 +109,12 @@ export function createEnderEyes({ scene, player, items, sfx, getTarget }) {
       }
       eye.mesh.position.set(x, y, z);
       eye.mesh.rotation.y += ENDER_EYE.SPIN_RATE * dt;
+      // A purple wake, so the bearing reads even at the far end of the glide.
+      eye.trailCarry += dt * ENDER_EYE.TRAIL_PER_SECOND;
+      while (eye.trailCarry >= 1) {
+        eye.trailCarry -= 1;
+        particles.sparkle(x, y, z, ENDER_EYE.TRAIL_COLOR);
+      }
 
       if (eye.t >= ENDER_EYE.FLY_SECONDS + ENDER_EYE.HOVER_SECONDS) {
         // Resolve: SPEC — drops as an item, or shatters (20%).

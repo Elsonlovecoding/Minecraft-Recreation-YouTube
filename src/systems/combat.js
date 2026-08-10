@@ -47,6 +47,8 @@ import { BLOCK, blockDef, isSolid } from '../world/blocks.js';
 import { raycastVoxel, parseHeldTool } from '../player/interaction.js';
 import { createFireballs } from './fireballs.js';
 import { createArrows } from './arrows.js';
+import { audio } from './audio.js';
+import { particles } from '../render/particles.js';
 
 // ---------------------------------------------------------------------------
 // Pure combat maths (node-testable)
@@ -114,57 +116,6 @@ export function rayAABB(origin, dir, box, maxDist) {
   return tMin;
 }
 
-// ---------------------------------------------------------------------------
-// Procedural sound (WebAudio) — a single looping noise buffer shaped per
-// effect. Created lazily on first use (gameplay always follows a click, so
-// autoplay policy is satisfied); every failure path is silent.
-// ---------------------------------------------------------------------------
-
-let audioCtx = null;
-let noiseBuffer = null;
-
-function ensureAudio() {
-  if (audioCtx !== null) return audioCtx;
-  try {
-    const AC = window.AudioContext ?? window.webkitAudioContext;
-    if (!AC) return null;
-    audioCtx = new AC();
-    noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  } catch {
-    audioCtx = null;
-  }
-  return audioCtx;
-}
-
-function noiseBurst({ seconds, volume, filterType, frequency, attack }) {
-  if (volume <= 0.01) return;
-  const ctx = ensureAudio();
-  if (!ctx) return;
-  try {
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    const src = ctx.createBufferSource();
-    src.buffer = noiseBuffer;
-    src.loop = true;
-    const filter = ctx.createBiquadFilter();
-    filter.type = filterType;
-    filter.frequency.value = frequency;
-    const gain = ctx.createGain();
-    const t = ctx.currentTime;
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(volume, t + attack);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    src.start(t);
-    src.stop(t + seconds + 0.05);
-  } catch {
-    // never let a sound failure touch gameplay
-  }
-}
-
 let flashGeometry = null; // explosion shell, shared across blasts
 
 // ---------------------------------------------------------------------------
@@ -186,40 +137,21 @@ export function createCombat({
   let blocking = false;
   const blockFacing = { x: 0, z: 1 };
 
+  // The combat sound surface every mob module reaches through
+  // `combat.sfx`. Phase 22 moved the synthesis itself into
+  // systems/audio.js — these are the same seven names with the same
+  // (volume, place?) contract, now LAYERED voices on the shared compressed
+  // bus. Callers that pass a distance-scaled volume keep working exactly as
+  // before; those that pass a world position get real falloff and panning
+  // on top.
   const sfx = {
-    // volume 0..1 — callers scale by distance to the player
-    hiss: (volume) => noiseBurst({
-      seconds: 1.6, volume: 0.5 * volume, filterType: 'bandpass',
-      frequency: 4800, attack: 0.08,
-    }),
-    explosion: (volume) => noiseBurst({
-      seconds: 1.0, volume: 0.9 * volume, filterType: 'lowpass',
-      frequency: 220, attack: 0.005,
-    }),
-    // The ghast's firing shriek and the melee thwack of a deflection.
-    shriek: (volume) => noiseBurst({
-      seconds: 0.7, volume: 0.6 * volume, filterType: 'bandpass',
-      frequency: 950, attack: 0.02,
-    }),
-    deflect: () => noiseBurst({
-      seconds: 0.15, volume: 0.5, filterType: 'highpass',
-      frequency: 1400, attack: 0.005,
-    }),
-    // The blaze's short fiery huff per burst shot (Phase 17).
-    flame: (volume) => noiseBurst({
-      seconds: 0.35, volume: 0.45 * volume, filterType: 'bandpass',
-      frequency: 2400, attack: 0.01,
-    }),
-    // The enderman's teleport vwoop (Phase 18).
-    warp: (volume) => noiseBurst({
-      seconds: 0.4, volume: 0.4 * volume, filterType: 'bandpass',
-      frequency: 700, attack: 0.05,
-    }),
-    // An eye of ender shattering (Phase 18) — a short glassy crack.
-    shatter: (volume) => noiseBurst({
-      seconds: 0.2, volume: 0.5 * volume, filterType: 'highpass',
-      frequency: 2600, attack: 0.005,
-    }),
+    hiss: (volume, place) => audio.hiss(place, volume),
+    explosion: (volume, place) => audio.explosion(place, volume),
+    shriek: (volume, place) => audio.shriek(place, volume),
+    deflect: (volume = 1, place = null) => audio.deflect(place, volume),
+    flame: (volume, place) => audio.flame(place, volume),
+    warp: (volume, place) => audio.warp(place, volume),
+    shatter: (volume, place) => audio.shatter(place, volume),
   };
 
   // Baked-light brightness at a point (the mob tint formula) for arrows —
@@ -339,7 +271,11 @@ export function createCombat({
       attackChargeFactor(since, name);
     if (falling) damage *= COMBAT.CRIT_MULTIPLIER;
     mob.provoked = true; // neutral mobs (daylight spiders) fight back
+    // The swoosh itself is played on the click (player/interaction.js); this
+    // is the thwack of one that LANDED (Phase 22).
     if (mob.entity.damage(damage, dir.x, dir.z)) {
+      const mp = mob.entity.position;
+      audio.hit({ x: mp.x, y: mp.y + (mob.entity.def?.height ?? 1) / 2, z: mp.z });
       stats.exhaust(STATS.EXHAUST_ATTACK);
       // Weapons and tools wear on a landed hit (the bow used as a club
       // doesn't, like vanilla; damageSelected no-ops for plain items).
@@ -485,7 +421,10 @@ export function createCombat({
     mesh.position.set(centre.x, centre.y, centre.z);
     scene.add(mesh);
     flashes.push({ mesh, t: 0, radius: blockRadius });
-    sfx.explosion(Math.max(0, 1 - pd / COMBAT.EXPLOSION.BOOM_RANGE));
+    // Phase 22: expanding smoke and debris around the shell — creepers,
+    // ghast fireballs and end crystals all reach this one path.
+    particles.explosion(centre.x, centre.y, centre.z, blockRadius);
+    sfx.explosion(Math.max(0, 1 - pd / COMBAT.EXPLOSION.BOOM_RANGE), centre);
   }
 
   function updateFlashes(dt) {

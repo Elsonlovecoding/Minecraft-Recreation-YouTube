@@ -24,12 +24,14 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  STATS, MOBS, SHIELD,
+  STATS, MOBS, SHIELD, AUDIO,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, PLANTABLE } from '../world/blocks.js';
 import { consumableValue, armourSlotIndex } from './inventory.js';
 import { createHand } from './hand.js';
 import { createFluidActions } from './fluid_actions.js';
+import { particles } from '../render/particles.js';
+import { audio, blockSoundGroup } from '../systems/audio.js';
 import {
   createPlacement, isReplaceable, placementBlockedByPlayer,
 } from './placement.js';
@@ -185,7 +187,7 @@ function loadCrackTextures(stages) {
 // block is NOT consumed, vanilla). Potions drink through the eating hold.
 export function createInteraction({
   world, camera, scene, canvas, player, items, inventory, stats, onUseBlock,
-  onUseMob, onIgnite, onThrowEye, onFillFrame, onPlaceSign, combat,
+  onUseMob, onIgnite, onThrowEye, onThrowPearl, onFillFrame, onPlaceSign, combat,
 }) {
   // --- targeting state
   let target = null;
@@ -205,6 +207,7 @@ export function createInteraction({
   let breakProgress = 0;    // 0..1
   let breakCooldown = 0;    // pause between consecutive breaks
   let placeTimer = 0;       // hold-to-place repeat
+  let mineSoundTimer = 0;   // the digging loop's tick spacing (Phase 22)
   let eating = null;        // { name, slot, t, source } during a hold-to-eat
   let shieldHold = 0;       // seconds the shield has been raised (Phase 21)
 
@@ -245,6 +248,7 @@ export function createInteraction({
     // (review finding).
     if (name === 'glass_bottle') return waterSourceInReach();
     if (name === 'ender_eye') return !!onThrowEye; // thrown toward the stronghold
+    if (name === 'ender_pearl') return !!onThrowPearl; // thrown to teleport
     if (name === 'bow') return combat ? combat.hasArrow : true;
     if (name === 'shears') return !!mobHit; // no block/air use in this game
     if (name === 'shield') return true;     // raising the guard (Phase 21)
@@ -335,6 +339,7 @@ export function createInteraction({
       mouseLeft = true;
       attackPending = true;
       startSwing();
+      audio.swing(player.body.position); // the swoosh, once per press
     } else if (e.button === 2) {
       // The use-vs-place decision resolves in update() against the SAME
       // fresh raycast placement uses — deciding here on last frame's target
@@ -412,6 +417,7 @@ export function createInteraction({
     breakKey = null;
     breakPlan = null;
     breakProgress = 0;
+    mineSoundTimer = 0; // the next dig ticks on its first frame
   }
 
   function spawnDrops(def, x, y, z, drops = def.drops) {
@@ -439,6 +445,13 @@ export function createInteraction({
   function finishBreak() {
     const def = blockDef(target.id);
     const held = inventory.selectedName;
+    // Phase 22: the block's own texture bursts out of the cell and the
+    // material's break sound plays where it stood.
+    particles.blockBreak(target.x, target.y, target.z, target.id);
+    audio.breakBlock(
+      blockSoundGroup(def.name),
+      { x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 },
+    );
     world.setBlock(target.x, target.y, target.z, BLOCK.AIR);
     // Shears harvest their own drop table where a block has one (Phase 21:
     // leaves give leaf blocks) and wear one durability for it, vanilla.
@@ -482,6 +495,17 @@ export function createInteraction({
     if (breakPlan.time <= 0) {
       finishBreak();
       return;
+    }
+    // The digging loop (Phase 22): a soft tick of the block's material for
+    // as long as the tool is working, with a scuff of its own texture.
+    mineSoundTimer -= dt;
+    if (mineSoundTimer <= 0) {
+      mineSoundTimer = AUDIO.MINING_INTERVAL;
+      audio.mineTick(
+        blockSoundGroup(blockDef(target.id).name),
+        { x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 },
+      );
+      particles.blockPlace(target.x, target.y, target.z, target.id);
     }
     breakProgress += dt / breakPlan.time; // Infinity time -> progress stays 0
     if (breakProgress >= 1) finishBreak();
@@ -608,6 +632,14 @@ export function createInteraction({
         // it (Phase 19 — dimensions/stronghold.js flips the block and
         // checks for the twelfth eye). A filled or absent frame falls
         // through to the throw below, vanilla-style.
+        useHand.consume(1);
+        mouseRight = false;
+        startSwing(useHand.key);
+      } else if (
+        useHand.name === 'ender_pearl' && onThrowPearl && onThrowPearl()
+      ) {
+        // Throwing an ender pearl (Phase 22): it arcs out as a projectile
+        // and teleports the player wherever it lands, for 2.5 hearts.
         useHand.consume(1);
         mouseRight = false;
         startSwing(useHand.key);
@@ -740,6 +772,14 @@ export function createInteraction({
     debugSetMouse(left, right) {
       mouseLeft = !!left;
       if (right !== undefined) mouseRight = !!right;
+    },
+    // Test scaffolding: one right-click PRESS, resolved on the next update()
+    // exactly like a real one (the use-vs-place decision needs the pending
+    // flag, which debugSetMouse deliberately does not set).
+    debugRightClick() {
+      useCheckPending = true;
+      mouseRight = true;
+      placeTimer = 0;
     },
   };
 }
