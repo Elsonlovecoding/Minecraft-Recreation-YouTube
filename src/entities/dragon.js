@@ -155,7 +155,15 @@ export function createDragonFight({
     if (!best) return null;
     const target = best.kind === 'head' ? headTarget : bodyTarget;
     target.entity.aabb = best.aabb;
-    target.entity.hitCenter = best.center;
+    // The IMPACT point, not the box centre — the perch immunity check
+    // measures the player's distance to it, and a big body box's centre
+    // can sit past ARROW_RANGE even when the swing's contact face is
+    // within melee reach (review finding: legit melee read as arrows).
+    target.entity.hitCenter = {
+      x: origin.x + dir.x * bestT,
+      y: origin.y + dir.y * bestT,
+      z: origin.z + dir.z * bestT,
+    };
     return { target, t: bestT };
   }
 
@@ -199,7 +207,15 @@ export function createDragonFight({
 
   function spawnDragon() {
     const { group, parts, material } = createMobModel(DRAGON_DEF);
-    material.side = THREE.DoubleSide; // wing membranes render both ways
+    // Only the wing membranes need to render both ways (vanilla draws the
+    // dragon no-cull); a DoubleSide clone on the four wing parts keeps the
+    // big body meshes front-face only — half the fill of the largest
+    // object on screen (review finding).
+    const wingMaterial = material.clone();
+    wingMaterial.side = THREE.DoubleSide;
+    for (const name of ['wingR', 'wingtipR', 'wingL', 'wingtipL']) {
+      parts[name].children[0].material = wingMaterial;
+    }
     group.rotation.order = 'YXZ';
     group.scale.setScalar(DRAGON.SCALE);
     fightRoot.add(group);
@@ -214,6 +230,8 @@ export function createDragonFight({
       group,
       parts,
       material,
+      materials: [material, wingMaterial], // tinted together
+      breathAim: { x: 0, y: 0, z: -1 },    // latched per breath burst
       pos: {
         x: centre.x + DRAGON.CIRCLE.RADIUS,
         y: END.ISLAND_TOP_Y + DRAGON.CIRCLE.HEIGHT_MAX,
@@ -245,27 +263,53 @@ export function createDragonFight({
     };
   }
 
+  // Full YXZ orientation (yaw, pitch, bank) — the group's exact transform,
+  // so hitboxes and the breath mouth track the RENDERED skeleton even in a
+  // banked dive (the review's render/hitbox divergence finding: yaw-only
+  // maths left the head box ~1.8 blocks off the visible head at strafe
+  // pitch, so aimed shots missed the model).
   const localToWorld = (l) => {
     const s = DRAGON.SCALE;
-    const cy = Math.cos(dragon.yaw);
-    const sy = Math.sin(dragon.yaw);
+    const d = dragon;
+    const cy = Math.cos(d.yaw);
+    const sy = Math.sin(d.yaw);
+    const cp = Math.cos(d.pitch);
+    const sp = Math.sin(d.pitch);
+    const cb = Math.cos(d.bank);
+    const sb = Math.sin(d.bank);
+    // Rz(bank), then Rx(pitch), then Ry(yaw) — three.js YXZ euler order.
+    const x1 = l.x * cb - l.y * sb;
+    const y1 = l.x * sb + l.y * cb;
+    const y2 = y1 * cp - l.z * sp;
+    const z2 = y1 * sp + l.z * cp;
     return {
-      x: dragon.pos.x + (l.x * cy + l.z * sy) * s,
-      y: dragon.pos.y + l.y * s,
-      z: dragon.pos.z + (-l.x * sy + l.z * cy) * s,
+      x: d.pos.x + (x1 * cy + z2 * sy) * s,
+      y: d.pos.y + y2 * s,
+      z: d.pos.z + (-x1 * sy + z2 * cy) * s,
     };
   };
 
   const worldToLocal = (w) => {
     const s = DRAGON.SCALE;
-    const cy = Math.cos(dragon.yaw);
-    const sy = Math.sin(dragon.yaw);
-    const rx = w.x - dragon.pos.x;
-    const rz = w.z - dragon.pos.z;
+    const d = dragon;
+    const cy = Math.cos(d.yaw);
+    const sy = Math.sin(d.yaw);
+    const cp = Math.cos(d.pitch);
+    const sp = Math.sin(d.pitch);
+    const cb = Math.cos(d.bank);
+    const sb = Math.sin(d.bank);
+    const rx = w.x - d.pos.x;
+    const ry = w.y - d.pos.y;
+    const rz = w.z - d.pos.z;
+    // Inverse: Ry(-yaw), then Rx(-pitch), then Rz(-bank).
+    const x1 = rx * cy - rz * sy;
+    const z1 = rx * sy + rz * cy;
+    const y2 = ry * cp + z1 * sp;
+    const z2 = -ry * sp + z1 * cp;
     return {
-      x: (rx * cy - rz * sy) / s,
-      y: (w.y - dragon.pos.y) / s,
-      z: (rx * sy + rz * cy) / s,
+      x: (x1 * cb + y2 * sb) / s,
+      y: (-x1 * sb + y2 * cb) / s,
+      z: z2 / s,
     };
   };
 
@@ -448,14 +492,20 @@ export function createDragonFight({
       d.breathTick -= dt;
       const eye = playerEye();
       const mouth = localToWorld(d.headLocal);
+      // The stream pours along the aim LATCHED at burst start — sprinting
+      // sideways out of the cone is the dodge (CONE_DOT, ~28°; the review
+      // caught the gate documented but unwired: a re-aimed-every-frame
+      // breath was undodgeable inside its range).
+      fx.emitBreath(mouth, d.breathAim, dt);
       const dx = eye.x - mouth.x;
       const dy = eye.y - mouth.y;
       const dz = eye.z - mouth.z;
       const dist = Math.hypot(dx, dy, dz) || 1;
-      fx.emitBreath(mouth, { x: dx / dist, y: dy / dist, z: dz / dist }, dt);
+      const inCone = (dx * d.breathAim.x + dy * d.breathAim.y +
+        dz * d.breathAim.z) / dist >= B.CONE_DOT;
       if (
         d.breathTick <= 0 && playerTargetable() && dist < B.RANGE &&
-        lineOfSight(getBlock, mouth, eye)
+        inCone && lineOfSight(getBlock, mouth, eye)
       ) {
         d.breathTick = B.TICK_SECONDS;
         combat.damagePlayer(B.DAMAGE, dx, dz);
@@ -470,6 +520,13 @@ export function createDragonFight({
       if (d.breathTimer <= 0 && playerTargetable() && dist < B.RANGE + 4) {
         d.breathing = B.BURST_SECONDS;
         d.breathTick = 0.3; // the cloud arrives before the first tick
+        // Aim at the player's eye as the burst begins, then hold it.
+        const mouth = localToWorld(d.headLocal);
+        const ax = eye.x - mouth.x;
+        const ay = eye.y - mouth.y;
+        const az = eye.z - mouth.z;
+        const len = Math.hypot(ax, ay, az) || 1;
+        d.breathAim = { x: ax / len, y: ay / len, z: az / len };
         combat.sfx.flame(0.8);
       }
     }
@@ -546,7 +603,7 @@ export function createDragonFight({
     const d = dragon;
     d.state = 'dead';
     d.group.removeFromParent();
-    d.material.dispose();
+    for (const material of d.materials) material.dispose();
     fx.endDeathShow();
     fx.hideBreath();
     fx.updateHealBeam(null);
@@ -699,15 +756,17 @@ export function createDragonFight({
     d.group.rotation.y = d.yaw;
     d.group.rotation.x = d.pitch;
     d.group.rotation.z = d.bank;
-    if (d.hurtTimer > 0) {
-      d.material.color.setRGB(1, 0.35, 0.35);
-    } else if (dying) {
-      // Brighten toward white-hot as the light show builds.
-      const w = clamp(d.deathTimer / DRAGON.DEATH.SECONDS, 0, 1);
-      const glow = 1 + w * (1 + 0.4 * Math.sin(d.age * 14));
-      d.material.color.setRGB(glow, glow, glow);
-    } else {
-      d.material.color.setRGB(1, 1, 1);
+    for (const material of d.materials) {
+      if (d.hurtTimer > 0) {
+        material.color.setRGB(1, 0.35, 0.35);
+      } else if (dying) {
+        // Brighten toward white-hot as the light show builds.
+        const w = clamp(d.deathTimer / DRAGON.DEATH.SECONDS, 0, 1);
+        const glow = 1 + w * (1 + 0.4 * Math.sin(d.age * 14));
+        material.color.setRGB(glow, glow, glow);
+      } else {
+        material.color.setRGB(1, 1, 1);
+      }
     }
   }
 

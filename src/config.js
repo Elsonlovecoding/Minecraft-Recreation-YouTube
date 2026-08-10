@@ -765,7 +765,17 @@ export const COMBAT = {
   // Arrows (both the player's and skeletons').
   ARROW: {
     GRAVITY: 20,                  // blocks/s² (vanilla 0.05 blocks/tick²)
-    DRAG: 0.5,                    // 1/s velocity damping in flight
+    DRAG: 0.2,                    // 1/s velocity damping in flight —
+                                  // Phase 20: 0.5 -> 0.2 (vanilla's ~1%/tick).
+                                  // At 0.5 a full-draw arrow topped out ~38
+                                  // blocks up, so NO pillar crystal was
+                                  // shootable from the island and the whole
+                                  // dragon fight economy collapsed into ten
+                                  // tower climbs; at 0.2 the rise is ~65
+                                  // (vanilla parity — the low crystals are
+                                  // bow targets, the tallest still want a
+                                  // climb). Skeleton shots fly slightly
+                                  // flatter; verified still landing hits.
     LENGTH: 0.9,                  // rendered shaft length (vanilla render scale)
     STUCK_DESPAWN_SECONDS: 30,    // stuck arrows vanish after this
     FLYING_DESPAWN_SECONDS: 15,   // safety net for arrows that never land
@@ -1719,9 +1729,12 @@ export const DRAGON = {
   BANK_RATE: 3,                 // 1/s roll easing
   HURT_FLASH_SECONDS: 0.4,      // red tint after a hit (the mob look)
 
-  // Circling: ride a ring above the pillar tops, advancing steadily.
+  // Circling: ride a ring OUTSIDE the pillar ring (pillar reach ~38 with
+  // jitter+radius; the lead-pursuit steering bows the real orbit ~5
+  // inside RADIUS, so 48 keeps the body clear of the obsidian — the
+  // review caught the old 38 clipping through the tall pillars each lap).
   CIRCLE: {
-    RADIUS: 38,                 // flight ring radius around the centre
+    RADIUS: 48,                 // flight ring radius around the centre
     HEIGHT_MIN: 22,             // ring height above ISLAND_TOP_Y rolls
     HEIGHT_MAX: 34,             //   in this range per leg
     SPEED: 12,                  // blocks/s along the ring
@@ -1779,8 +1792,12 @@ export const DRAGON = {
 
   // Crystal healing (SPEC: regenerates from any living crystal, visible
   // beam). The nearest living crystal within range feeds the dragon.
+  // Range 40: the circling ring stays mostly connected (the pressure to
+  // pop crystals is the fight), but the PERCH sits ~49+ from every seat —
+  // perch-phase melee progress sticks instead of healing back (the
+  // review's fight-economy finding).
   HEAL: {
-    RANGE: 64,                  // crystals feed the dragon within this
+    RANGE: 40,                  // crystals feed the dragon within this
     PER_SECOND: 3,              // health per second while connected
     CRYSTAL_POP_DAMAGE: 10,     // losing the connected crystal stings
                                 // (vanilla explosion feedback)

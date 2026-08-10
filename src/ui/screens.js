@@ -428,6 +428,13 @@ export function createScreens({
   // closed first, so its stacks drop at the death site with the inventory).
   function showDeath() {
     if (deathShown) return;
+    // Death pre-empts a showing victory overlay (the world keeps running
+    // behind it — an enderman can still land a kill): the two screens
+    // must never stack, or Respawn and Return Home would both fire.
+    if (victoryShown) {
+      victoryShown = false;
+      victoryRoot.style.display = 'none';
+    }
     deathShown = true;
     document.body.classList.add('mc-screen-open'); // suppresses the lock hint
     deathRoot.style.display = 'flex';

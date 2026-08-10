@@ -36,12 +36,14 @@ export class EndGenerator {
   pillars() {
     if (this._pillars) return this._pillars;
     const P = END.PILLARS;
+    const PLAT = END.PLATFORM;
+    const platformBearing = Math.atan2(PLAT.Z, PLAT.X);
     const rng = mulberry32(this.seed ^ SALT_PILLARS);
     const count = END.PILLAR_COUNT;
     const startIndex = Math.floor(rng() * count); // where the shortest sits
     const list = [];
     for (let k = 0; k < count; k++) {
-      const angle = (k / count) * Math.PI * 2 +
+      let angle = (k / count) * Math.PI * 2 +
         (rng() * 2 - 1) * P.ANGLE_JITTER;
       const ring = P.RING_RADIUS + (rng() * 2 - 1) * 2;
       const rank = (k - startIndex + count) % count;
@@ -51,12 +53,26 @@ export class EndGenerator {
       );
       const radius = P.RADIUS_MIN +
         Math.floor(rng() * (P.RADIUS_MAX - P.RADIUS_MIN + 1));
-      list.push({
-        x: Math.round(Math.cos(angle) * ring),
-        z: Math.round(Math.sin(angle) * ring),
-        radius,
-        top: END.ISLAND_TOP_Y + height,
-      });
+      // Keep every pillar clear of the arrival platform's footprint: a
+      // colliding pillar rotates away from the platform's bearing in
+      // fixed steps (deterministic — no extra rng draws; the shipped
+      // seed's pillar 0 landed ON the platform and the clearance carve
+      // notched it, the Phase 20 review's generation finding).
+      const clear = PLAT.RADIUS + radius + 1;
+      let x = Math.round(Math.cos(angle) * ring);
+      let z = Math.round(Math.sin(angle) * ring);
+      for (
+        let guard = 0;
+        Math.abs(x - PLAT.X) <= clear && Math.abs(z - PLAT.Z) <= clear &&
+        guard < 20;
+        guard++
+      ) {
+        const side = Math.sin(angle - platformBearing) >= 0 ? 1 : -1;
+        angle += side * 0.12;
+        x = Math.round(Math.cos(angle) * ring);
+        z = Math.round(Math.sin(angle) * ring);
+      }
+      list.push({ x, z, radius, top: END.ISLAND_TOP_Y + height });
     }
     this._pillars = list;
     return list;

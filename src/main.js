@@ -446,6 +446,10 @@ async function init() {
       chunkMaterials.scrollPortal(delta); // animated portal swirl
     }
     world.updateStreaming(camera.position); // terrain loads even while paused
+    // The End fight's visibility follows the active dimension even while
+    // paused — respawn/victory clicks switch dimensions from overlay
+    // handlers, outside the unpaused update path (dragon.js's contract).
+    dragonFight.syncVisibility();
     // delta 0 while paused: the palette still applies, time doesn't advance.
     dayNight.update(paused ? 0 : delta, camera.position);
     // Held-torch dynamic light (Phase 14): a torch in either hand lights the
