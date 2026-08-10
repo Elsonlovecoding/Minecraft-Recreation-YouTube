@@ -99,7 +99,21 @@ src/
                          (the injection pattern)
     ender_eye.js         thrown eyes of ender (Phase 18): fly toward the
                          stronghold, hover, drop back or shatter
-    dragon.js            ender dragon fight
+    crystals.js          end crystals (Phase 20): the spinning cage/core
+                         displays on the pillar seats, the mob-shaped
+                         combat facades, hit-to-explode
+    dragon.js            the ender dragon fight (Phase 20): the driven
+                         model skeleton, circling/strafing/perching AI,
+                         head/body damage rules, crystal healing, breath
+                         + wing knockback, the death sequence,
+                         exit-portal activation, the victory trigger —
+                         all gated to the End dimension under one scene
+                         group
+    dragon_fx.js         the fight's visual effects (Phase 20 split out
+                         of dragon.js per the size cap): the healing
+                         beam, breath particle cloud, death light show,
+                         the dragon-egg trophy — behaviour-free, the
+                         fight decides when
     items.js             dropped item entities, pickup; item visuals
                          (mini-blocks, sprites, extruded slabs, Phase 18
                          tinted potion bottles)
@@ -145,10 +159,12 @@ src/
                          terminal blaze towers and wart rooms — emitted
                          per chunk deterministically, with support piers
                          down to ground/lava
-    end.js               the End (Phase 19): the central end-stone island
-                         over void + the obsidian arrival platform;
-                         pillars, crystals and the dragon layer on next
-                         phase
+    end.js               the End, complete (Phase 20 rebuild): the
+                         central end-stone island over void, the ten
+                         obsidian pillars with crystal seats, the exit
+                         portal fountain, the obsidian arrival platform;
+                         pillars()/exitPortalCells()/fountainTop() are
+                         the layout truth the dragon fight shares
     stronghold.js        stronghold generation (Phase 19): the seeded
                          blueprint anchored to strongholdCenter (the
                          eye-of-ender target since 18) — corridors,
@@ -162,7 +178,8 @@ src/
     hud.js               hotbar, health, hunger, crosshair, potion-effect
                          indicator (Phase 18)
     screens.js           the screen panel/cursor/slot machinery, the
-                         inventory + crafting screens, death, victory;
+                         inventory + crafting screens, death, victory
+                         (Phase 20 — the win condition's screen);
                          opens the container screens below
     containers.js        the block-container screen SECTIONS — chest,
                          furnace, brewing stand — and their indicator art
@@ -213,7 +230,12 @@ emitters — torch/lava/portal/wart; moved with a byte-identical A/B check;
 chunks.js is ~495 now);
 `ui/screens.js` got its mandated split in Phase 18 (`ui/containers.js`:
 the chest/furnace/brewing container sections + indicator art; screens.js
-keeps the panel/cursor/slot machinery and is ~670 now).
+keeps the panel/cursor/slot machinery and is ~670 now — Phase 20's victory
+screen brings it to ~736, still under);
+`entities/dragon.js` split its visual effects out at birth in Phase 20
+(`entities/dragon_fx.js`: healing beam, breath particles, death light
+show, the egg — dragon.js is ~780, crystals live in their own
+`entities/crystals.js` from the start).
 
 **All constants in `config.js`.** Gravity, walk speed, mob caps, chunk size, view
 distance, day length. Never hardcode a tunable number inline.

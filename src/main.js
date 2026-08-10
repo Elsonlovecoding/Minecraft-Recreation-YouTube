@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, TEST_CHEST,
+  MOBS, TERRAIN,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -35,9 +35,10 @@ import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
 import { createEnderEyes } from './entities/ender_eye.js';
+import { createDragonFight } from './entities/dragon.js';
 import { createSmeltingSystem } from './systems/smelting.js';
 import { createBrewingSystem } from './systems/brewing.js';
-import { createCombat } from './systems/combat.js';
+import { createCombat, rayAABB } from './systems/combat.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -160,11 +161,31 @@ async function init() {
   });
   // Phase 13: the combat system — player melee (weapon damage, cooldown
   // charge, crits), the armour damage pipeline, bow + arrows, explosions.
-  // Mobs are created after it, so the mob list resolves lazily.
+  // Mobs are created after it, so the mob list resolves lazily. Phase 20:
+  // combat aims at a TARGET FACADE merging the mob manager with the dragon
+  // fight — melee swings, arrows and blasts reach the dragon's parts and
+  // the end crystals through the same paths that hit mobs (the fight
+  // gates itself to the End dimension; combat.js is untouched).
   let mobs;
+  let dragonFight; // created below, after the dimension system
+  const combatTargets = {
+    raycast(origin, dir, maxDist) {
+      const mob = mobs.raycast(origin, dir, maxDist);
+      const mobT = mob
+        ? rayAABB(origin, dir, mob.entity.aabb, maxDist) ?? Infinity
+        : Infinity;
+      const fight = dragonFight ? dragonFight.raycast(origin, dir, maxDist) : null;
+      if (fight && fight.t < mobT) return fight.target;
+      return mob;
+    },
+    get mobs() {
+      const blastable = dragonFight ? dragonFight.blastTargets : [];
+      return blastable.length > 0 ? mobs.mobs.concat(blastable) : mobs.mobs;
+    },
+  };
   const combat = createCombat({
     world, scene, player, stats, inventory, items, dayNight,
-    getMobs: () => mobs,
+    getMobs: () => combatTargets,
   });
   // Phase 18: thrown eyes of ender fly toward the stronghold's
   // deterministic location (dimensions/stronghold.js — generation itself
@@ -216,6 +237,7 @@ async function init() {
     },
   });
   mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
+  const endGenerator = new EndGenerator(TERRAIN.SEED);
 
   // Phase 15: the dimension system — the overworld and the Nether, each
   // keeping its own chunks and entities, switched between by the portal
@@ -250,8 +272,10 @@ async function init() {
         makeGenerator: () => new NetherGenerator(TERRAIN.SEED),
       },
       // Phase 19: the End — the island, its purple gloom and its endermen
-      // (SPEC: "endermen spawn on the island"); pillars, crystals and the
-      // dragon arrive next phase.
+      // (SPEC: "endermen spawn on the island"). Phase 20: the ONE
+      // EndGenerator instance is shared with the dragon fight — its pillar
+      // layout and exit-portal cells are the fight's layout truth (the
+      // stronghold-blueprint pattern).
       end: {
         group: endGroup,
         sky: END_SKY,
@@ -261,7 +285,7 @@ async function init() {
           hostileCap: END.HOSTILE_CAP,
           anyLight: true,
         },
-        makeGenerator: () => new EndGenerator(TERRAIN.SEED),
+        makeGenerator: () => endGenerator,
       },
     },
   });
@@ -272,6 +296,14 @@ async function init() {
   endPortal = createEndPortal({
     world, player, camera, dimensions, generator: stronghold,
   });
+  // Phase 20: the dragon fight — crystals on the pillars, the dragon's
+  // flight phases, the death sequence, exit-portal activation and the
+  // victory trigger. `screens` binds below; the portal can only activate
+  // long after init finishes.
+  dragonFight = createDragonFight({
+    world, scene, player, stats, combat, dimensions, generator: endGenerator,
+    onVictory: () => screens.showVictory(),
+  });
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -279,66 +311,6 @@ async function init() {
     `[world] prebuilt ${world.streamStats().meshed} chunk meshes in ` +
     `${(performance.now() - buildStart).toFixed(0)}ms`,
   );
-
-  // TEMPORARY, MUST REMOVE BEFORE PHASE 20 (config TEST_CHEST): chests at
-  // the spawn point stocked so the portal, the Nether, brewing, endermen
-  // and eyes of ender can all be tested without a full playthrough.
-  if (TEST_CHEST) {
-    const p = player.body.position;
-    // The kit, in slot order. Durability items (tools, armour, bow) arrive
-    // at full durability through `add`. Water bottles and buckets stack to
-    // 1, so they cost a slot each — the kit runs past one chest's 27, and
-    // the overflow fills a second chest beside the first.
-    const TEST_KIT = [
-      ['obsidian', 14],
-      ['flint_and_steel', 1],
-      ['brewing_stand', 1],
-      ['blaze_rod', 64],
-      ['blaze_powder', 8],
-      ['nether_wart', 8],
-      ['ender_pearl', 16],
-      ['ender_eye', 16],
-      ['glass_bottle', 6],
-      ['water_bottle', 6],
-      ['bucket', 3],
-      ['diamond_helmet', 1],
-      ['diamond_chestplate', 1],
-      ['diamond_leggings', 1],
-      ['diamond_boots', 1],
-      ['diamond_sword', 1],
-      ['diamond_pickaxe', 1],
-      ['diamond_axe', 1],
-      ['diamond_shovel', 1],
-      ['iron_sword', 1],
-      ['bow', 1],
-      ['arrow', 64],
-      ['torch', 64],
-      ['cobblestone', 64],
-      ['oak_planks', 64],
-    ];
-    // Prefer a column whose surface is level with the player — leaves count
-    // as solid, so a bare offset could sit a chest on a tree canopy. The
-    // two offset lists never overlap, so the chests can't collide.
-    const placeChest = (offsets) => {
-      const level = offsets.find(([ox, oz]) => {
-        const x = Math.floor(p.x) + ox;
-        const z = Math.floor(p.z) + oz;
-        return Math.abs((world.getHighestSolidY(x, z) + 1) - p.y) <= 2;
-      });
-      const [ox, oz] = level ?? offsets[0];
-      const x = Math.floor(p.x) + ox;
-      const z = Math.floor(p.z) + oz;
-      const y = world.getHighestSolidY(x, z) + 1;
-      world.setBlock(x, y, z, BLOCK.CHEST);
-      return chests.chestAt(x, y, z);
-    };
-    const chest = placeChest([[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]);
-    const spare = placeChest([[3, 0], [-3, 0], [0, 3], [0, -3], [3, 1], [-3, -1]]);
-    for (const [name, count] of TEST_KIT) {
-      const leftover = chest.container.add(name, count);
-      if (leftover > 0) spare.container.add(name, leftover);
-    }
-  }
 
   // Terrain diagnostics (dev scaffolding — they make regressions visible)
   logTerrainProfile(world);
@@ -369,6 +341,7 @@ async function init() {
   window.__portals = portals;
   window.__stronghold = stronghold;
   window.__endPortal = endPortal;
+  window.__dragonFight = dragonFight;
 
   initDebug();
   initHud(inventory);
@@ -377,6 +350,11 @@ async function init() {
     // Dying in the Nether respawns at the OVERWORLD spawn point (Phase 15):
     // the dimension switches home before the respawn teleport.
     onRespawn: () => {
+      dimensions.switchTo('overworld');
+      stats.respawn();
+    },
+    // Winning travels home the same way (Phase 20) — inventory intact.
+    onVictoryReturn: () => {
       dimensions.switchTo('overworld');
       stats.respawn();
     },
@@ -424,7 +402,8 @@ async function init() {
   });
   const isPaused = () =>
     document.pointerLockElement !== canvas &&
-    !screens.isOpen && !screens.isDeathShown && !player.inputOverridden;
+    !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
+    !player.inputOverridden;
   // Esc while paused resumes, like vanilla. The lock request can reject
   // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
   // up and a click resumes instead (same swallow as the click path).
@@ -460,10 +439,17 @@ async function init() {
       fluids.update(delta);   // lava spread steps + new-chunk settling
       portals.update(delta);  // stand-in-portal travel, particles, ambience
       endPortal.update();     // fall-into-end-portal travel (Phase 19)
+      dragonFight.update(delta); // the End fight (gates itself to the End;
+                              // runs right after the travel step so arrival
+                              // spawns the fight the same frame)
       chunkMaterials.scrollLava(delta); // animated flowing-lava texture
       chunkMaterials.scrollPortal(delta); // animated portal swirl
     }
     world.updateStreaming(camera.position); // terrain loads even while paused
+    // The End fight's visibility follows the active dimension even while
+    // paused — respawn/victory clicks switch dimensions from overlay
+    // handlers, outside the unpaused update path (dragon.js's contract).
+    dragonFight.syncVisibility();
     // delta 0 while paused: the palette still applies, time doesn't advance.
     dayNight.update(paused ? 0 : delta, camera.position);
     // Held-torch dynamic light (Phase 14): a torch in either hand lights the

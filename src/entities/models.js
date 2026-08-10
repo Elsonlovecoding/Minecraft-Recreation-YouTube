@@ -401,6 +401,110 @@ export const ENDERMAN_MODEL = [
   { name: 'leftLeg', texOffs: [56, 0], size: [2, 30, 2], pivot: [-2, 30, 0], offset: [-1, -30, -1], mirror: true },
 ];
 
+// ---------------------------------------------------------------------------
+// The Ender Dragon (Phase 20) — converted from the vanilla ModelDragon
+// (enderdragon_dragon.png, 256x256; texture offsets verified against the
+// shipped sheet's art regions, including the wing membranes' transparency).
+// Unlike every other rig, the dragon's group origin is the BODY CENTRE, not
+// the feet — it flies, and entities/dragon.js drives the whole skeleton:
+// neck/tail segment pivots are repositioned per frame along curves (the
+// blaze rod-ring pattern), wingtips/jaw/lower legs are re-parented onto
+// their parent parts at attach() time. The pivots below are the rest pose.
+//
+// The wing membranes are the vanilla trick: a zero-height box whose top
+// region starts at u = -56 + 56 = 0 (hence the negative texOffs) — the
+// membrane art with its ragged transparent edge. Vanilla renders the dragon
+// no-cull; dragon.js sets the material DoubleSide for the same reason.
+// ---------------------------------------------------------------------------
+
+const DRAGON_SEG = (name, z) => ({
+  name,
+  texOffs: [192, 104],
+  size: [10, 10, 10],
+  pivot: [0, 4, z],
+  offset: [-5, -5, -5],
+  boxes: [{ texOffs: [48, 0], size: [2, 4, 6], offset: [-1, 5, -3] }], // spike
+});
+
+export const DRAGON_MODEL = [
+  { name: 'body', texOffs: [0, 0], size: [24, 24, 64], pivot: [0, 0, 0],
+    offset: [-12, -12, -16],
+    boxes: [ // three spine scales along the back
+      { texOffs: [220, 53], size: [2, 6, 12], offset: [-1, 12, -12] },
+      { texOffs: [220, 53], size: [2, 6, 12], offset: [-1, 12, 6] },
+      { texOffs: [220, 53], size: [2, 6, 12], offset: [-1, 12, 24] },
+    ] },
+  // Neck chain (body front toward the head) and tail chain (rearward);
+  // dragon.js lays both out along curves every frame.
+  DRAGON_SEG('neck0', -21), DRAGON_SEG('neck1', -31),
+  DRAGON_SEG('neck2', -41), DRAGON_SEG('neck3', -51),
+  DRAGON_SEG('tail0', 53), DRAGON_SEG('tail1', 63), DRAGON_SEG('tail2', 73),
+  DRAGON_SEG('tail3', 83), DRAGON_SEG('tail4', 93), DRAGON_SEG('tail5', 103),
+  { name: 'head', texOffs: [112, 30], size: [16, 16, 16], pivot: [0, 8, -60],
+    offset: [-8, -8, -10],
+    boxes: [
+      { texOffs: [176, 44], size: [12, 5, 16], offset: [-6, -1, -24] }, // upper lip
+      { texOffs: [112, 0], size: [2, 2, 4], offset: [-5, 4, -22] },    // nostrils
+      { texOffs: [112, 0], size: [2, 2, 4], offset: [3, 4, -22] },
+      { texOffs: [0, 0], size: [2, 4, 6], offset: [-5, 8, -6] },       // ears
+      { texOffs: [0, 0], size: [2, 4, 6], offset: [3, 8, -6] },
+    ] },
+  // The jaw hinges under the head (re-parented there by dragon.js).
+  { name: 'jaw', texOffs: [176, 65], size: [12, 4, 16], pivot: [0, 4, -68],
+    offset: [-6, -4, -16] },
+  // Wings: leading-edge bone + flat membrane, tips re-parented onto them.
+  { name: 'wingR', texOffs: [112, 88], size: [56, 8, 8], pivot: [12, 4, -10],
+    offset: [0, -4, -4],
+    boxes: [{ texOffs: [-56, 88], size: [56, 0, 56], offset: [0, 0, 2] }] },
+  { name: 'wingtipR', texOffs: [112, 136], size: [56, 4, 4], pivot: [68, 4, -10],
+    offset: [0, -2, -2],
+    boxes: [{ texOffs: [-56, 144], size: [56, 0, 56], offset: [0, 0, 2] }] },
+  { name: 'wingL', texOffs: [112, 88], size: [56, 8, 8], pivot: [-12, 4, -10],
+    offset: [-56, -4, -4], mirror: true,
+    boxes: [{ texOffs: [-56, 88], size: [56, 0, 56], offset: [-56, 0, 2], mirror: true }] },
+  { name: 'wingtipL', texOffs: [112, 136], size: [56, 4, 4], pivot: [-68, 4, -10],
+    offset: [-56, -2, -2], mirror: true,
+    boxes: [{ texOffs: [-56, 144], size: [56, 0, 56], offset: [-56, 0, 2], mirror: true }] },
+  // Legs: upper bone at the hip, lower (shin + foot) re-parented at the knee.
+  { name: 'frontUpperR', texOffs: [112, 104], size: [8, 24, 8], pivot: [13, -8, -8],
+    offset: [-4, -20, -4] },
+  { name: 'frontLowerR', texOffs: [226, 138], size: [6, 24, 6], pivot: [13, -28, -8],
+    offset: [-3, -21, -3],
+    boxes: [{ texOffs: [144, 104], size: [8, 4, 16], offset: [-4, -25, -11] }] },
+  { name: 'frontUpperL', texOffs: [112, 104], size: [8, 24, 8], pivot: [-13, -8, -8],
+    offset: [-4, -20, -4], mirror: true },
+  { name: 'frontLowerL', texOffs: [226, 138], size: [6, 24, 6], pivot: [-13, -28, -8],
+    offset: [-3, -21, -3], mirror: true,
+    boxes: [{ texOffs: [144, 104], size: [8, 4, 16], offset: [-4, -25, -11], mirror: true }] },
+  { name: 'rearUpperR', texOffs: [0, 0], size: [16, 32, 16], pivot: [15, -6, 22],
+    offset: [-8, -28, -8] },
+  { name: 'rearLowerR', texOffs: [196, 0], size: [12, 32, 12], pivot: [15, -34, 22],
+    offset: [-6, -29, -6],
+    boxes: [{ texOffs: [112, 0], size: [18, 6, 24], offset: [-9, -34, -19] }] },
+  { name: 'rearUpperL', texOffs: [0, 0], size: [16, 32, 16], pivot: [-15, -6, 22],
+    offset: [-8, -28, -8], mirror: true },
+  { name: 'rearLowerL', texOffs: [196, 0], size: [12, 32, 12], pivot: [-15, -34, 22],
+    offset: [-6, -29, -6], mirror: true,
+    boxes: [{ texOffs: [112, 0], size: [18, 6, 24], offset: [-9, -34, -19], mirror: true }] },
+];
+
+// ---------------------------------------------------------------------------
+// The End Crystal (Phase 20) — end_crystal_end_crystal.png, the classic
+// 64x32 unwrap shipped at 2x (128x64): the spinning glass cage (its regions
+// are the ~34%-opaque frame art), the counter-spinning solid core inside,
+// and the flat base. entities/crystals.js spins/bobs the cage and core and
+// scales the core pivot down — same-size boxes, different UV regions.
+// ---------------------------------------------------------------------------
+
+export const END_CRYSTAL_MODEL = [
+  { name: 'base', texOffs: [0, 16], size: [12, 4, 12], pivot: [0, 0, 0],
+    offset: [-6, 0, -6] },
+  { name: 'glass', texOffs: [0, 0], size: [8, 8, 8], pivot: [0, 11, 0],
+    offset: [-4, -4, -4] },
+  { name: 'core', texOffs: [32, 0], size: [8, 8, 8], pivot: [0, 11, 0],
+    offset: [-4, -4, -4] },
+];
+
 // Chicken (chicken_temperate_chicken.png, 64x32): 4x6x3 head with beak and
 // wattle, 6x8x6 body, 3x5x3 legs, 1x4x6 wings (flap while falling).
 export const CHICKEN_MODEL = [
