@@ -8,7 +8,55 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 19 — the stronghold and the end portal:
+**THE GAME IS FEATURE COMPLETE.** A player can start from nothing, punch a
+tree, and follow the full progression — tools, mining, the Nether, blaze
+rods, brewing, endermen, eyes of ender, the stronghold, the end portal —
+into the End, destroy the crystals, kill the Ender Dragon, and step through
+the activated exit portal to the victory screen. The SPEC's success test is
+met end to end.
+
+Phase last completed: **Phase 20 — the final fight: the End rebuilt
+complete (dimensions/end.js — the ~110-block end-stone island floating
+over void with a ragged coast and a dead-flat central plateau, TEN
+obsidian pillars ringing the centre at radius ~33 with heights climbing
+40→70 around the ring in seeded order, each capped with a bedrock crystal
+seat and rooted into the island; the inactive EXIT PORTAL fountain at the
+centre — bedrock base disc, raised rim, empty 20-cell portal well, central
+bedrock column with four wall torches; the obsidian arrival platform and
+endermen unchanged), end crystals (entities/crystals.js — the vanilla
+display converted from the real end_crystal sheet: spinning tilted glass
+cage, counter-spinning core, flat base, bobbing over the seat; each is a
+combat target through the standard mob facade — ONE hit from a melee
+swing, arrow or blast pops it in a real explosion), THE ENDER DRAGON
+(entities/dragon.js + the DRAGON_MODEL rig in models.js converted from the
+vanilla ModelDragon — verified against the shipped 256x256 sheet including
+the negative-texOffs wing-membrane trick, rendered DoubleSide like
+vanilla's no-cull: head with lip/nostrils/ears and a hinged jaw, 4-segment
+neck and 6-segment tail laid out along animated bezier chains per frame,
+wings + wingtips flapping by phase, four two-part legs that trail in
+flight and plant on the perch; a kinematic flyer with banked turns driven
+through the SPEC phases — CIRCLING a ring above the pillars, STRAFING runs
+that swoop past the player with wing knockback, PERCHING on the exit
+portal fountain where the neck cranes at the player and the BREATH attack
+pours a purple particle cone with damage ticks; 200 health, head-only full
+damage with the body at 0.25x, projectile-immune while perched (vanilla —
+detected by hit distance, melee lands within reach), healed 3/s by the
+nearest living crystal over a visible additive beam with a 10-damage sting
+when its feeder pops mid-drink), the DEATH SEQUENCE (glide to a hover
+above the fountain, nose lifting, nine radiating light beams growing
+through 5.5s, a terminal white-out flash — then the exit portal well
+fills with END_PORTAL blocks and the dragon egg appears on the fountain
+column as a layered-box trophy with generated speckled shell art), the
+WIN (stepping into the active exit portal shows the VICTORY screen —
+ui/screens.js, edge-triggered from dragon.js — and Return Home travels
+back to the overworld spawn with inventory intact), combat integration
+with ZERO combat.js changes (main.js hands createCombat a target FACADE
+merging the mob manager's raycast with the dragon fight's part boxes and
+crystal boxes, all gated to the End dimension), and the mandated
+TEST_CHEST removal (config flag + main.js block — the game is played
+straight from a fresh world now)**
+
+Previous phase: **Phase 19 — the stronghold and the end portal:
 stronghold generation (dimensions/stronghold.js — ONE stronghold per
 world, underground, its portal room anchored EXACTLY to the
 strongholdCenter point the eyes of ender have flown toward since Phase 18
@@ -54,7 +102,7 @@ bucket/bottle actions, moved verbatim; interaction 765 lines, back under
 the cap; the spawn-profile machinery also moved from mobs.js into
 entities/spawning.js, its natural home, keeping mobs.js under the cap)**
 
-Previous phase: **Phase 18 — the bridge to the End: brewing
+Phase 18 (still earlier): **the bridge to the End: brewing
 (systems/brewing.js — the 5-slot brewing stand on the SlotContainer
 machinery, blaze powder fuel loaded 20 operations at a time, the SPEC
 potion table with all three bottles transforming together per 20s
@@ -86,45 +134,13 @@ red-orange fog and tint, lava oceans lighting their shores through the
 normal flood fill), and the mandated ui/screens.js split
 (ui/containers.js — the chest/furnace/brewing screen sections)**
 
-Phase 17 (still earlier): **nether fortresses: region-seeded
-nether-brick fortress generation in the real Nether (a guaranteed fortress
-per 192-block region — grown as a deterministic blueprint: a central
-blaze-spawner room, bridge and corridor runs, crossings, terminal blaze
-towers and wart rooms, all connected with doorways and support piers down
-to ground or the lava sea; every intersecting chunk re-derives the same
-blueprint and writes only its own columns), the blaze (SPEC 20hp, hovers,
-fires bursts of 3 small fast fireballs, drops blaze rods; the real
-blaze.png model with three counter-rotating rod rings; spawner-only, like
-vanilla), blaze spawner block entities (the caged SPAWNER tile with a
-spinning miniature blaze inside; player-proximity activation, timed spawn
-cycles with a nearby-blaze cap; generated spawners discovered by the
-fluids-style chunk scan), nether wart (three growth-stage crop blocks on
-soul sand — fortress gardens generate them grown, harvest drops 2-4,
-replanting grows on timers, soil break pops the plant), fireball options
-(per-fireball size/damage-radius/blast-hardness), and two mandated
-size-cap splits (world/emitters.js out of chunks.js with a byte-identical
-A/B proof; entities/skeleton.js out of mobs.js, moved verbatim)**
-
 ---
 
-## TEMPORARY, MUST REMOVE (at the end of Phase 20 — the dragon session)
+## TEMPORARY
 
-- **The spawn test chests** (`TEST_CHEST` in config.js, default true;
-  placement in main.js right after prebuild): TWO chests beside the
-  player's spawn point (the kit is 32 slots, past one chest's 27, so the
-  overflow fills a second chest one block further out), stocked so the
-  portal, the Nether, brewing, endermen, eyes of ender and the stronghold
-  loop can all be tested without a full playthrough. Contents (Phase 18
-  expansion): 14 obsidian, 1 flint and steel, 1 brewing stand, 64 blaze
-  rods, 8 blaze powder, 8 nether wart, 16 ender pearls, 16 eyes of ender,
-  6 glass bottles, 6 water bottles, 3 buckets, a full diamond armour set,
-  a diamond sword/pickaxe/axe/shovel, 1 iron sword, 1 bow, 64 arrows,
-  64 torches, 64 cobblestone, 64 oak planks (tools, armour and the bow
-  arrive at full durability through `container.add`). Delete the config
-  flag and the main.js block together. (Phase 19 note: the deadline moved
-  one phase — this session's eye-throw/stronghold loop and next session's
-  dragon fight are exactly what the kit stages; it must be gone in the
-  session that ships the victory screen.)
+_Nothing temporary remains. The Phase 15-19 spawn test chests
+(`TEST_CHEST`) were removed in Phase 20 as mandated — the game is played
+straight from a fresh world._
 
 ---
 
@@ -1528,13 +1544,120 @@ Phase 18 (this session) additions, one entry per file:
   feet/midriff cells and travels on contact — dimension switch to 'end',
   arrival on the obsidian platform, prebuild before the next frame (the
   portals.js travel shape).
-- `src/dimensions/end.js` — Phase 19: `EndGenerator` (the nether.js
-  interface): the central end-stone island — radial thickness taper,
-  simplex-wobbled ragged coastline, gentle surface undulation — floating
-  over void, plus the 5x5 obsidian arrival platform with cleared
-  headroom ON the island margin (config END.PLATFORM) so stepping off
-  can never soft-lock over void. Pillars/crystals/exit portal/dragon are
-  Phase 20 passes layered onto this generator.
+- `src/dimensions/end.js` — Phase 20 (rebuilt whole per the session
+  brief; the Phase 19 island was reported far too small): `EndGenerator`
+  (the nether.js interface): the ~110-block end-stone island — radial
+  thickness taper, simplex-wobbled ragged coastline, gentle surface
+  undulation that fades to a DEAD-FLAT plateau inside END.FLAT_RADIUS so
+  the exit portal sits flush — floating over void (node census: 110x107
+  blocks of surface, underside tapering from y~22); TEN obsidian pillars
+  (`pillars()` — the deterministic layout shared with the dragon fight):
+  ring radius ~33 with seeded angle jitter, radii 2-3, heights climbing
+  END.PILLAR_MIN→MAX (40→70) around the ring from a seeded start, each
+  rooted ROOT_DEPTH below the surface and capped with a BEDROCK crystal
+  seat; the EXIT PORTAL fountain at the centre (`exitPortalCells()` /
+  `fountainTop()`): bedrock base disc (d² ≤ 13), raised rim, the 20-cell
+  portal well that stays AIR until the dragon dies, a 3-high central
+  bedrock column with four wall torches; the 5x5 obsidian arrival
+  platform with cleared headroom ON the island margin (config
+  END.PLATFORM) so stepping off can never soft-lock over void. Still a
+  pure function of (seed, x, z) — chunk order can never change the End;
+  a second generator instance agrees exactly (node-verified).
+- `src/entities/crystals.js` — NEW (Phase 20): the end crystals. One per
+  pillar seat, built from END_CRYSTAL_MODEL on the real
+  end_crystal_end_crystal.png (classic 64x32 unwrap shipped at 2x —
+  layout verified against the sheet's alpha: glass regions ~34% opaque,
+  core/base solid): the tilted glass cage spins about the vertical (YXZ
+  pivot order), the core counter-spins at 0.55 scale, both bob over the
+  bedrock seat. Each crystal carries a mob-shaped combat FACADE
+  (entity.aabb/position/def/dead/removed/damage) so melee swings, arrows
+  and explosion sweeps all reach it through combat's normal paths — ANY
+  hit pops it: a real combat.explode blast (12 damage, radius 2 —
+  obsidian and bedrock survive), the group hidden, dead thereafter.
+  `nearestLiving` feeds the dragon's healing link; `raycast` and
+  `blastTargets` merge into the main.js combat facade. Crystals are
+  fight furniture, not Entities — no physics, no despawn, frozen with
+  the fight outside the End.
+- `src/entities/dragon.js` — Phase 20 (was the last stub): the Ender
+  Dragon fight manager, `createDragonFight`. Everything lives under ONE
+  fightRoot scene group whose visibility follows
+  `dimensions.activeKey === 'end'` (synced first thing every update, so
+  dimension switches never render the fight in the wrong world); update
+  gates on the same key, so the whole fight — dragon position, crystal
+  states, the open portal — freezes while the player is elsewhere and
+  survives round trips. First End arrival initialises: crystals on the
+  pillar seats + the dragon spawned circling (an arrival roar). The
+  dragon is a KINEMATIC flyer (no voxel collision, vanilla): heading
+  turns at DRAGON.TURN_RATE toward per-phase targets, banks into turns,
+  pitches with climb; phases roll at the end of each circling leg —
+  45% a STRAFING run (swoop at a point OVERSHOOT past the player at
+  PASS_HEIGHT, wing-knockback pass: within WING.RANGE at speed,
+  damagePlayer 5 with the standard shove, 1.2s cooldown), 25% a PERCH
+  (swing wide, descend onto the fountain seat, face the player, the
+  BREATH attack: 3s purple particle-cone bursts from the mouth with
+  3-damage ticks gated by range/cone/line-of-sight, 4s cooldowns; leaves
+  after 8-16s or 24 accumulated damage), else a fresh circling leg
+  (random direction/height/duration). Damage: raycast returns per-part
+  boxes — the head at FULL damage, three spine cubes + two tail cubes at
+  BODY_DAMAGE_MULTIPLIER 0.25 (SPEC); while perched, hits from beyond
+  PERCH.ARROW_RANGE (4.5) are PROJECTILES and deflect harmlessly
+  (vanilla's perch arrow-immunity — melee can only land within reach,
+  so the distance heuristic is exact in practice). Healing: the nearest
+  living crystal within HEAL.RANGE feeds 3 health/s over a visible
+  additive beam (one shared cylinder, crystal top → body centre);
+  popping the feeder mid-drink stings the dragon 10. Death at 0 health:
+  a 5.5s sequence — glide to a hover above the fountain, nose lifting,
+  slow spin, NINE radiating light beams growing and wheeling, the body
+  brightening white-hot, a terminal expanding flash — then the rig is
+  removed and disposed, the exit-portal well fills with END_PORTAL
+  blocks (writes happen in the End by construction — the fight only
+  ticks there), and the dragon EGG spawns on the fountain column (a
+  layered-box trophy, 10 stacked boxes in the vanilla silhouette, with
+  a generated 16x16 speckled shell CanvasTexture in sRGB). Victory:
+  standing in an active portal cell fires the injected onVictory
+  edge-triggered (re-entry fires again; death-gated). Debug handles:
+  `__dragonFight.state/health/damageDragon/crystals/dragon`.
+- `src/entities/dragon_fx.js` — NEW (Phase 20, split out of dragon.js
+  per the size cap at birth — dragon.js is ~780 with it): the fight's
+  behaviour-free visual effects, all under the fight's scene group —
+  the shared healing-beam cylinder (`updateHealBeam(from|null, to)`),
+  the pooled additive breath particle cloud (`emitBreath`/`updateBreath`
+  /`hideBreath`), the death light show (`startDeathShow` /
+  `updateDeathShow(pos, t, dt)` — nine wheeling beams + the terminal
+  flash — / `endDeathShow` disposing everything), and `spawnEgg(pos)`
+  (the layered-box trophy with generated sRGB speckle art).
+- `src/entities/models.js` Phase 20 — `DRAGON_MODEL`: the vanilla
+  ModelDragon converted to this file's format (body 24x24x64 with three
+  spine scales, 10x10x10 neck/tail segments with spikes, the 16px head
+  with upper lip/nostrils/ears + separate hinged jaw, wing bone+membrane
+  and wingtip per side, two-part legs front and rear) — with the group
+  origin at the BODY CENTRE (it flies; dragon.js drives the skeleton),
+  and the vanilla negative-texOffs trick for the zero-height wing
+  membranes (top region lands at u=0: the membrane art with its ragged
+  transparent edge — coverage-verified against the shipped sheet).
+  `END_CRYSTAL_MODEL`: glass cage / core / base on the crystal sheet.
+  Mirrored left-side parts flip U per the existing `mirror` flag.
+- `src/ui/screens.js` Phase 20 — the VICTORY screen (the death screen's
+  shape): a purple-tinted overlay, "Victory!" + completion text, a
+  Return Home button firing the injected onVictoryReturn (main.js:
+  switchTo('overworld') + stats.respawn(), inventory intact) and
+  re-locking the pointer; `showVictory` (no-op while the death screen
+  is up) + `isVictoryShown` (main.js isPaused reads it, so the world
+  keeps running behind the overlay exactly like the death screen).
+- `src/main.js` Phase 20 — the combat-target FACADE: `combatTargets`
+  wraps the mob manager for createCombat's getMobs — `raycast` returns
+  the nearest of a mob / a dragon part / a crystal (distance-compared
+  via the exported rayAABB), `mobs` concatenates living-crystal facades
+  onto the mob list for explosion sweeps; combat.js and fireballs.js are
+  UNTOUCHED — melee, arrows, blasts and deflection all reach the fight
+  through the paths that hit mobs, and the fight's raycast/blastTargets
+  gate themselves to the End so nothing is hittable across dimensions.
+  `createDragonFight` wired after the dimension system with the SHARED
+  EndGenerator instance (the end def's makeGenerator returns the same
+  one — the stronghold-blueprint pattern); `dragonFight.update` runs in
+  the paused-gated block right after endPortal.update so arrival spawns
+  the fight the same frame; `__dragonFight` dev handle; the TEST_CHEST
+  block deleted (mandated).
 - `src/world/terrain.js` Phase 19 — the stronghold pass runs LAST in
   `generateChunk` (structure writes win), exactly like the Nether's
   fortress pass; `world.generator.stronghold` is the shared instance
@@ -2989,14 +3112,31 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Partially built
 
-- Remaining stub modules with responsibility headers: entities/dragon.js
-  only (entities/entity.js, pathfinding.js, models.js, mobs.js are real
-  as of Phase 12; systems/combat.js as of 13; dimensions/portals.js and
-  dimensions/dimensions.js as of 15; dimensions/nether.js as of 16;
-  systems/brewing.js as of 18; dimensions/stronghold.js as of 19 — the
-  full generation, anchored to the Phase 18 location; dimensions/end.js
-  as of 19 — the island and arrival platform, with pillars/crystals/exit
-  portal/dragon as Phase 20 passes layered onto it).
+- No stub modules remain — entities/dragon.js, the last one, became the
+  dragon fight in Phase 20. Every file in ARCHITECTURE.md's layout is
+  real.
+- Phase 20 deliberate slices:
+  - No XP system exists in this game, so the dragon grants none (SPEC
+    mentions XP on death; the assets/entity/experience_orb.png sheet
+    ships unused). The dragon EGG is a decorative trophy mesh managed by
+    the fight, not a block — it can't be mined or carried (vanilla's
+    egg-teleport minigame is out of scope).
+  - The dragon's wings are not hitboxes (head + spine + tail cubes are);
+    SPEC only distinguishes head vs body. The breath attack fires only
+    while perched (vanilla also spits fireballs while strafing — the
+    strafing run's threat here is the wing knockback), and there is no
+    lingering breath cloud.
+  - Perch projectile-immunity is detected by HIT DISTANCE
+    (DRAGON.PERCH.ARROW_RANGE = 4.5 > melee reach 3): a point-blank
+    arrow counts as melee. Accepted — vanilla's rule forced through
+    paths combat.js doesn't tag.
+  - The dragon never breaks blocks it flies through (vanilla destroys
+    most non-End blocks on contact) — it's a kinematic flyer above an
+    island made of end stone/obsidian/bedrock, where vanilla's rule
+    barely bites anyway.
+  - Crystals have no iron-bar cages (SPEC omits them) and don't respawn;
+    the fight state (crystals popped, dragon health, the open portal)
+    lives for the session — there is no world saving (out of scope).
 - Phase 19 deliberate slices:
   - The stronghold has no vanilla room variety beyond the SPEC list — no
     fountains, prison cells beyond the storage stock cell, or five-way
@@ -3011,11 +3151,9 @@ suites + the reviewers' own probes), zero console errors.
   - The end portal sheet reuses the nether portal's animated purple
     swirl material (fullbright, world-continuous UVs) rather than the
     vanilla starfield — a deliberate reuse, reads correctly in place.
-  - The End is the ISLAND only this phase: no obsidian pillars, no
-    crystals, no exit portal structure, no dragon (Phase 20 — they layer
-    onto EndGenerator exactly like the fortress pass layers onto the
-    Nether). One-way for now: dying (or the void) returns you to the
-    overworld spawn; the exit portal home arrives with the dragon.
+  - ~~The End is the ISLAND only this phase~~ — Phase 20 rebuilt the
+    island and added the pillars, crystals, exit portal fountain, the
+    dragon and the victory trip home.
   - The eye-throw target stays the stronghold CENTRE column (the
     portal-room walkway anchor) at every distance — vanilla eyes lead to
     the stronghold START; ours lead to the portal room itself, which is
@@ -3298,22 +3436,56 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **The road to the dragon is open**: the whole progression now runs
-  from first tree to STANDING IN THE END — throw eyes, follow, dig down
-  at the signal (the shaft lands on the portal-room walkway, never the
-  pool), fill the ring, fall in. What remains is Phase 20, the finale:
-  the End's FURNITURE (obsidian pillars ringing the island with end
-  crystals healing the dragon — END.PILLAR_* config exists; generate
-  them as another EndGenerator pass, the fortress-pass shape; crystals
-  are entities, not blocks — they need a model, a healing beam and
-  arrow/hit destruction), the exit portal structure at the island centre
-  (inactive until the dragon dies; activating + entering it = the
-  VICTORY screen, ui/screens.js has death as the template), the DRAGON
-  itself (entities/dragon.js stub; SPEC: 200hp, crystal regeneration,
-  circling/strafing/perching phases, head-only full damage
-  (DRAGON config exists), breath + knockback, the death animation and
-  the egg), and the TEST_CHEST removal (see the TEMPORARY section — it
-  must be gone in the session that ships the victory screen).
+- **THE GAME IS COMPLETE.** Phase 20 shipped the finale: the full End,
+  the dragon fight, the victory screen, the trip home. There is no next
+  build phase — anything below is polish/maintenance context for a
+  future session, in rough priority order:
+  - `systems/combat.js` (808) is the ONE file still over the
+    ARCHITECTURE cap; the arrow-machinery split has been mandated since
+    Phase 17 and remains the required first move of any session that
+    touches combat. Phase 20 deliberately did NOT touch it — the dragon
+    integrates through a target facade in main.js (see below).
+  - The stronghold-rooms report from Phase 19 remains open: the library
+    should become a two-storey room (bookshelf walls, wooden walkways,
+    ladder) and the portal room a taller chamber with a raised walkway
+    around the frame. Cosmetic — the run is completable as is.
+  - SPEC "feel" rows never built: footstep/break/place sounds (only the
+    procedural combat/portal synths exist), rivers, water flow.
+- Phase 20 APIs: `createDragonFight` (entities/dragon.js) owns the whole
+  End fight; it deliberately does NOT join the dimension managers list —
+  it gates every update on `dimensions.activeKey === 'end'` and syncs
+  its one fightRoot group's visibility first thing each update, which is
+  equivalent for a fight that only exists in one dimension (state
+  freezes while away, nothing leaks — the Phase 19 `activeKey` gotcha
+  handled by construction). Combat reaches it through the
+  `combatTargets` FACADE in main.js (raycast merge + blastTargets
+  concat) — if a future phase adds another non-mob combat target, extend
+  the facade, not combat.js. `generator.pillars()` /
+  `exitPortalCells()` / `fountainTop()` (dimensions/end.js) are the
+  End's layout truth, shared via the ONE EndGenerator instance main.js
+  creates (the stronghold-blueprint pattern — never construct a second
+  one except in tests, where determinism makes them agree).
+- The dragon's rig is driven, not posed: neck/tail pivots are laid along
+  bezier chains per frame (`layoutChain`), jaw/wingtips/lower-legs are
+  re-parented onto parent parts at attach() (the models.js pivots are
+  only rest positions). Anything that needs the head's world position
+  reads `dragon.headLocal` through `localToWorld` (manual yaw+scale
+  math — no matrixWorld reads, no allocation).
+- Harness notes that cost this session real time (on top of the
+  PROGRESS Phase 14/19 notes, which all still apply): teleporting the
+  player DOWN in tests must reset `body._fallStartY` (not just
+  `fallDistance` — landing damage is computed from the fall START, so a
+  scenic teleport from y=105 to the ground otherwise lands as ~40 blocks
+  of lethal fall damage); and long End-side polls must disable natural
+  spawning (`__mobs.setNaturalSpawning(false)`) or wandering endermen
+  eventually aggro off the fixed test crosshair and kill the player
+  mid-suite. The Phase 20 browser suite (scratchpad browser_test.mjs
+  pattern: local three via test.html + playwright-core against
+  /opt/pw-browsers chromium) runs the WHOLE finale — boot, End arrival,
+  crystal pop through combat.attack, healing, perch, melee vs arrow
+  rules, breath ticks, death, portal fill, victory screen, Return Home —
+  21 checks green with zero console errors, plus a 25-check node fight
+  harness (fight_test.mjs) over the state machine with stub world/combat.
 - Phase 19 APIs: `world.generator.stronghold` (a StrongholdGenerator) is
   the layout truth — `blueprint()` (frames/portalCells/chests/bounds),
   `entryPoint()`, `lootFor(x,y,z)`; main.js shares the one instance with
@@ -3654,4 +3826,5 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 16 | The real Nether (dimensions/nether.js): shaped 3D density field between bedrock floor and the bedrock ceiling at 128 — huge open caverns, lava oceans at/below y=31, floating netherrack formations, soul sand patches (registry `slows`), glowstone ceiling clusters, quartz veins, rare wall lava leaks; ~1.5ms/chunk, byte-deterministic; the dimension ambient floor (`NETHER_SKY.AMBIENT_LIGHT` -> `uMinSkyLevel`) making "constant dim red" real under the ceiling; Nether lava tick halved (fluids.setTickSeconds per dimension); ceiling-aware linked-portal ground search + carved-pocket fallback (arrivals can't land on the ceiling); the ghast (entities/ghast.js + registry `flying`/`scale`/`minBrightness`, GHAST_MODEL from the real 2x sheet): gravity-free wander, fireballs at a visible player every 3s, melee deflection flipping ownership (systems/fireballs.js — combat raycast wraps fireballs, explode takes per-blast radii); per-dimension spawn tables (nether: ghasts only, any light, cap 4; overworld pools exclude `nether: true` types); the chest-lid fix (modern sheet's swapped top/bottom slots — model + icon); two cap splits (ghast.js, fireballs.js); 10 node + 23 browser checks, zero console errors | Nether fortresses + blazes + nether wart; arrows don't pop fireballs; ghast shooting-face texture; wider Nether lava range (needs new flow ids); brewing, stronghold, End, dragon |
 | 17 | Nether fortresses (dimensions/fortress.js): a guaranteed fortress per 192-block region — region-seeded blueprints (heart blaze room, 6-wide bridge/corridor runs with railings/windows, crossings, terminal blaze towers with merlons and roofed wart rooms with glowstone lamps), fully connected with doorways, one deck height, support piers to ground/lava; deterministic per-chunk emission (fortress pass last). The blaze (entities/blaze.js + BLAZE_MODEL/BLAZE_RINGS): hovers, holds its ring, charge -> burst of 3 small fast fireballs (6 dmg, no crater) -> cooldown, drops blaze rods 0-1, spawner-only. Blaze spawner block entities (world/spawners.js): spinning caged mini blaze, proximity-gated timed spawn cycles with a nearby cap, fluids-style chunk-scan discovery of generated spawners. Nether wart (blocks 65-67 + world/wart.js + the emitters crop model): fortress gardens generate it grown, harvest drops 2-4, PLANTABLE replant on soul sand grows on timers, soil break pops. Fireball opts (size/damageRadius/maxHardness — ghast blasts spare nether brick). Two mandated cap splits: world/emitters.js (byte-identical A/B) and entities/skeleton.js (verbatim). 23 node + 17 browser checks, zero console errors | Blazes spawner-only (no natural fortress spawns); single-level fortresses; no fire blocks from fireballs; no spawner XP; wart stages reuse the grown art cropped; brewing, enderman, stronghold, End, dragon |
 | 19 | The stronghold (dimensions/stronghold.js): seeded 11-block-cell blueprint grown from the portal room anchored at strongholdCenter (walkway-safe dig-down anchor), corridors/staircases/junctions/libraries/storage in weathered stone brick with iron bars, per-chunk order-independent emission as the overworld's last pass, support piers, deterministic loot chests via the new world/chests.js chunk-scan; the portal room (12-frame ring, 10% pre-filled, 3x3 lava pool, bar niches); the end portal (eye-on-frame filling through the real use chain, activation on the 12th eye, fall-in travel); the End island + obsidian arrival platform + END_SKY + endermen + void death (dimensions/end.js); emitters for the brewing stand's REAL model, iron-bar panes, the 13/16 frame (+eye box, atlas tile 58 generated) and the portal sheet; bug fixes: brewing verified end-to-end + eager fuel loading, enderman weight 20→60 + common in the Nether (2:1 override) + the End, Nether fog 8/72→20/140; mandated splits: player/fluid_actions.js out of interaction.js, spawn profiles out of mobs.js into spawning.js; the portals.js 'end' registry crash caught by the suite and fixed. 83 node + 20 browser checks, zero console errors | The End's pillars/crystals/exit portal/dragon/victory (Phase 20); combat.js still over the cap (arrow cut mandated); TEST_CHEST removal moved to the victory-screen session |
+| 20 | **The finale — the game is feature complete.** The End rebuilt whole (dimensions/end.js): ~110-block island with a flat central plateau, 10 obsidian pillars (heights 40→70 climbing the ring, bedrock crystal seats), the inactive bedrock exit-portal fountain (base disc, rim, 20-cell well, torch-lit column), deterministic and shared with the fight via one EndGenerator instance. End crystals (entities/crystals.js): the real-sheet spinning cage/core/base display on every pillar, poppable by any hit through the combat facade, exploding for real. The Ender Dragon (entities/dragon.js + DRAGON_MODEL/END_CRYSTAL_MODEL in models.js, converted from the vanilla rigs with the wing-membrane texOffs trick): a kinematic banked flyer with driven bezier neck/tail chains, circling/strafing/perching phases, wing knockback, the perch breath cone, 200hp with head-only full damage (body 0.25x), perch projectile-immunity, crystal healing at 3/s over a visible beam with the feeder-pop sting, a 5.5s death sequence (glide to centre, nine wheeling light beams, white-out) that fills the exit portal and spawns the layered-box dragon egg. Victory (ui/screens.js): entering the active portal shows the victory screen; Return Home lands at the overworld spawn, inventory intact. Combat integration via the main.js combatTargets facade — combat.js untouched. TEST_CHEST removed (mandated). 25 node fight checks + 21 browser end-to-end checks green, zero console errors; screenshot-verified (island, dragon in flight, crystals, healing beam, perch, breath, death beams, active portal + egg, victory screen) | Polish only: combat.js arrow split (the standing cap mandate), stronghold room upgrades (Phase 19 report), sounds/rivers/water flow (SPEC "feel"), no XP/egg-block (documented deviations) |
 | 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |

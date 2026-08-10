@@ -33,7 +33,9 @@
 //     click the whole stack, right click a single item — vanilla)
 //   - the death screen (stats.js drives it through main.js): "You died!"
 //     over a red-tinted overlay, a Respawn button, input held until respawn
-// Victory screen arrives with the dragon phase.
+//   - the victory screen (Phase 20 — the SPEC win condition): shown when
+//     the player enters the activated exit portal after killing the
+//     dragon; a Return Home button travels back to the overworld spawn
 
 import * as THREE from 'three';
 import { INVENTORY, UI, CRAFTING, ITEMS } from '../config.js';
@@ -44,7 +46,9 @@ import { CraftingGrid } from '../systems/crafting.js';
 import { isFuel, smeltResult } from '../systems/smelting.js';
 import { routableInBrewing } from '../systems/brewing.js';
 
-export function createScreens({ inventory, canvas, items, player, camera, onRespawn }) {
+export function createScreens({
+  inventory, canvas, items, player, camera, onRespawn, onVictoryReturn,
+}) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
   let mode = 'inventory'; // 'inventory' | 'table' | 'chest' | 'furnace' | 'brewing'
@@ -164,6 +168,27 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
       box-shadow: 0 0 0 2px #000;
     }
     #death-respawn:hover { background: #7f8caf; color: #ffffa0; }
+    #victory-root {
+      position: fixed; inset: 0; z-index: 30; display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(28, 8, 48, 0.6);
+      user-select: none;
+    }
+    #victory-root h1 {
+      color: #d9c7ff; font: bold 52px/1 monospace; margin: 0 0 14px;
+      text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.7), 0 0 24px #8a4fd0;
+    }
+    #victory-root p {
+      color: #e8e0f8; font: 17px/1.6 monospace; margin: 0 0 30px;
+      text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6); text-align: center;
+    }
+    #victory-return {
+      font: bold 17px/1 monospace; color: #e8e8e8;
+      background: #6f6f6f; padding: 12px 60px; cursor: pointer;
+      border: 2px solid; border-color: #a8a8a8 #2f2f2f #2f2f2f #a8a8a8;
+      box-shadow: 0 0 0 2px #000;
+    }
+    #victory-return:hover { background: #8a6fb0; color: #ffe9a0; }
   `;
   document.head.appendChild(style);
 
@@ -409,6 +434,43 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     document.exitPointerLock();
   }
 
+  // --- victory screen (Phase 20 — the win condition)
+  const victoryRoot = document.createElement('div');
+  victoryRoot.id = 'victory-root';
+  const victoryTitle = document.createElement('h1');
+  victoryTitle.textContent = 'Victory!';
+  const victoryText = document.createElement('p');
+  victoryText.innerHTML =
+    'The Ender Dragon has been defeated.<br>The End is conquered — the game is complete.';
+  const victoryBtn = document.createElement('button');
+  victoryBtn.id = 'victory-return';
+  victoryBtn.textContent = 'Return Home';
+  victoryRoot.appendChild(victoryTitle);
+  victoryRoot.appendChild(victoryText);
+  victoryRoot.appendChild(victoryBtn);
+  document.body.appendChild(victoryRoot);
+  let victoryShown = false;
+  victoryBtn.addEventListener('click', () => {
+    if (!victoryShown) return;
+    victoryShown = false;
+    victoryRoot.style.display = 'none';
+    document.body.classList.remove('mc-screen-open');
+    onVictoryReturn?.();
+    const req = canvas.requestPointerLock();
+    if (req && typeof req.catch === 'function') req.catch(() => {});
+  });
+
+  // Shown by main.js when the player enters the active exit portal
+  // (entities/dragon.js fires it edge-triggered). The world keeps running
+  // behind the overlay, like the death screen.
+  function showVictory() {
+    if (victoryShown || deathShown) return;
+    victoryShown = true;
+    document.body.classList.add('mc-screen-open');
+    victoryRoot.style.display = 'flex';
+    document.exitPointerLock();
+  }
+
   // --- rendering
 
   function refresh() {
@@ -647,6 +709,7 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     openBrewing,
     closeScreen,
     showDeath,
+    showVictory,
     refresh,
     update,
     invGrid,   // exposed for tests/debugging
@@ -656,6 +719,9 @@ export function createScreens({ inventory, canvas, items, player, camera, onResp
     },
     get isDeathShown() {
       return deathShown;
+    },
+    get isVictoryShown() {
+      return victoryShown;
     },
     get mode() {
       return mode;

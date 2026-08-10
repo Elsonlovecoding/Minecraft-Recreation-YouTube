@@ -138,19 +138,49 @@ export const END = {
   PILLAR_COUNT: 10,
   PILLAR_MIN_HEIGHT: 40,
   PILLAR_MAX_HEIGHT: 70,
-  // Phase 19 — the island itself (dimensions/end.js; pillars/crystals/
-  // dragon arrive next phase). A radial end-stone disc: full thickness at
-  // the centre, tapering to a wobbled edge, floating over void.
+  // Phase 20 — the island rebuilt (dimensions/end.js; the Phase 19 report
+  // called the first pass far too small). A radial end-stone disc: full
+  // thickness at the centre, tapering to a wobbled edge, floating over
+  // void, flattened around the centre so the exit portal sits flush.
   ISLAND_TOP_Y: 64,           // island surface height
   ISLAND_MAX_DEPTH: 42,       // stone thickness at the centre
   EDGE_WOBBLE: 7,             // radius noise amplitude (ragged coastline)
   EDGE_WOBBLE_SCALE: 0.7,     // radius noise frequency (radians on the ring)
   SURFACE_WOBBLE: 2,          // gentle surface undulation amplitude
+  FLAT_RADIUS: 9,             // dead-flat plateau around the exit portal
+  FLAT_BLEND: 8,              // blocks over which the wobble fades back in
   // The obsidian arrival platform (vanilla flavour, placed ON the island
   // margin so arrival can never soft-lock over the void).
   PLATFORM: { X: 38, Z: 0, RADIUS: 2, CLEARANCE: 3 },
   HOSTILE_CAP: 10,            // endermen fill the island (SPEC: "endermen
                               // spawn on the island")
+
+  // Phase 20 — the obsidian pillars ringing the centre (SPEC: 10 pillars,
+  // 40-70 blocks tall, an end crystal on each). Heights climb around the
+  // ring from MIN to MAX in a seeded order; each pillar is an obsidian
+  // cylinder rooted a few blocks into the island with a bedrock cap block
+  // at the top centre (the crystal's seat, vanilla flavour).
+  PILLARS: {
+    RING_RADIUS: 33,          // pillar centres sit on this ring
+    RADIUS_MIN: 2,            // pillar cylinder radius rolls in this range
+    RADIUS_MAX: 3,
+    ANGLE_JITTER: 0.25,       // radians of seeded scatter off the even ring
+    ROOT_DEPTH: 6,            // blocks the pillar anchors below the surface
+  },
+
+  // Phase 20 — the exit portal fountain at the island centre: a bedrock
+  // disc, a raised bedrock rim around the portal well, and the central
+  // bedrock column with torches. The well stays AIR until the dragon dies;
+  // then it fills with end portal blocks (the win condition's doorway).
+  EXIT_PORTAL: {
+    X: 0,
+    Z: 0,
+    BASE_RADIUS_SQ: 13,       // bedrock disc: cells with dx²+dz² <= this
+    WELL_RADIUS_SQ: 6,        // portal well interior (minus the centre column)
+    PILLAR_HEIGHT: 3,         // central bedrock column above the base (the
+                              // perched dragon's body drapes just above it)
+    CLEARANCE: 8,             // air cleared above the fountain at generation
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1676,16 +1706,111 @@ export const DRAGON = {
   HEALTH: 200,
   HEAD_ONLY_FULL_DAMAGE: true,
   BODY_DAMAGE_MULTIPLIER: 0.25,
+
+  // Phase 20 — the fight itself (entities/dragon.js). The dragon is a
+  // kinematic flyer (no voxel collision, like vanilla): it steers toward
+  // per-phase target points, banks into turns, and only ever lands on the
+  // exit portal fountain.
+  SCALE: 1.2,                   // model scale (the rig is authored at the
+                                // vanilla px sizes — ~15-block wingspan
+                                // before scaling)
+  TURN_RATE: 1.1,               // rad/s the flight heading can turn
+  BANK_FACTOR: 0.7,             // roll into turns, radians per rad/s of turn
+  BANK_RATE: 3,                 // 1/s roll easing
+  HURT_FLASH_SECONDS: 0.4,      // red tint after a hit (the mob look)
+
+  // Circling: ride a ring above the pillar tops, advancing steadily.
+  CIRCLE: {
+    RADIUS: 38,                 // flight ring radius around the centre
+    HEIGHT_MIN: 22,             // ring height above ISLAND_TOP_Y rolls
+    HEIGHT_MAX: 34,             //   in this range per leg
+    SPEED: 12,                  // blocks/s along the ring
+    LEG_MIN_SECONDS: 6,         // one circling leg before the next roll
+    LEG_MAX_SECONDS: 12,
+    STRAFE_CHANCE: 0.45,        // roll at the end of a leg: strafing run...
+    PERCH_CHANCE: 0.25,         // ...or drop onto the exit portal fountain
+  },
+
+  // Strafing run: swoop low past the player — the wing-knockback pass.
+  STRAFE: {
+    SPEED: 17,                  // blocks/s during the swoop
+    PASS_HEIGHT: 3,             // aim this far above the player's head
+    OVERSHOOT: 18,              // the aim point sits this far past the player
+    BREAK_OFF_DISTANCE: 26,     // climbing away this far past ends the run
+    MAX_SECONDS: 9,             // safety cap — never dive forever
+  },
+
+  // Perching on the exit portal (SPEC: melee is the perch-phase answer).
+  PERCH: {
+    APPROACH_SPEED: 10,         // blocks/s descending onto the fountain
+    SETTLE_DISTANCE: 1.2,       // close enough to the seat counts as landed
+    MIN_SECONDS: 8,             // sits at least this long...
+    MAX_SECONDS: 16,            // ...and takes off by this even if ignored
+    LEAVE_DAMAGE: 24,           // accumulated damage that ends a perch early
+    BODY_HEIGHT: 3.4,           // body-centre height above the fountain base
+    ARROW_IMMUNE: true,         // vanilla: projectiles do nothing while
+                                // perched (ranged hits are detected by
+                                // distance — melee happens within reach)
+    ARROW_RANGE: 4.5,           // hits from farther than this count as arrows
+  },
+
+  // The breath attack (perch weapon): a purple particle cone at the player
+  // with a damage tick while they stand in it.
+  BREATH: {
+    RANGE: 14,                  // reaches this far from the mouth
+    CONE_DOT: 0.88,             // aim·target cosine gate (~28° half-angle)
+    DAMAGE: 3,                  // per tick caught in the cone
+    TICK_SECONDS: 0.6,
+    BURST_SECONDS: 3.0,         // one breath lasts this long...
+    COOLDOWN_SECONDS: 4.0,      // ...with this long between breaths
+    PARTICLE_COUNT: 160,        // pooled breath particles
+    PARTICLE_SPEED: 9,          // blocks/s leaving the mouth
+    PARTICLE_LIFE: 1.1,
+    PARTICLE_SIZE: 0.5,
+  },
+
+  // Wing knockback: a fast pass that clips the player shoves them hard.
+  WING: {
+    DAMAGE: 5,                  // vanilla dragon body hit
+    RANGE: 4.0,                 // player within this of the body centre
+    MIN_SPEED: 8,               // only while genuinely sweeping past
+    COOLDOWN_SECONDS: 1.2,      // between wing hits
+  },
+
+  // Crystal healing (SPEC: regenerates from any living crystal, visible
+  // beam). The nearest living crystal within range feeds the dragon.
+  HEAL: {
+    RANGE: 64,                  // crystals feed the dragon within this
+    PER_SECOND: 3,              // health per second while connected
+    CRYSTAL_POP_DAMAGE: 10,     // losing the connected crystal stings
+                                // (vanilla explosion feedback)
+  },
+
+  // The death sequence: glide to the centre, light beams, gone.
+  DEATH: {
+    SECONDS: 5.5,               // the whole sequence
+    RISE_HEIGHT: 14,            // final hover height above the fountain
+    BEAM_COUNT: 9,              // radiating light beams
+    BEAM_LENGTH: 28,
+    BEAM_WIDTH: 0.55,
+    FLASH_SECONDS: 1.0,         // terminal white-out flash
+  },
 };
 
-// ---------------------------------------------------------------------------
-// TEMPORARY, MUST REMOVE BEFORE PHASE 20 — Nether test chest
-// ---------------------------------------------------------------------------
-
-// Places a chest at the player's spawn point holding 10 obsidian, a flint
-// and steel, a diamond pickaxe and an iron sword, so the portal/Nether can
-// be tested without a full playthrough (main.js reads it at boot).
-export const TEST_CHEST = true;
+// End crystals (entities/crystals.js — Phase 20): one atop each obsidian
+// pillar, healing the dragon, destroyable with a hit (they explode).
+export const END_CRYSTAL = {
+  SIZE: 1.6,                    // hittable AABB edge (blocks)
+  BOB_HEIGHT: 0.18,             // hover bob amplitude
+  BOB_HZ: 0.5,
+  SPIN_RATE: 1.2,               // rad/s of the glass cage spin
+  CORE_SPIN_RATE: -2.1,         // the inner core counter-spins
+  EXPLODE_DAMAGE: 12,           // blast damage at the crystal
+  EXPLODE_BLOCK_RADIUS: 2,      // crater size (obsidian/bedrock survive)
+  BEAM_WIDTH: 0.22,             // healing-beam thickness (blocks)
+  BEAM_COLOR: 0xe0b8ff,         // pale violet
+  BEAM_OPACITY: 0.75,
+};
 
 // ---------------------------------------------------------------------------
 // Debug / development
