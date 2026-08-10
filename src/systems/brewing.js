@@ -183,6 +183,20 @@ export class BrewingStand extends SlotContainer {
   // progress movement does not (the screen polls it per frame).
   update(dt) {
     if (dt <= 0) return;
+    // Load a blaze powder the moment the fuel slot holds one and the
+    // charge is empty (Phase 19 — vanilla loads eagerly: the powder bar
+    // fills as soon as fuel goes in, visible feedback that the stand is
+    // live; it previously waited for a brewable batch, which read as
+    // "fuel sits there, nothing happens").
+    if (this.fuelBrews <= 0) {
+      const fuel = this.slots[SLOT_FUEL];
+      if (fuel && fuel.name === FUEL_ITEM) {
+        fuel.count -= 1;
+        if (fuel.count <= 0) this.slots[SLOT_FUEL] = null;
+        this.fuelBrews = BREWING.BREWS_PER_FUEL;
+        this._emit();
+      }
+    }
     // Progress belongs to a specific ingredient (the furnace rule):
     // swapping it mid-brew restarts the operation.
     const ingName = this.slots[SLOT_INGREDIENT]?.name ?? null;
@@ -191,21 +205,9 @@ export class BrewingStand extends SlotContainer {
       this.progress = 0;
     }
     const bottles = this._brewableBottles();
-    if (!bottles) {
-      this.progress = 0; // nothing to brew: the operation just stops
+    if (!bottles || this.fuelBrews <= 0) {
+      this.progress = 0; // nothing to brew (or no charge): it just stops
       return;
-    }
-    // Load a blaze powder only when a brew can actually run (vanilla).
-    if (this.fuelBrews <= 0) {
-      const fuel = this.slots[SLOT_FUEL];
-      if (!fuel || fuel.name !== FUEL_ITEM) {
-        this.progress = 0;
-        return;
-      }
-      fuel.count -= 1;
-      if (fuel.count <= 0) this.slots[SLOT_FUEL] = null;
-      this.fuelBrews = BREWING.BREWS_PER_FUEL;
-      this._emit();
     }
     this.progress += dt;
     if (this.progress >= BREWING.BREW_SECONDS - 1e-9) {

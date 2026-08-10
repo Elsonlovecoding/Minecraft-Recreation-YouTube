@@ -128,6 +128,10 @@ export const BLOCK = {
   NETHER_WART_0: 65,
   NETHER_WART_1: 66,
   NETHER_WART_2: 67,
+  // Phase 19: an end portal frame holding an eye of ender (right-clicking
+  // a frame with an eye fills it; some generate pre-filled). The base
+  // END_PORTAL_FRAME id 33 stays the empty frame.
+  END_PORTAL_FRAME_EYE: 68,
 };
 
 export const BLOCKS = [];
@@ -410,12 +414,18 @@ registerWart(BLOCK.NETHER_WART_2, 'nether_wart_2', [{ item: 'nether_wart', count
 register(BLOCK.END_STONE, 'end_stone', 'End Stone', {
   faces: { all: TILE.END_STONE }, hardness: 3.0, tool: 'pickaxe', minTier: 'wood',
 });
+// End portal frames render as the vanilla 13/16-tall box (the emitter in
+// world/emitters.js; faces stay null so the cube emitter skips them), so
+// they're `transparent` for culling while still absorbing light (opacity
+// 15) and carrying a full collision cell. Unbreakable, like vanilla. The
+// EYE variant adds the small raised eye box (atlas tile 58) and a soft glow.
 register(BLOCK.END_PORTAL_FRAME, 'end_portal_frame', 'End Portal Frame', {
-  faces: {
-    top: TILE.END_PORTAL_FRAME_TOP, bottom: TILE.END_STONE,
-    side: TILE.END_PORTAL_FRAME_SIDE,
-  },
-  hardness: Infinity, drops: [], special: 'end_portal_frame',
+  faces: null, hardness: Infinity, drops: [], special: 'end_portal_frame',
+  transparent: true, opacity: 15,
+});
+register(BLOCK.END_PORTAL_FRAME_EYE, 'end_portal_frame_eye', 'End Portal Frame', {
+  faces: null, hardness: Infinity, drops: [], special: 'end_portal_frame',
+  transparent: true, opacity: 15, light: 3,
 });
 register(BLOCK.END_PORTAL, 'end_portal', 'End Portal', {
   faces: null, solid: false, transparent: true, light: 15,
@@ -439,17 +449,25 @@ register(BLOCK.BOOKSHELF, 'bookshelf', 'Bookshelf', {
   faces: { top: TILE.OAK_PLANKS, bottom: TILE.OAK_PLANKS, side: TILE.BOOKSHELF },
   hardness: 1.5, tool: 'axe', drops: [{ item: 'book', count: 3 }],
 });
+// Iron bars render as thin panes connecting to solid neighbours (Phase 19
+// emitter — faces null keeps the cube emitter away); the item shows the
+// flat atlas tile (entities/items.js ATLAS_SPRITE_ITEMS, the torch rule).
+// Collision stays the full cell, an accepted simplification.
 register(BLOCK.IRON_BARS, 'iron_bars', 'Iron Bars', {
-  faces: { all: TILE.IRON_BARS }, hardness: 5.0, tool: 'pickaxe', minTier: 'wood',
+  faces: null, hardness: 5.0, tool: 'pickaxe', minTier: 'wood',
   transparent: true, special: 'bars',
 });
 register(BLOCK.SPAWNER, 'spawner', 'Monster Spawner', {
   faces: { all: TILE.SPAWNER }, hardness: 5.0, tool: 'pickaxe', minTier: 'wood',
   transparent: true, drops: [],
 });
+// The brewing stand renders as its real box model (Phase 19 — base plate,
+// rod, three bottle arms; world/emitters.js): faces null keeps the cube
+// emitter away, opacity 0 lets light pass. Item visuals fall back to the
+// shipped assets/items/brewing_stand.png sprite.
 register(BLOCK.BREWING_STAND, 'brewing_stand', 'Brewing Stand', {
-  faces: { all: TILE.BREWING_STAND }, hardness: 0.5, tool: 'pickaxe', minTier: 'wood',
-  transparent: true, special: 'brewing_stand',
+  faces: null, hardness: 0.5, tool: 'pickaxe', minTier: 'wood',
+  transparent: true, opacity: 0, special: 'brewing_stand', light: 1,
 });
 register(BLOCK.WHITE_WOOL, 'white_wool', 'White Wool', {
   faces: { all: TILE.WHITE_WOOL }, hardness: 0.8,

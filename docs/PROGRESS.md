@@ -8,7 +8,53 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-Phase last completed: **Phase 18 — the bridge to the End: brewing
+Phase last completed: **Phase 19 — the stronghold and the end portal:
+stronghold generation (dimensions/stronghold.js — ONE stronghold per
+world, underground, its portal room anchored EXACTLY to the
+strongholdCenter point the eyes of ender have flown toward since Phase 18
+— a seeded blueprint of 11-block cells grown by the fortress.js walk:
+3-wide walled corridors with torches, staircase pieces shifting the deck
+±4 between levels, junction rooms where arms branch, terminal LIBRARIES
+(bookshelf-lined walls + a central double row, torch-lit) and STORAGE
+rooms (loot chests, crates, an iron-barred stock cell) — all in stone
+brick weathered per-block with mossy/cracked variants, every piece
+linked flush and every room doorwayed toward its linked neighbours, with
+support piers where pieces cross caves; emitted per chunk as the
+overworld's LAST generation pass, order-independent), the portal room
+(the 12-frame end portal ring around a sunken 3x3 lava pool, iron-bar
+wall niches, walkway torches; each frame pre-filled with an eye at 10%
+per seed-hash — strongholdCenter lands on a WALKWAY column so digging
+straight down at the eye's signal can never drop the player into the
+pool), the end portal itself (right-clicking an empty frame with an eye
+of ender fills it through the real use chain; the 12th eye fills the 3x3
+interior with END_PORTAL blocks — an animated fullbright sheet at 12/16
+— and falling in transports to the End), a real-if-minimal END dimension
+(dimensions/end.js — the ~100-block end-stone island floating over void
+with a ragged coast, the obsidian arrival platform ON the island margin
+so arrival can never soft-lock, END_SKY purple gloom, endermen spawning
+any-light on the island; void below y=-80 kills — pillars/crystals/
+dragon are Phase 20, layering onto this generator), stronghold loot
+chests (world/chests.js grew the spawners.js chunk-scan — generated
+chests are discovered per newly meshed chunk and stocked ONCE with
+deterministic per-position loot: bread/iron/coal/apples/pearls/books/
+torches), the four session bug fixes (the brewing stand's REAL box model
+— stone base plate, thin rod, three radiating bottle-arm panes sampling
+the tile art — replacing the garbled full-cube; brewing re-verified
+end-to-end in the live game through every insertion path and fuel now
+loads EAGERLY like vanilla so the powder bar responds the moment powder
+goes in; endermen raised 20→60 overworld spawn weight AND spawning
+commonly in the Nether — 2:1 over ghasts via per-dimension weight
+overrides, cap 10 — and filling the End; Nether fog widened 8/72 →
+20/140 so terrain, lava oceans and fortresses read at distance), iron
+bars rendering as real connecting panes (an emitter, like the new
+frame/portal/stand shapes — atlas tile 58 `end_portal_frame_eye` was
+generated into the atlas: frame top + the ender-eye art), and the
+mandated player/interaction.js split (player/fluid_actions.js — the
+bucket/bottle actions, moved verbatim; interaction 765 lines, back under
+the cap; the spawn-profile machinery also moved from mobs.js into
+entities/spawning.js, its natural home, keeping mobs.js under the cap)**
+
+Previous phase: **Phase 18 — the bridge to the End: brewing
 (systems/brewing.js — the 5-slot brewing stand on the SlotContainer
 machinery, blaze powder fuel loaded 20 operations at a time, the SPEC
 potion table with all three bottles transforming together per 20s
@@ -40,7 +86,7 @@ red-orange fog and tint, lava oceans lighting their shores through the
 normal flood fill), and the mandated ui/screens.js split
 (ui/containers.js — the chest/furnace/brewing screen sections)**
 
-Previous phase: **Phase 17 — nether fortresses: region-seeded
+Phase 17 (still earlier): **nether fortresses: region-seeded
 nether-brick fortress generation in the real Nether (a guaranteed fortress
 per 192-block region — grown as a deterministic blueprint: a central
 blaze-spawner room, bridge and corridor runs, crossings, terminal blaze
@@ -59,44 +105,26 @@ replanting grows on timers, soil break pops the plant), fireball options
 size-cap splits (world/emitters.js out of chunks.js with a byte-identical
 A/B proof; entities/skeleton.js out of mobs.js, moved verbatim)**
 
-Phase 16 (still earlier): **the real Nether: the placeholder
-generator replaced by genuine generation (netherrack between a bedrock
-floor and the bedrock ceiling at 128, huge open caverns from a shaped 3D
-density field, lava oceans flooding every open cell at/below y=31,
-floating netherrack formations, soul sand patches that slow movement,
-glowstone clusters dangling from ceilings, nether quartz ore veins, rare
-wall lava leaks), the SPEC Nether atmosphere completed (no sky/day-night
-as before, plus a new dimension-wide AMBIENT_LIGHT floor on the effective
-sky level so enclosed netherrack reads as constant dim red instead of
-pitch black under the ceiling), Nether lava ticking twice as fast
-(per-dimension fluids override), ceiling-aware linked-portal placement
-(spiral ground search; a carved netherrack pocket when the area offers
-none — arrivals can no longer land on top of the bedrock ceiling), the
-ghast (4-block flying mob on a gravity-free wander, slow exploding
-fireballs at a visible player, melee-deflectable — a deflected fireball
-becomes the player's own projectile and famously kills its ghast),
-per-dimension spawn tables (the Nether spawns only ghasts, any light, its
-own small cap), and the chest-lid fix (the modern sheet stores the box
-unwrap's top/bottom slots SWAPPED — the lid rendered its dark underside
-art on top; model + icon both corrected against the decoded pixels)**
-
 ---
 
-## TEMPORARY, MUST REMOVE (before Phase 20)
+## TEMPORARY, MUST REMOVE (at the end of Phase 20 — the dragon session)
 
 - **The spawn test chests** (`TEST_CHEST` in config.js, default true;
   placement in main.js right after prebuild): TWO chests beside the
   player's spawn point (the kit is 32 slots, past one chest's 27, so the
   overflow fills a second chest one block further out), stocked so the
-  portal, the Nether, brewing, endermen and eyes of ender can all be
-  tested without a full playthrough. Contents (Phase 18 expansion):
-  14 obsidian, 1 flint and steel, 1 brewing stand, 64 blaze rods,
-  8 blaze powder, 8 nether wart, 16 ender pearls, 16 eyes of ender,
+  portal, the Nether, brewing, endermen, eyes of ender and the stronghold
+  loop can all be tested without a full playthrough. Contents (Phase 18
+  expansion): 14 obsidian, 1 flint and steel, 1 brewing stand, 64 blaze
+  rods, 8 blaze powder, 8 nether wart, 16 ender pearls, 16 eyes of ender,
   6 glass bottles, 6 water bottles, 3 buckets, a full diamond armour set,
   a diamond sword/pickaxe/axe/shovel, 1 iron sword, 1 bow, 64 arrows,
   64 torches, 64 cobblestone, 64 oak planks (tools, armour and the bow
   arrive at full durability through `container.add`). Delete the config
-  flag and the main.js block together.
+  flag and the main.js block together. (Phase 19 note: the deadline moved
+  one phase — this session's eye-throw/stronghold loop and next session's
+  dragon fight are exactly what the kit stages; it must be gone in the
+  session that ships the victory screen.)
 
 ---
 
@@ -1477,6 +1505,148 @@ Phase 18 (this session) additions, one entry per file:
 - `docs/SPEC.md` Phase 18 — the blaze mob-table row updated to the
   rebalanced real values (5 fireball damage + brief fire, volley of 3
   then ~5s cooldown, visible wind-up) per the session's bug report.
+- `src/dimensions/stronghold.js` — Phase 19: real stronghold generation
+  around the Phase 18 `strongholdCenter` anchor. `StrongholdGenerator`:
+  the cached seeded blueprint (11-block cells grown by the fortress.js
+  FIFO walk — corridors, stairs shifting decks ±LEVEL_STEP within
+  BASE_Y±LEVEL_RANGE, junction rooms, terminals alternating library/
+  storage; dead-end junctions capped as rooms; every merge flush-height
+  only, perpendicular same-height merges upgrading corridors to
+  junctions), per-chunk emission behind a bounding-box early-out
+  (order-independent — every intersecting chunk re-derives the same
+  blueprint and writes only its own columns), per-block mossy/cracked
+  weathering rolls, support piers under rooms/runs where caves cross,
+  and the portal room: the 12-frame ring (5x5 minus corners) at deck+1
+  around the sunken 3x3 lava pool, per-frame 10% pre-fill hashes,
+  iron-bar wall niches, walkway torches — with `strongholdCenter`
+  anchored to a WALKWAY offset (config ANCHOR) so the dig-straight-down
+  arrival is safe. `blueprint()` exposes frames/portalCells/chests/
+  bounds; `entryPoint()` for tooling; `lootFor(x,y,z)` deterministic
+  chest loot. `createEndPortal` (same file): `fillFrame` flips
+  FRAME→FRAME_EYE through the real right-click chain and, on the 12th
+  eye, writes the 3x3 END_PORTAL interior; `update` reads the player's
+  feet/midriff cells and travels on contact — dimension switch to 'end',
+  arrival on the obsidian platform, prebuild before the next frame (the
+  portals.js travel shape).
+- `src/dimensions/end.js` — Phase 19: `EndGenerator` (the nether.js
+  interface): the central end-stone island — radial thickness taper,
+  simplex-wobbled ragged coastline, gentle surface undulation — floating
+  over void, plus the 5x5 obsidian arrival platform with cleared
+  headroom ON the island margin (config END.PLATFORM) so stepping off
+  can never soft-lock over void. Pillars/crystals/exit portal/dragon are
+  Phase 20 passes layered onto this generator.
+- `src/world/terrain.js` Phase 19 — the stronghold pass runs LAST in
+  `generateChunk` (structure writes win), exactly like the Nether's
+  fortress pass; `world.generator.stronghold` is the shared instance
+  (main.js reuses it for the end-portal runtime and chest loot).
+- `src/world/emitters.js` Phase 19 — four new special emitters (and the
+  shared `pushBox`/`pushLitQuad` small-box helpers, all lit flat by the
+  block's own cell like the torch): the BREWING STAND's real model
+  (stone base plate, 2px rod sampling the tile's rod column, three
+  radiating DoubleSide arm panes carrying the tile's hanging-bottle art
+  — replaces the garbled full-cube of the flat tile), IRON BARS as thin
+  panes connecting toward solid/bars neighbours (half-panes join
+  seamlessly across cells; a lone block renders a free-standing cross),
+  the END PORTAL FRAME as the vanilla 13/16 box (side art's own 13px
+  band, frame-top tile, END-stone-based; the EYE variant adds the raised
+  4px eye box sampling the new tile 58 and emits light 3), and the END
+  PORTAL interior as a fullbright animated sheet at 12/16 in the shared
+  portal-swirl pass with world-continuous UVs. Dispatches in
+  world/chunks.js; the four blocks went `faces: null` in the registry.
+- `assets/block_atlas.png` — tile 58 `end_portal_frame_eye` generated in
+  place (frame-top art + the ender-eye item art centred; all existing
+  tiles verified byte-identical) — docs/ATLAS_MAP.md and render/atlas.js
+  updated. iron_bars joined ATLAS_SPRITE_ITEMS (its item art is the
+  tile; there is no assets/items sprite for it).
+- `src/world/chests.js` Phase 19 — generated-chest discovery: the
+  spawners.js chunk-scan pattern (`_chestScanned` flag, budgeted per
+  frame via config CHESTS.SCAN_CHUNKS_PER_FRAME, cleared on the world.js
+  unload paths) finds chests structures wrote into chunk data, creates
+  their states and stocks them ONCE from the injected `lootFor(x,y,z)`
+  (main.js wires the stronghold's). The lazy `chestAt` path routes
+  through the same discovery, so opening an unscanned generated chest
+  still loots correctly.
+- `src/systems/brewing.js` Phase 19 — fuel loads EAGERLY: a blaze powder
+  is consumed the moment the fuel slot holds one while the charge is
+  empty (vanilla), so the powder bar fills immediately — visible
+  feedback that the stand is live (it previously waited for a brewable
+  batch, which read as dead in the session's bug report; the report's
+  wart+bottles+powder case itself could NOT be reproduced — the machine,
+  tick wiring, screen click path, drag path and shift-routing all brewed
+  correctly in the live build under test).
+- `src/player/fluid_actions.js` — NEW (the mandated interaction.js
+  split): the bucket scoop/place + glass-bottle fill actions, moved
+  verbatim; they share the interaction's live ray state through the
+  factory (interaction.js is 765 lines now, back under the cap).
+- `src/player/interaction.js` Phase 19 — the `onFillFrame` branch in the
+  right-click chain (before the throw): an eye of ender used ON an empty
+  frame fills it and consumes one; filled/absent frames fall through to
+  the normal throw.
+- `src/entities/spawning.js` Phase 19 — owns the spawn-profile machinery
+  (moved from mobs.js, its natural home; mobs.js is 758 lines, under the
+  cap): the overworld default pools, `setSpawnProfile`, and per-profile
+  pool entries as names OR `{ name, weight }` — a dimension can override
+  a type's spawnWeight without touching its overworld rarity (the
+  Nether lists endermen at 200 vs the ghast's 100).
+- `src/entities/registry.js` Phase 19 — enderman spawnWeight 20 → 60
+  (the "could not find a single one" report: at 20 the hostile cap
+  filled with cave regulars before an enderman ever rolled).
+- `src/main.js` Phase 19 — the 'end' dimension def (END_SKY, enderman
+  spawn table cap END.HOSTILE_CAP, EndGenerator), the Nether def's
+  enderman entry (weight override, cap MOBS.NETHER_HOSTILE_CAP),
+  `createEndPortal` wiring (+ its per-frame update), chest lootFor,
+  `__stronghold`/`__endPortal` dev handles.
+- `src/dimensions/portals.js` Phase 19 — the registry carries an 'end'
+  list so every per-frame walk over the active dimension's portals is
+  safe there (the End-travel crash the browser suite caught:
+  registry['end'] was undefined and the game loop died on arrival), and
+  `tryIgnite` refuses to light nether portals in the End (vanilla).
+- `src/player/stats.js` Phase 19 — void damage: below STATS.VOID_DAMAGE_Y
+  (-80) the player takes VOID_DAMAGE per tick until death (SPEC "falling
+  into void kills"); unreachable outside the End (bedrock floors).
+- `src/render/lighting.js` — unchanged; END_SKY simply carries the same
+  fixed-sky fields NETHER_SKY does (SKY_DARKEN/SKY_TINT/AMBIENT_LIGHT).
+
+Phase 19 verification: 83 node checks green against the real modules —
+the stronghold suite (73: across 5 seeds the blueprint's SPEC distance
+band, determinism, radius containment, exactly one portal room / 12
+frames / 9 portal cells, at least one library and one storage room, the
+piece budget and deck band, and cell-graph connectivity reaching every
+piece; then over the real emitter on a mock chunk grid: byte-identical
+emission under a reversed chunk order, all 12 frames with the pre-fill
+hashes matching the blueprint, the 3x3 sealed lava pool, mossy/cracked/
+plain brick censuses, bars/bookshelves/chests/torches present, full
+BLOCK-LEVEL walkability — a step/jump BFS from the dig-down entry column
+reaches every room interior, all 12 frames and every chest — the
+structure top 24+ blocks under the lowest surface across the bounds, and
+the REAL TerrainGenerator emitting the stronghold in its heart chunk),
+plus brewing eager-fuel and End-island checks (10: powder charges the
+stand immediately with no bottles and still brews/debits correctly;
+island stone at the centre, void beyond the coast, the obsidian platform
+with cleared headroom, deterministic chunks, the coast inside its band).
+In headless Chromium (the local-three harness), 20 checks across two
+suites, zero console errors throughout: the full loop end to end —
+boot, the brewing stand rendering as its real model, teleport to the
+stronghold entry (standing on real stone-brick floor), 12 frames + the
+lava pool present in the live world, loot chests discovered by the scan
+and holding items, the remaining 11 frames filled through the real
+fillFrame path (the 12th was seed-pre-filled), the portal ACTIVE with
+all 9 END_PORTAL cells placed, a second eye on a filled frame refused,
+stepping into the portal travelling to the End and landing on the
+obsidian platform, the island generated around it, the void killing the
+player and respawn returning to the overworld, and the widened Nether
+fog values live; and the spawn suite — the real spawn cycle at midnight
+rolled 108 overworld hostiles including 15 endermen (~14%), and the
+Nether profile produced endermen dominating ghasts 289:16 (the 1-block
+enderman body fits where the ghast's 4-block box can't, on top of the
+2:1 weights). Screenshots verify the look: the brewing stand's
+rod/base/bottle-arm silhouette, the portal room's frame ring around the
+glowing pool with a pre-filled eye, the ACTIVE purple portal sheet
+inside the 12 eyes, the End island under the void sky from the obsidian
+platform, and Nether terrain reading far into the red haze. The
+End-travel crash the suite caught on its first run (the game loop dying
+on arrival because portals.js iterated registry['end'] === undefined)
+was fixed and re-verified — the whole suite re-ran green.
 
 Phase 18 verification: 659 node checks green across four suites — the
 fortress blueprint suite (561: 30 regions fully connected through
@@ -2819,13 +2989,46 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Partially built
 
-- Remaining stub modules with responsibility headers: entities/dragon.js,
-  dimensions/end.js (entities/entity.js, pathfinding.js, models.js,
-  mobs.js are real as of Phase 12; systems/combat.js as of 13;
-  dimensions/portals.js and dimensions/dimensions.js as of 15;
-  dimensions/nether.js as of 16; systems/brewing.js as of 18;
-  dimensions/stronghold.js carries the deterministic LOCATION as of 18 —
-  generation itself is still to come and must anchor to it).
+- Remaining stub modules with responsibility headers: entities/dragon.js
+  only (entities/entity.js, pathfinding.js, models.js, mobs.js are real
+  as of Phase 12; systems/combat.js as of 13; dimensions/portals.js and
+  dimensions/dimensions.js as of 15; dimensions/nether.js as of 16;
+  systems/brewing.js as of 18; dimensions/stronghold.js as of 19 — the
+  full generation, anchored to the Phase 18 location; dimensions/end.js
+  as of 19 — the island and arrival platform, with pillars/crystals/exit
+  portal/dragon as Phase 20 passes layered onto it).
+- Phase 19 deliberate slices:
+  - The stronghold has no vanilla room variety beyond the SPEC list — no
+    fountains, prison cells beyond the storage stock cell, or five-way
+    crossings; junctions are plain torch-lit rooms. Stairs are 1-block
+    steps (the fortress rule — no stair blocks exist). Doors are open
+    3-wide arches (no door blocks in scope).
+  - Portal-room frames are unbreakable and undroppable (vanilla); the
+    interior END_PORTAL blocks only ever appear via activation (or the
+    ~1e-12 all-prefilled seed roll, handled deterministically). The
+    activation check runs on fill, not per frame — breaking blocks can't
+    deactivate the portal (frames are unbreakable, so nothing can).
+  - The end portal sheet reuses the nether portal's animated purple
+    swirl material (fullbright, world-continuous UVs) rather than the
+    vanilla starfield — a deliberate reuse, reads correctly in place.
+  - The End is the ISLAND only this phase: no obsidian pillars, no
+    crystals, no exit portal structure, no dragon (Phase 20 — they layer
+    onto EndGenerator exactly like the fortress pass layers onto the
+    Nether). One-way for now: dying (or the void) returns you to the
+    overworld spawn; the exit portal home arrives with the dragon.
+  - The eye-throw target stays the stronghold CENTRE column (the
+    portal-room walkway anchor) at every distance — vanilla eyes lead to
+    the stronghold START; ours lead to the portal room itself, which is
+    kinder and the dig-down column is deliberately pool-safe.
+  - Iron-bar panes connect to solid blocks and other bars only (not
+    glass); their collision stays the full cell (the Phase 10 note).
+    Bars/frames/the stand cast full-cell AO shadows no longer (they went
+    `transparent` for culling) — the trade for real shapes.
+  - Loot chests roll a fixed stronghold-flavoured table per position —
+    no per-room-type tables (library chests would hold books in vanilla;
+    ours already roll books at 40%).
+  - Enderman Nether spawns use the standard ground rules (netherrack at
+    any light) — no biome gating (there are no Nether biomes).
 - Phase 18 deliberate slices:
   - Magma cream (the fire-resistance ingredient) is an occasional blaze
     drop (25%) — its vanilla sources (magma cubes, bartering) are out of
@@ -2836,15 +3039,17 @@ suites + the reviewers' own probes), zero console errors.
     distinguish them, so awkward is a murky violet instead of vanilla's
     water-blue. Splash/lingering/extended/II variants: none. The awkward
     bottle drinks like water (no effect), vanilla.
-  - The brewing stand still renders as its full atlas-tile cube (the
-    `special` shape note from Phase 10 stands); its screen layout is a
-    simplified vanilla (no bubbling animation art).
-  - Fuel is debited per completed operation (vanilla debits on start) —
-    an interrupted brew doesn't waste a charge; loaded charges persist.
+  - ~~The brewing stand still renders as its full atlas-tile cube~~ —
+    Phase 19: the real box model (world/emitters.js). Its screen layout
+    remains a simplified vanilla (no bubbling animation art).
+  - ~~Fuel is debited per completed operation~~ — Phase 19: a powder is
+    consumed (and the bar fills) the moment the slot holds one, vanilla;
+    the charge still persists across interruptions.
   - The enderman never picks up blocks, has no idle sounds beyond the
     warp vwoop, and doesn't dodge arrows pre-hit (our arrows only test
-    mobs; the post-hit blink covers the feel). No End dimension yet, so
-    night-overworld is its only spawn ground this phase. The stare uses
+    mobs; the post-hit blink covers the feel). ~~No End dimension yet~~ —
+    Phase 19: endermen spawn in the Nether (commonly) and the End too,
+    and the overworld night weight tripled. The stare uses
     the vanilla dot threshold but not the vanilla's helmet/pumpkin
     exemptions (no pumpkins in scope).
   - Eyes of ender fly toward the stronghold's true bearing from wherever
@@ -3093,18 +3298,40 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **The bridge to the End is complete**: brewing (fire resistance in
-  hand), endermen paying pearls, eyes of ender flying at a fixed point.
-  The remaining SPEC arc: the **stronghold** (generation MUST anchor its
-  portal room to `strongholdCenter(TERRAIN.SEED)` in
-  dimensions/stronghold.js — the eyes have been pointing there since this
-  phase; corridors/rooms/portal room with pre-filled frames per SPEC;
-  the spawner-discovery scan pattern in world/spawners.js is what its
-  loot chests will need, chests.js only creates state on block events),
-  then the **End and the dragon** (dimensions/end.js + entities/dragon.js
-  stubs; END_SKY exists; the enderman registry entry is ready to be
-  listed in the End def's spawn table; end portal frame/eye filling is
-  PORTALS.END_PORTAL_FRAME_COUNT + the END_PORTAL_FRAME block).
+- **The road to the dragon is open**: the whole progression now runs
+  from first tree to STANDING IN THE END — throw eyes, follow, dig down
+  at the signal (the shaft lands on the portal-room walkway, never the
+  pool), fill the ring, fall in. What remains is Phase 20, the finale:
+  the End's FURNITURE (obsidian pillars ringing the island with end
+  crystals healing the dragon — END.PILLAR_* config exists; generate
+  them as another EndGenerator pass, the fortress-pass shape; crystals
+  are entities, not blocks — they need a model, a healing beam and
+  arrow/hit destruction), the exit portal structure at the island centre
+  (inactive until the dragon dies; activating + entering it = the
+  VICTORY screen, ui/screens.js has death as the template), the DRAGON
+  itself (entities/dragon.js stub; SPEC: 200hp, crystal regeneration,
+  circling/strafing/perching phases, head-only full damage
+  (DRAGON config exists), breath + knockback, the death animation and
+  the egg), and the TEST_CHEST removal (see the TEMPORARY section — it
+  must be gone in the session that ships the victory screen).
+- Phase 19 APIs: `world.generator.stronghold` (a StrongholdGenerator) is
+  the layout truth — `blueprint()` (frames/portalCells/chests/bounds),
+  `entryPoint()`, `lootFor(x,y,z)`; main.js shares the one instance with
+  `createEndPortal` and the chest scan. `createEndPortal.checkActivation`
+  re-derives portal state from world blocks (idempotent). The End
+  arrival is END.PLATFORM/ISLAND_TOP_Y; the trip back (exit portal) can
+  reuse the same travel shape with switchTo('overworld'). The chest
+  chunk-scan (`_chestScanned`, world/chests.js) now exists for ANY
+  structure that generates chests — a dungeon phase would only add loot
+  in its own lootFor. Per-dimension spawn pools take `{ name, weight }`
+  overrides (entities/spawning.js). STATS.VOID_DAMAGE_Y is the void
+  floor; the End def's group/sky/spawn wiring in main.js is the model
+  for any future dimension.
+- Phase 19 gotcha, learned the hard way: ANY per-frame system that walks
+  `registry[dimensions.activeKey]`-style tables MUST handle a dimension
+  key it has never seen — the End's first arrival killed the game loop
+  inside portals.js (undefined list) until the registry grew an 'end'
+  entry. Grep for `activeKey` when adding dimensions.
 - Phase 18 APIs: `strongholdCenter(seed)` (dimensions/stronghold.js) is
   the single source of truth for the stronghold's location — generation
   and the eyes must never disagree. `consumableValue(name)`
@@ -3169,11 +3396,12 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   believe the report — the Phase 14 harness proved internal state, not
   what a player sees.
 - ~~ui/screens.js (~810) is now the only file over the cap~~ — Phase 18:
-  split done (ui/containers.js; screens.js 670). NOW OVER THE CAP and
-  MUST be split before anything else is added to them:
-  `player/interaction.js` (817 after the bottle/eye/drink chain — cut the
-  bucket/bottle fluid actions) and `systems/combat.js` (808 — the arrow
-  machinery cut, mandated since Phase 17).
+  split done (ui/containers.js; screens.js 670). ~~player/interaction.js
+  (817)~~ — Phase 19: split done (player/fluid_actions.js; interaction
+  765; the mobs.js spawn-profile machinery also moved to
+  entities/spawning.js, mobs.js 758). STILL OVER THE CAP and MUST be
+  split before anything else lands in it: `systems/combat.js` (808 — the
+  arrow machinery cut, mandated since Phase 17).
 - With the survival loop closed, the remaining SPEC arc is the endgame:
   the stronghold, the End and the dragon.
 - Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
@@ -3200,11 +3428,10 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
   group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
   on a cache hit, so a `const` is still in its temporal dead zone (this
   has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
-- File-size caps (ARCHITECTURE): mobs.js sits at 787 (blaze + enderman
-  dispatches); screens.js got its Phase 18 split (670 +
-  ui/containers.js). interaction.js (817) and combat.js (808) are OVER
-  and carry mandated-split notes — see the cap bullet above and
-  ARCHITECTURE.md.
+- File-size caps (ARCHITECTURE): mobs.js 758 (Phase 19 spawn-profile
+  move), interaction.js 765 (Phase 19 fluid-actions split), screens.js
+  670. Only combat.js (808) remains OVER with its mandated arrow cut —
+  see the cap bullet above and ARCHITECTURE.md.
 - The mob-type registry entries for the herds reference config MOBS.PASSIVE
   at module load (chicken maxFallSpeed) — config stays import-order-safe
   as long as it has no imports of its own; keep it that way.
@@ -3426,4 +3653,5 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 15 | Portal mechanics: obsidian frame detection (SPEC 4x5 minimum, corners optional, node-tested pure logic), flint-and-steel lighting with durability wear through the real right-click chain, animated generated-swirl portal blocks (world-space UVs, emissive light 11), purple portal particles + procedural hum/shimmer/whoosh, 3s stand-to-travel with 1:8 coordinate scaling, linked portal reuse within 32 blocks or creation flush on local ground, portal break-down via the block listener; the dimension system (dimensions/dimensions.js): one World whose backing store swaps, per-dimension scene groups, every entity manager swapping collections (items/mobs/falling/arrows/fluids/furnaces/chests — frozen + hidden while stored, furnaces provably not smelting), fixed dimension skies (setDimensionSky), Nether death respawning at the overworld spawn; the placeholder flat-netherrack Nether; water+lava -> obsidian/cobblestone (immediate on contact, fluids.js); the distinct mega-cavern pass + waterfall springs (world/noise.js split, byte-identical); the skeleton shooting fix (raise-draw-release cycle, bow-position arrows, MIN_TINT night visibility, visible arc at speed 24); MOB_TYPES -> entities/registry.js (mandated split); TEMPORARY test chest behind config TEST_CHEST; 26 node + 61 browser checks, review fixes (stale-camera travel frame, canopy chest, portal UV seam) | The real Nether generation + blazes/ghasts (placeholder replaced next session); nether portal ceiling-height placement niceties (ocean-floor return portals, Y-blind link search); mobs/items never travel portals; brewing, stronghold, End, dragon |
 | 16 | The real Nether (dimensions/nether.js): shaped 3D density field between bedrock floor and the bedrock ceiling at 128 — huge open caverns, lava oceans at/below y=31, floating netherrack formations, soul sand patches (registry `slows`), glowstone ceiling clusters, quartz veins, rare wall lava leaks; ~1.5ms/chunk, byte-deterministic; the dimension ambient floor (`NETHER_SKY.AMBIENT_LIGHT` -> `uMinSkyLevel`) making "constant dim red" real under the ceiling; Nether lava tick halved (fluids.setTickSeconds per dimension); ceiling-aware linked-portal ground search + carved-pocket fallback (arrivals can't land on the ceiling); the ghast (entities/ghast.js + registry `flying`/`scale`/`minBrightness`, GHAST_MODEL from the real 2x sheet): gravity-free wander, fireballs at a visible player every 3s, melee deflection flipping ownership (systems/fireballs.js — combat raycast wraps fireballs, explode takes per-blast radii); per-dimension spawn tables (nether: ghasts only, any light, cap 4; overworld pools exclude `nether: true` types); the chest-lid fix (modern sheet's swapped top/bottom slots — model + icon); two cap splits (ghast.js, fireballs.js); 10 node + 23 browser checks, zero console errors | Nether fortresses + blazes + nether wart; arrows don't pop fireballs; ghast shooting-face texture; wider Nether lava range (needs new flow ids); brewing, stronghold, End, dragon |
 | 17 | Nether fortresses (dimensions/fortress.js): a guaranteed fortress per 192-block region — region-seeded blueprints (heart blaze room, 6-wide bridge/corridor runs with railings/windows, crossings, terminal blaze towers with merlons and roofed wart rooms with glowstone lamps), fully connected with doorways, one deck height, support piers to ground/lava; deterministic per-chunk emission (fortress pass last). The blaze (entities/blaze.js + BLAZE_MODEL/BLAZE_RINGS): hovers, holds its ring, charge -> burst of 3 small fast fireballs (6 dmg, no crater) -> cooldown, drops blaze rods 0-1, spawner-only. Blaze spawner block entities (world/spawners.js): spinning caged mini blaze, proximity-gated timed spawn cycles with a nearby cap, fluids-style chunk-scan discovery of generated spawners. Nether wart (blocks 65-67 + world/wart.js + the emitters crop model): fortress gardens generate it grown, harvest drops 2-4, PLANTABLE replant on soul sand grows on timers, soil break pops. Fireball opts (size/damageRadius/maxHardness — ghast blasts spare nether brick). Two mandated cap splits: world/emitters.js (byte-identical A/B) and entities/skeleton.js (verbatim). 23 node + 17 browser checks, zero console errors | Blazes spawner-only (no natural fortress spawns); single-level fortresses; no fire blocks from fireballs; no spawner XP; wart stages reuse the grown art cropped; brewing, enderman, stronghold, End, dragon |
+| 19 | The stronghold (dimensions/stronghold.js): seeded 11-block-cell blueprint grown from the portal room anchored at strongholdCenter (walkway-safe dig-down anchor), corridors/staircases/junctions/libraries/storage in weathered stone brick with iron bars, per-chunk order-independent emission as the overworld's last pass, support piers, deterministic loot chests via the new world/chests.js chunk-scan; the portal room (12-frame ring, 10% pre-filled, 3x3 lava pool, bar niches); the end portal (eye-on-frame filling through the real use chain, activation on the 12th eye, fall-in travel); the End island + obsidian arrival platform + END_SKY + endermen + void death (dimensions/end.js); emitters for the brewing stand's REAL model, iron-bar panes, the 13/16 frame (+eye box, atlas tile 58 generated) and the portal sheet; bug fixes: brewing verified end-to-end + eager fuel loading, enderman weight 20→60 + common in the Nether (2:1 override) + the End, Nether fog 8/72→20/140; mandated splits: player/fluid_actions.js out of interaction.js, spawn profiles out of mobs.js into spawning.js; the portals.js 'end' registry crash caught by the suite and fixed. 83 node + 20 browser checks, zero console errors | The End's pillars/crystals/exit portal/dragon/victory (Phase 20); combat.js still over the cap (arrow cut mandated); TEST_CHEST removal moved to the victory-screen session |
 | 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |

@@ -65,6 +65,7 @@ export const TILE = {
   GOLD_BLOCK: 55,
   DIAMOND_BLOCK: 56,
   COAL_BLOCK: 57,
+  END_PORTAL_FRAME_EYE: 58, // Phase 19: generated — frame top + the eye
 };
 
 let atlasTexture = null;

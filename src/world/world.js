@@ -328,12 +328,14 @@ export class World {
         // rule; its rescan is idempotent (states found by key are kept).
         chunk._fluidScanned = false;
         chunk._spawnerScanned = false;
+        chunk._chestScanned = false;
         if (!chunk.modified) this.chunks.delete(key);
       } else if (chunk.mesh && dx * dx + dz * dz > meshKeepR2) {
         disposeChunkMesh(chunk);
         this.meshedCount--;
         chunk._fluidScanned = false;
         chunk._spawnerScanned = false;
+        chunk._chestScanned = false;
       }
     }
   }

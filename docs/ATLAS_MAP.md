@@ -65,3 +65,4 @@ Index = row * 16 + column, row-major from top-left.
 | 55 | gold_block | ok |
 | 56 | diamond_block | ok |
 | 57 | coal_block | ok |
+| 58 | end_portal_frame_eye | ok (generated in Phase 19: frame top + the ender-eye item art centred) |

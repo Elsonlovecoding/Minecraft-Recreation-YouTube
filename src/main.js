@@ -3,8 +3,8 @@
 
 import * as THREE from 'three';
 import {
-  DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, NETHER, MOBS, TERRAIN,
-  TEST_CHEST,
+  DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
+  MOBS, TERRAIN, TEST_CHEST,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -29,7 +29,8 @@ import { createStats } from './player/stats.js';
 import { createDimensions } from './dimensions/dimensions.js';
 import { createPortals } from './dimensions/portals.js';
 import { NetherGenerator } from './dimensions/nether.js';
-import { strongholdCenter } from './dimensions/stronghold.js';
+import { EndGenerator } from './dimensions/end.js';
+import { strongholdCenter, createEndPortal } from './dimensions/stronghold.js';
 import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
@@ -72,10 +73,17 @@ async function init() {
   // meshes stay in memory, hidden, exactly as they were.
   const overworldGroup = new THREE.Group();
   const netherGroup = new THREE.Group();
+  const endGroup = new THREE.Group();
   netherGroup.visible = false;
+  endGroup.visible = false;
   scene.add(overworldGroup);
   scene.add(netherGroup);
+  scene.add(endGroup);
   world.bindScene(overworldGroup, chunkMaterials);
+  // Phase 19: the overworld generator's stronghold pass doubles as the
+  // single source of layout truth for the end-portal runtime and the
+  // loot-chest scan (one shared blueprint cache).
+  const stronghold = world.generator.stronghold;
 
   // Phase 5: the player — spawned safely on the surface, camera at eye
   // height. The old fly camera lives behind DEBUG.FLY_TOGGLE_CODE.
@@ -106,7 +114,11 @@ async function init() {
   // screen closed); breaking one drops its slots.
   const brewing = createBrewingSystem({ world, items });
   world.addBlockListener(brewing.onBlockChanged);
-  const chests = createChests({ world, scene, items, player });
+  const chests = createChests({
+    world, scene, items, player,
+    // Generated stronghold chests stock deterministic loot at discovery.
+    lootFor: (x, y, z) => stronghold.lootFor(x, y, z),
+  });
   world.addBlockListener(chests.onBlockChanged);
   // Phase 17: blaze spawner block entities (fortress rooms generate them —
   // discovered by chunk scan; the listener handles break/teardown) and the
@@ -162,6 +174,7 @@ async function init() {
     getTarget: () => strongholdCenter(TERRAIN.SEED),
   });
   let portals; // assigned below — clicks can only arrive long after init
+  let endPortal; // assigned below, same rule
   const interaction = createInteraction({
     world, camera, scene, canvas, player, items, inventory, stats,
     // A mob in the crosshair intercepts left clicks (attack, not mine);
@@ -172,8 +185,10 @@ async function init() {
     onUseMob: (mob, itemName) => mobs.useOnMob(mob, itemName),
     // Flint and steel on a block face (Phase 15): light a portal frame.
     onIgnite: (target) => portals.tryIgnite(target),
-    // A held eye of ender right-clicked (Phase 18): throw it.
+    // A held eye of ender right-clicked (Phase 18): throw it. Phase 19:
+    // right-clicked ON an empty portal frame, it fills the frame instead.
     onThrowEye: () => enderEyes.throwEye(),
+    onFillFrame: (target) => endPortal.fillFrame(target),
     onUseBlock: (target) => {
       if (target.id === BLOCK.CRAFTING_TABLE) {
         screens.openCrafting();
@@ -220,14 +235,43 @@ async function init() {
         group: netherGroup,
         sky: NETHER_SKY,
         spawning: true,
-        spawn: { hostiles: ['ghast'], hostileCap: MOBS.GHAST.CAP, anyLight: true },
+        // Phase 19: endermen spawn commonly in the Nether beside the
+        // ghasts (the weight override is per-dimension — overworld
+        // rarity untouched).
+        spawn: {
+          hostiles: [
+            'ghast',
+            { name: 'enderman', weight: MOBS.NETHER_ENDERMAN_WEIGHT },
+          ],
+          hostileCap: MOBS.NETHER_HOSTILE_CAP,
+          anyLight: true,
+        },
         lavaTickSeconds: NETHER.LAVA_TICK_SECONDS,
         makeGenerator: () => new NetherGenerator(TERRAIN.SEED),
+      },
+      // Phase 19: the End — the island, its purple gloom and its endermen
+      // (SPEC: "endermen spawn on the island"); pillars, crystals and the
+      // dragon arrive next phase.
+      end: {
+        group: endGroup,
+        sky: END_SKY,
+        spawning: true,
+        spawn: {
+          hostiles: ['enderman'],
+          hostileCap: END.HOSTILE_CAP,
+          anyLight: true,
+        },
+        makeGenerator: () => new EndGenerator(TERRAIN.SEED),
       },
     },
   });
   portals = createPortals({ world, scene, player, stats, camera, dimensions });
   world.addBlockListener(portals.onBlockChanged);
+  // Phase 19: end-portal runtime — frame filling, activation on the 12th
+  // eye, and the fall-in trip to the End.
+  endPortal = createEndPortal({
+    world, player, camera, dimensions, generator: stronghold,
+  });
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -323,6 +367,8 @@ async function init() {
   window.__wart = wart;
   window.__dimensions = dimensions;
   window.__portals = portals;
+  window.__stronghold = stronghold;
+  window.__endPortal = endPortal;
 
   initDebug();
   initHud(inventory);
@@ -413,6 +459,7 @@ async function init() {
       screens.update(delta);  // furnace flame/arrow indicators
       fluids.update(delta);   // lava spread steps + new-chunk settling
       portals.update(delta);  // stand-in-portal travel, particles, ambience
+      endPortal.update();     // fall-into-end-portal travel (Phase 19)
       chunkMaterials.scrollLava(delta); // animated flowing-lava texture
       chunkMaterials.scrollPortal(delta); // animated portal swirl
     }

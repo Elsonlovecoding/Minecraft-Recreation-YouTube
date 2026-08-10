@@ -63,13 +63,6 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   const mobs = [];
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
 
-  // The default (overworld) spawn pools: every hostile without a dimension
-  // restriction, and the passive herds. Dimension defs override them with
-  // their own tables via setSpawnProfile (Phase 16 — the ghast is
-  // `nether: true` and appears only in the Nether def's list).
-  const hostileTypes = Object.values(MOB_TYPES).filter((t) => t.hostile && !t.nether);
-  const passiveTypes = Object.values(MOB_TYPES).filter((t) => !t.hostile);
-
   // Phase 14 splits: natural spawning (entities/spawning.js) and passive
   // behaviour (entities/passive.js) plug back into this manager.
   const passive = createPassiveBehaviour({ world, player, items });
@@ -212,34 +205,12 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
   // --- spawning (entities/spawning.js since the Phase 14 split) ------------
 
   // Phase 16: the spawner reads a per-dimension profile — type pools, caps
-  // and the light rule. The default is the overworld; dimension defs
-  // override it through setSpawnProfile (dimensions/dimensions.js applies
+  // and the light rule; Phase 19 moved the profile machinery into
+  // entities/spawning.js (its natural home, and mobs.js was over the cap).
+  // setSpawnProfile is re-exported below (dimensions/dimensions.js applies
   // the def's `spawn` table on every switch).
-  const defaultProfile = {
-    hostile: hostileTypes,
-    passive: passiveTypes,
-    hostileCap: MOBS.HOSTILE_CAP,
-    passiveCap: MOBS.PASSIVE_CAP,
-    anyLight: false,
-  };
-  let spawnProfile = null;
-
-  function setSpawnProfile(profile) {
-    spawnProfile = profile
-      ? {
-        hostile: (profile.hostiles ?? []).map((n) => MOB_TYPES[n]).filter(Boolean),
-        passive: (profile.passives ?? []).map((n) => MOB_TYPES[n]).filter(Boolean),
-        hostileCap: profile.hostileCap ?? MOBS.HOSTILE_CAP,
-        passiveCap: profile.passiveCap ?? MOBS.PASSIVE_CAP,
-        anyLight: !!profile.anyLight,
-      }
-      : null;
-  }
-
-  const spawner = createSpawner({
-    world, player, dayNight, mobs, spawnAt,
-    getProfile: () => spawnProfile ?? defaultProfile,
-  });
+  const spawner = createSpawner({ world, player, dayNight, mobs, spawnAt });
+  const setSpawnProfile = spawner.setSpawnProfile;
 
   // The effective light for the spider's neutrality gate: block light holds
   // at night, sky light dims with the day/night cycle like the shading does.

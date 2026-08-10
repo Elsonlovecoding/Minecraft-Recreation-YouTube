@@ -53,6 +53,9 @@ src/
   player/
     controller.js        movement, physics, collision, camera
     interaction.js       raycast, break, place, block outline
+    fluid_actions.js     bucket scoop/place + glass-bottle filling (Phase
+                         19 split out of interaction.js per the size cap —
+                         moved verbatim, the mandated cut)
     hand.js              first-person hand: its own render pass, arm and
                          held-item meshes, swing/eat/draw poses (Phase 13
                          split out of interaction.js per the size cap)
@@ -142,11 +145,18 @@ src/
                          terminal blaze towers and wart rooms — emitted
                          per chunk deterministically, with support piers
                          down to ground/lava
-    end.js               end island, pillars, crystals
-    stronghold.js        stronghold generation, end portal room; Phase 18
-                         placed the deterministic LOCATION only
-                         (strongholdCenter — the eye-of-ender target;
-                         generation next phase anchors to it)
+    end.js               the End (Phase 19): the central end-stone island
+                         over void + the obsidian arrival platform;
+                         pillars, crystals and the dragon layer on next
+                         phase
+    stronghold.js        stronghold generation (Phase 19): the seeded
+                         blueprint anchored to strongholdCenter (the
+                         eye-of-ender target since 18) — corridors,
+                         staircases, libraries, storage rooms, the one
+                         portal room — emitted per chunk as the
+                         overworld's last generation pass; plus the
+                         end-portal runtime (frame filling, activation,
+                         fall-in travel to the End)
 
   ui/
     hud.js               hotbar, health, hunger, crosshair, potion-effect
@@ -183,17 +193,18 @@ not wherever is convenient.
 **No file over ~800 lines.** If one is growing past that, split it and note the split
 in this document. Current state of the cap: `config.js` is exempt (it is the
 constants registry — splitting it would scatter the single source of tunables);
-`player/interaction.js` got its mandated split in Phase 13 (the first-person
-hand lives in `player/hand.js` now) but the Phase 18 bottle/eye/drink chain
-put it at 817, OVER the cap — the next session must split before anything
-else lands in it (the bucket/bottle fluid actions are the natural cut);
+`player/interaction.js` got its hand split in Phase 13 (`player/hand.js`)
+and its mandated fluid-actions split in Phase 19 (`player/fluid_actions.js`,
+moved verbatim — the bucket/bottle actions; interaction is ~765 now);
 `entities/mobs.js` got its MOB_TYPES split in Phase 15 (`entities/registry.js`),
-its ghast split in Phase 16 (`entities/ghast.js`) and its mandated skeleton
-split in Phase 17 (`entities/skeleton.js`, moved verbatim) — 787 with the
-blaze and enderman dispatches in;
+its ghast split in Phase 16 (`entities/ghast.js`), its mandated skeleton
+split in Phase 17 (`entities/skeleton.js`, moved verbatim), and Phase 19
+moved the spawn-profile machinery into `entities/spawning.js` (its natural
+home) — ~758 now;
 `systems/combat.js` got its fireball split in Phase 16 (`systems/fireballs.js`)
-and sits at 808 after the Phase 18 strength/sfx/fire-resistance additions —
-also OVER, and the arrow machinery is the long-standing mandated cut;
+and sits at 808 (untouched in Phase 19) — the ONLY file still OVER, and the
+arrow machinery is the long-standing mandated cut before anything lands
+in it;
 `world/caves.js` split its noise machinery into `world/noise.js` in Phase 15
 (the mega-cavern pass would have pushed it past the cap; ~640 now);
 `world/chunks.js` got its mandated split in Phase 17 (`world/emitters.js`:

@@ -202,7 +202,11 @@ function sweep({ seconds, volume, from, to }) {
 // meshes and draw one frame of void.
 export function createPortals({ world, scene, player, stats, camera, dimensions }) {
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
-  const registry = { overworld: [], nether: [] };
+  // Phase 19: the End has a registry list too — every per-frame walk over
+  // the active dimension's portals must stay safe there (the End travel
+  // crash: registry['end'] was undefined). Nether portals still can't be
+  // LIT in the End (tryIgnite gates), like vanilla.
+  const registry = { overworld: [], nether: [], end: [] };
   let standTimer = 0;
   let arrivalHold = false; // no re-trigger until the player steps out
   let suppressListener = false;
@@ -234,6 +238,9 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
   // it lights. Returns true when a portal lit (the caller wears the tool).
   function tryIgnite(target) {
     if (!target) return false;
+    // No nether portals light in the End (vanilla — the travel pair below
+    // only links the overworld and the Nether).
+    if (dimensions.activeKey === 'end') return false;
     const [fx, fy, fz] = target.face;
     if (fx === 0 && fy === 0 && fz === 0) return false;
     const frame = detectFrame(getBlock, target.x + fx, target.y + fy, target.z + fz);
