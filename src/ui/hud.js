@@ -346,7 +346,7 @@ export function initHud(inventory) {
     #hud-absorb .heart {
       width: ${STATS.ABSORPTION_PX}px; height: ${STATS.ABSORPTION_PX}px;
       margin-right: 1px; background-size: contain; background-repeat: no-repeat;
-      image-rendering: pixelated;
+      image-rendering: pixelated; flex: 0 0 auto;
     }
     #hud-armour {
       /* left-aligned above the hearts (vanilla layout); hidden unarmoured */
@@ -366,21 +366,28 @@ export function initHud(inventory) {
       background: rgba(190, 0, 0, 0.30); opacity: 0;
     }
     #hud-effects {
-      /* active potion effects (Phase 18): tinted bottle + countdown,
-         top-right like vanilla */
-      position: fixed; top: 10px; right: 10px; z-index: 5;
-      display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
-      pointer-events: none;
+      /* active potion effects: a small framed icon with the countdown
+         BENEATH it, top-right — vanilla's proportions (Phase 22 shrank the
+         Phase 18 panel, which intruded on the view) */
+      position: fixed; top: ${UI.EFFECTS_HUD.TOP_PX}px;
+      right: ${UI.EFFECTS_HUD.RIGHT_PX}px; z-index: 5;
+      display: flex; flex-direction: row; gap: ${UI.EFFECTS_HUD.GAP_PX}px;
+      align-items: flex-start; pointer-events: none;
     }
     .hud-effect {
-      display: flex; align-items: center; gap: 7px;
-      background: rgba(12, 12, 12, 0.6); padding: 4px 9px 4px 5px;
-      border: 2px solid rgba(0, 0, 0, 0.8); border-radius: 3px;
-      box-shadow: 0 0 0 1px rgba(190, 190, 190, 0.3);
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+    }
+    .hud-effect .hud-effect-icon {
+      width: ${UI.EFFECTS_HUD.ICON_PX}px; height: ${UI.EFFECTS_HUD.ICON_PX}px;
+      box-sizing: border-box;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(12, 12, 12, 0.55);
+      border: 1px solid rgba(0, 0, 0, 0.85);
+      box-shadow: 0 0 0 1px rgba(190, 190, 190, 0.25);
     }
     .hud-effect span {
-      color: #fff; font: bold 13px/1 monospace;
-      text-shadow: 1.5px 1.5px 0 #3f3f3f;
+      color: #fff; font: ${UI.EFFECTS_HUD.LABEL_PX}px/1 monospace;
+      text-shadow: 1px 1px 0 #000;
     }
   `;
   document.head.appendChild(style);
@@ -578,7 +585,12 @@ function updateEffects(stats) {
   for (const [type, seconds] of active) {
     const el = document.createElement('div');
     el.className = 'hud-effect';
-    el.appendChild(createItemIcon(EFFECT_ICON_ITEM[type] ?? 'potion', 26));
+    const frame = document.createElement('div');
+    frame.className = 'hud-effect-icon';
+    frame.appendChild(createItemIcon(
+      EFFECT_ICON_ITEM[type] ?? 'potion', UI.EFFECTS_HUD.ART_PX,
+    ));
+    el.appendChild(frame);
     const label = document.createElement('span');
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -673,16 +685,19 @@ export function updateHud(player, stats, dt = 0) {
       hungerEls[i].style.backgroundImage = `url(${url})`;
     }
   }
-  // Absorption hearts (Phase 22): yellow hearts above the health row while
-  // the golden apple's buffer holds. They empty before real health does.
+  // Absorption hearts (Phase 22): the golden apple's yellow hearts, sitting
+  // directly above the red health row and emptying before real health does.
+  // The row's visibility is written EVERY frame, not only on a change: a
+  // one-off stale value here is exactly the shape of the "no yellow hearts
+  // appear" report, and two style writes a frame cost nothing.
   const absorb = stats.absorption ?? 0;
+  absorbRow.style.display = absorb > 0 ? 'flex' : 'none';
   if (absorb !== lastAbsorb) {
     const wasShown = lastAbsorb > 0;
     lastAbsorb = absorb;
-    absorbRow.style.display = absorb > 0 ? 'block' : 'none';
     for (let i = 0; i < absorbEls.length; i++) {
       const points = absorb - i * 2;
-      absorbEls[i].style.display = points > 0 ? 'inline-block' : 'none';
+      absorbEls[i].style.display = points > 0 ? 'block' : 'none';
       if (points > 0) {
         absorbEls[i].style.backgroundImage =
           `url(${points >= 2 ? absorbUrls.full : absorbUrls.half})`;

@@ -1052,9 +1052,9 @@ export const EFFECTS = {
   // 2:00 — 2 extra (yellow) hearts that soak damage before real health —
   // plus Regeneration II for 5 seconds.
   GOLDEN_APPLE: {
-    ABSORPTION_HEALTH: 4,         // 4 health points = 2 yellow hearts
-    ABSORPTION_SECONDS: 120,      // vanilla 2:00
-    REGENERATION_SECONDS: 5,      // vanilla Regeneration II, 5s
+    ABSORPTION_HEALTH: 8,         // Absorption II: 8 points = 4 yellow hearts
+    ABSORPTION_SECONDS: 120,      // 2:00
+    REGENERATION_SECONDS: 5,      // Regeneration II, 5s
     REGENERATION_INTERVAL: 1.25,  // seconds per healed point (Regen II = 25 ticks)
   },
 };
@@ -1515,6 +1515,18 @@ export const UI = {
     FILL_MID: '#f217c8',          // ...the magenta body...
     FILL_BOTTOM: '#a1067f',       // ...and the shaded bottom
     TRACK: '#2a0a24',             // the empty track behind the fill
+  },
+
+  // Active potion effects, top-right (Phase 18; Phase 22 shrank them to
+  // vanilla's proportions — a small icon with the countdown BENEATH it,
+  // not a captioned panel that intrudes on the view).
+  EFFECTS_HUD: {
+    ICON_PX: 24,                  // the framed icon square
+    ART_PX: 18,                   // the item sprite inside it
+    LABEL_PX: 10,                 // countdown font size
+    GAP_PX: 4,                    // space between two effects
+    TOP_PX: 8,                    // offset from the top screen edge
+    RIGHT_PX: 8,                  // ...and the right edge
   },
 
   // The sleep fade (Phase 21 — beds): a full-screen wash while night passes.
