@@ -1,10 +1,19 @@
 // world/caves.js — Phase 9 underground generation: cave carving (two noise
-// layers — winding tunnels and open caverns — plus the Phase 15 mega-cavern
-// pass: rare, genuinely huge multi-level chambers), rare ravines, surface
-// entrances, lava pools below OVERWORLD.LAVA_POOL_MAX_Y, waterfall springs in
-// mega caverns, granite/diorite/andesite blobs, gravel pockets and ore veins
-// per config ORES. The seeded noise machinery lives in world/noise.js
-// (Phase 15 split per the ARCHITECTURE size cap).
+// layers — winding tunnels and open caverns), rare ravines, surface entrances,
+// lava, underground water springs and pools, granite/diorite/andesite blobs,
+// gravel/clay banks, gravel pockets and ore veins per config ORES. The seeded
+// noise machinery lives in world/noise.js (Phase 15 split per the ARCHITECTURE
+// size cap) and the Phase 23 GREAT CAVERN pass in world/caverns.js (same cap).
+//
+// Phase 23 changed three things here:
+//   - the Phase 15 MEGA noise layer is gone. It was the third attempt to grow
+//     big rooms by thresholding a field and it never produced one; big rooms
+//     are now PLACED by world/caverns.js, which this module calls as its own
+//     carve pass and which the waterfall springs key off.
+//   - ore veins pick the deepslate variant of an ore when the block they
+//     replace is deepslate, so the deep world reads as deepslate throughout.
+//   - lava above the lake level is placed as a few small seeded pools instead
+//     of flooding every floor cell inside a noise-mask region.
 //
 // Everything is a pure function of (seed, x, y, z): the 3D fields are sampled
 // on a world-aligned lattice (every CAVES.LATTICE_STEP blocks) and
@@ -23,6 +32,7 @@ import {
   mulberry32, hash2, hash01, smoothstep, lerp, bilerp, SimplexNoise, fbm2,
   Field3D,
 } from './noise.js';
+import { GreatCaverns } from './caverns.js';
 
 // ---------------------------------------------------------------------------
 // Salts (independent hash/PRNG streams per feature)
@@ -30,8 +40,11 @@ import {
 
 const SALT_RAVINE_JITTER = 0x8a71;
 const SALT_GRAVEL = 0x67a1;
-const SALT_LAVA_LEAK = 0x1afa;
+const SALT_LAVA_SPRING = 0x1afa;
+const SALT_LAVA_POOL = 0x1ab0;
 const SALT_WATERFALL = 0x7fa11;
+const SALT_SPRING = 0x593a;
+const SALT_SHORE = 0x54ce;
 // Per-ore PRNG stream salts (stable — never reorder).
 const ORE_SALTS = { coal: 0xc0a1, iron: 0x1207, gold: 0x601d, redstone: 0x8ed5, diamond: 0xd1a3 };
 const ORE_BLOCKS = {
@@ -41,18 +54,32 @@ const ORE_BLOCKS = {
   redstone: BLOCK.REDSTONE_ORE,
   diamond: BLOCK.DIAMOND_ORE,
 };
+// Phase 23: the same ore in deepslate. A vein cell takes this variant when
+// the block it is replacing is deepslate, so a vein straddling the transition
+// band comes out half stone ore and half deepslate ore, exactly like vanilla.
+const DEEPSLATE_ORE_BLOCKS = {
+  coal: BLOCK.DEEPSLATE_COAL_ORE,
+  iron: BLOCK.DEEPSLATE_IRON_ORE,
+  gold: BLOCK.DEEPSLATE_GOLD_ORE,
+  redstone: BLOCK.DEEPSLATE_REDSTONE_ORE,
+  diamond: BLOCK.DEEPSLATE_DIAMOND_ORE,
+};
 
 // Base terrain blocks caves may carve through. Water, bedrock and anything
 // else (decorations come later anyway) are left alone.
 const CARVABLE = new Uint8Array(256);
 for (const id of [
-  BLOCK.STONE, BLOCK.DIRT, BLOCK.GRASS_BLOCK, BLOCK.SAND, BLOCK.GRAVEL,
-  BLOCK.SANDSTONE,
+  BLOCK.STONE, BLOCK.DEEPSLATE, BLOCK.DIRT, BLOCK.GRASS_BLOCK, BLOCK.SAND,
+  BLOCK.GRAVEL, BLOCK.SANDSTONE, BLOCK.CLAY,
 ]) CARVABLE[id] = 1;
+
+const isCarvable = (id) => CARVABLE[id] === 1;
 
 // Blocks ore veins and variant blobs may replace.
 const STONE_FAMILY = new Uint8Array(256);
-for (const id of [BLOCK.STONE, BLOCK.GRANITE, BLOCK.DIORITE, BLOCK.ANDESITE]) {
+for (const id of [
+  BLOCK.STONE, BLOCK.GRANITE, BLOCK.DIORITE, BLOCK.ANDESITE, BLOCK.DEEPSLATE,
+]) {
   STONE_FAMILY[id] = 1;
 }
 
@@ -73,15 +100,14 @@ export class CaveCarver {
     this.ravineLine = new SimplexNoise(rand(0x4a710006));
     this.ravineMask = new SimplexNoise(rand(0x4a710007));
     this.entranceMask = new SimplexNoise(rand(0xe4a70008));
-    // Phase 10: tunnel girth variation and the lava pool-region mask.
+    // Phase 10: tunnel girth variation. (Its companion, the Phase 10 lava
+    // pool-region mask, is gone — Phase 23 places lava rather than masking it.)
     const G = T.GIRTH;
     this.girth = new Field3D(rand(0x617a0009), G.SCALE_XZ, G.SCALE_Y, G.OCTAVES);
-    this.lavaMask = new SimplexNoise(rand(0x1a7a000a));
-    // Phase 15: the mega-cavern pass — its own 3D field plus the 2D rarity
-    // region mask (a distinct large-cave layer, not wider tunnels).
-    const M = CAVES.MEGA;
-    this.mega = new Field3D(rand(0x3e6a000b), M.SCALE_XZ, M.SCALE_Y, M.OCTAVES);
-    this.megaRegion = new SimplexNoise(rand(0x3e6a000c));
+    // Phase 23: the great-cavern pass — placed chambers, not a noise layer
+    // (world/caverns.js explains why the three noise attempts before it
+    // never produced a room).
+    this.caverns = new GreatCaverns(this.seed);
   }
 
   // Tunnel radius multiplier from a raw girth-field value: MIN..MAX across
@@ -153,30 +179,6 @@ export class CaveCarver {
     }
     const fadeIn = CAVES.MIN_Y + CAVES.BOTTOM_FADE_BLOCKS;
     if (y < fadeIn) t += (1 - (y - CAVES.MIN_Y) / CAVES.BOTTOM_FADE_BLOCKS);
-    return t;
-  }
-
-  // --- mega caverns (Phase 15) ----------------------------------------------
-
-  // Region gate for the mega-cavern pass at a column: 0 almost everywhere
-  // (they are uncommon), rising to 1 inside a mega region's core.
-  _megaGate(x, z) {
-    const M = CAVES.MEGA;
-    const m = fbm2(this.megaRegion, x * M.REGION_SCALE, z * M.REGION_SCALE, 2);
-    return smoothstep(M.REGION_START, M.REGION_FULL, m);
-  }
-
-  // Mega-cavern carve threshold at a height (Infinity = never). The region
-  // gate lowers it from CEILING (unreachable) toward THRESHOLD; the band
-  // edges ramp it back up so chamber floors and ceilings close smoothly.
-  _megaThreshold(y, gate) {
-    const M = CAVES.MEGA;
-    if (gate <= 0 || y < M.MIN_Y || y > M.MAX_Y) return Infinity;
-    let t = M.CEILING + (M.THRESHOLD - M.CEILING) * gate;
-    const edge = Math.min(y - M.MIN_Y, M.MAX_Y - y);
-    if (edge < M.EDGE_FADE) {
-      t += (M.CEILING - M.THRESHOLD) * (1 - edge / M.EDGE_FADE);
-    }
     return t;
   }
 
@@ -275,8 +277,6 @@ export class CaveCarver {
     const colTop = new Int32Array(size * size);     // highest y caves may carve
     const colRav = new Float32Array(size * size);   // ravine depth (0 = none)
     const colGate = new Float64Array(size * size);  // entrance gate factor
-    const colMega = new Float64Array(size * size);  // mega-cavern region gate
-    let anyMega = false;
     let latTop = CAVES.MIN_Y;
     let maxH = CAVES.MIN_Y;
     for (let lz = 0; lz < size; lz++) {
@@ -307,13 +307,6 @@ export class CaveCarver {
         if (top > latTop) latTop = top;
 
         colRav[i] = shielded || h <= sea + 1 ? 0 : this.ravineDepthAt(x0 + lx, z0 + lz);
-
-        // Mega caverns sit far below every surface (MAX_Y 26 vs sea 62), so
-        // the ocean shield's colTop clamp already protects sea floors; the
-        // gate is per-column only for the region mask.
-        const mg = this._megaGate(x0 + lx, z0 + lz);
-        colMega[i] = mg;
-        if (mg > 0) anyMega = true;
       }
     }
 
@@ -324,15 +317,11 @@ export class CaveCarver {
     const latB = this._buildLattice(this.tunnelB, x0, z0, yLo, yHi);
     const latC = this._buildLattice(this.cavern, x0, z0, yLo, yHi);
     const latG = this._buildLattice(this.girth, x0, z0, yLo, yHi);
-    // The mega lattice only exists where a mega region touches the chunk —
-    // most of the world skips the whole pass.
-    const latM = anyMega ? this._buildLattice(this.mega, x0, z0, yLo, yHi) : null;
     const ny = latA.ny;
     const colValA = new Float64Array(ny);
     const colValB = new Float64Array(ny);
     const colValC = new Float64Array(ny);
     const colValG = new Float64Array(ny);
-    const colValM = new Float64Array(ny);
 
     const rTun = CAVES.TUNNEL.RADIUS;
     for (let lz = 0; lz < size; lz++) {
@@ -342,13 +331,11 @@ export class CaveCarver {
         const h = colH[i];
         const rav = colRav[i];
         const gate = colGate[i];
-        const megaGate = colMega[i];
         if (top >= CAVES.MIN_Y) {
           this._blendColumn(latA, lx, lz, colValA);
           this._blendColumn(latB, lx, lz, colValB);
           this._blendColumn(latC, lx, lz, colValC);
           this._blendColumn(latG, lx, lz, colValG);
-          if (latM && megaGate > 0) this._blendColumn(latM, lx, lz, colValM);
           for (let y = top; y >= CAVES.MIN_Y; y--) {
             const id = chunk.get(lx, y, lz);
             if (!CARVABLE[id]) continue;
@@ -368,12 +355,6 @@ export class CaveCarver {
                 carve = lerp(colValC[j0], colValC[j0 + 1], ty) > tc;
               }
             }
-            if (!carve && latM && megaGate > 0) {
-              const tm = this._megaThreshold(y, megaGate);
-              if (tm !== Infinity) {
-                carve = lerp(colValM[j0], colValM[j0 + 1], ty) > tm;
-              }
-            }
             if (carve) chunk.set(lx, y, lz, BLOCK.AIR);
           }
         }
@@ -388,16 +369,28 @@ export class CaveCarver {
       }
     }
 
+    // The great caverns carve last of the carving passes: their chambers are
+    // placed volumes, so they win over whatever the noise layers left, and
+    // their connector bores cut through to the tunnel network.
+    const inCavern = this.caverns.apply(chunk, isCarvable, BLOCK.AIR);
+
     this._placeLava(chunk, colH);
-    this._placeWaterfalls(chunk, colMega);
+    this._placeWaterfalls(chunk, inCavern);
+    this._placeSprings(chunk, colH);
     this._placeVariants(chunk, maxH);
+    // Gravel/clay banks read the final water placement, so they run after
+    // every pass that can put water underground.
+    this._placeShoreBanks(chunk, colH);
     const G = UNDERGROUND.GRAVEL_POCKETS;
     this._placeVeins(chunk, BLOCK.GRAVEL, SALT_GRAVEL, {
       MIN_Y: G.MIN_Y, MAX_Y: G.MAX_Y, ATTEMPTS_PER_CHUNK: G.ATTEMPTS_PER_CHUNK,
       VEIN_MIN: G.SIZE_MIN, VEIN_MAX: G.SIZE_MAX,
     });
     for (const name of Object.keys(ORES)) {
-      this._placeVeins(chunk, ORE_BLOCKS[name], ORE_SALTS[name], ORES[name]);
+      this._placeVeins(
+        chunk, ORE_BLOCKS[name], ORE_SALTS[name], ORES[name],
+        DEEPSLATE_ORE_BLOCKS[name],
+      );
     }
   }
 
@@ -438,62 +431,68 @@ export class CaveCarver {
     }
   }
 
-  // --- lava placement (Phase 10) --------------------------------------------
+  // --- lava placement (Phase 10; rebuilt in Phase 23) -----------------------
 
   // Runs after all carving (its wall tests read final in-chunk carve state,
   // never a neighbour chunk, so generation order can't matter):
   //   - at/below CAVES.LAVA.LAKE_MAX_Y every carved cell floods — the deep
-  //     lava lakes
-  //   - between there and OVERWORLD.LAVA_POOL_MAX_Y, only small occasional
-  //     pools: 1-deep puddles on cave floors inside sparse mask regions,
-  //     plus rare single-block leaks against cave walls (interior cells
-  //     only — border cells never leak, keeping the test in-chunk)
+  //     lava lakes, exactly as before
+  //   - ABOVE it, nothing floods. A handful of seeded sites per chunk each
+  //     flood a few connected floor cells (POOL_MAX_CELLS), and wall cells
+  //     spring single blocks at SPRING_CHANCE. That is the whole of it.
+  //
+  // The Phase 10 rule this replaces asked a 2D mask whether a COLUMN was in a
+  // "pool region" and, if so, flooded every cave-floor cell in it from -53 all
+  // the way to y=9. Whole cave floors came out molten and read as lava lakes
+  // 40 blocks above the level that is supposed to have them: measured over a
+  // 256x256 region, 3040 cells of lava sat above y=-54.
   _placeLava(chunk, colH) {
     const size = CHUNK.SIZE;
     const L = CAVES.LAVA;
     const x0 = chunk.cx * size;
     const z0 = chunk.cz * size;
-    const bandTop = OVERWORLD.LAVA_POOL_MAX_Y - 1;
-    const solidish = (id) =>
-      id !== BLOCK.AIR && id !== BLOCK.LAVA && id !== BLOCK.WATER;
+
+    // 1. The deep lakes: every open cell at or below LAKE_MAX_Y.
     for (let lz = 0; lz < size; lz++) {
       for (let lx = 0; lx < size; lx++) {
-        const top = Math.min(bandTop, colH[lz * size + lx] - 1);
-        if (top < CAVES.MIN_Y) continue;
-        const wx = x0 + lx;
-        const wz = z0 + lz;
-        let poolRegion = null; // per-column mask, computed lazily
+        const top = Math.min(L.LAKE_MAX_Y, colH[lz * size + lx] - 1);
         for (let y = CAVES.MIN_Y; y <= top; y++) {
+          if (chunk.get(lx, y, lz) === BLOCK.AIR) chunk.set(lx, y, lz, BLOCK.LAVA);
+        }
+      }
+    }
+
+    // 2. Small isolated pools. A seeded site walks down its column for the
+    // first cave floor in range and floods a few connected cells of it.
+    const rng = mulberry32(hash2(this.seed ^ SALT_LAVA_POOL, chunk.cx, chunk.cz));
+    for (let attempt = 0; attempt < L.POOL_ATTEMPTS_PER_CHUNK; attempt++) {
+      const lx = Math.floor(rng() * size);
+      const lz = Math.floor(rng() * size);
+      const roll = rng();  // drawn unconditionally — the stream stays aligned
+      const span = rng();  // ...as does the depth pick
+      if (roll >= L.POOL_CHANCE) continue;
+      const top = Math.min(L.POOL_MAX_Y, colH[lz * size + lx] - 2);
+      const bottom = L.LAKE_MAX_Y + 1;
+      if (top < bottom) continue;
+      const startY = bottom + Math.floor(span * (top - bottom + 1));
+      const y = this._floorBelow(chunk, lx, startY, lz, bottom);
+      if (y === null) continue;
+      this._floodPool(chunk, lx, y, lz, BLOCK.LAVA, L.POOL_MAX_CELLS);
+    }
+
+    // 3. Single-block wall springs: lava weeping out of a cave wall. Interior
+    // cells only, so every neighbour test stays inside this chunk.
+    const springTop = Math.min(L.SPRING_MAX_Y, OVERWORLD.LAVA_POOL_MAX_Y);
+    for (let lz = 1; lz < size - 1; lz++) {
+      for (let lx = 1; lx < size - 1; lx++) {
+        const top = Math.min(springTop, colH[lz * size + lx] - 1);
+        for (let y = L.LAKE_MAX_Y + 1; y <= top; y++) {
           if (chunk.get(lx, y, lz) !== BLOCK.AIR) continue;
-          if (y <= L.LAKE_MAX_Y) {
-            chunk.set(lx, y, lz, BLOCK.LAVA);
-            continue;
-          }
-          // Floor puddles (scanning upward, a fresh puddle below reads as
-          // lava — puddles never stack deeper than 1).
-          if (solidish(chunk.get(lx, y - 1, lz))) {
-            if (poolRegion === null) {
-              poolRegion = fbm2(
-                this.lavaMask,
-                wx * L.POOL_MASK_SCALE, wz * L.POOL_MASK_SCALE, 2,
-              ) > L.POOL_MASK_MIN;
-            }
-            if (poolRegion) {
-              chunk.set(lx, y, lz, BLOCK.LAVA);
-              continue;
-            }
-          }
-          // Single-block wall leaks.
-          if (
-            lx > 0 && lx < size - 1 && lz > 0 && lz < size - 1 &&
-            hash01(
-              this.seed ^ SALT_LAVA_LEAK ^ Math.imul(y, 0x9e3779b1), wx, wz,
-            ) < L.LEAK_CHANCE &&
-            (solidish(chunk.get(lx - 1, y, lz)) ||
-             solidish(chunk.get(lx + 1, y, lz)) ||
-             solidish(chunk.get(lx, y, lz - 1)) ||
-             solidish(chunk.get(lx, y, lz + 1)))
-          ) {
+          if (hash01(
+            this.seed ^ SALT_LAVA_SPRING ^ Math.imul(y, 0x9e3779b1),
+            x0 + lx, z0 + lz,
+          ) >= L.SPRING_CHANCE) continue;
+          if (this._againstWall(chunk, lx, y, lz)) {
             chunk.set(lx, y, lz, BLOCK.LAVA);
           }
         }
@@ -501,15 +500,152 @@ export class CaveCarver {
     }
   }
 
-  // --- waterfall springs (Phase 15) -----------------------------------------
+  // The first cave floor at or below `startY` in this column: an air cell
+  // whose neighbour below is solid. null when the column has none above
+  // `bottom`.
+  _floorBelow(chunk, lx, startY, lz, bottom) {
+    for (let y = startY; y >= bottom; y--) {
+      if (chunk.get(lx, y, lz) !== BLOCK.AIR) continue;
+      const under = chunk.get(lx, y - 1, lz);
+      if (under !== BLOCK.AIR && under !== BLOCK.LAVA && under !== BLOCK.WATER) {
+        return y;
+      }
+    }
+    return null;
+  }
 
-  // Rare water columns pouring down mega-cavern walls into a small floor
-  // pool. Water is still static in this game, so the column IS the fall —
-  // a translucent pillar hugging the wall, swimmable like any water. Runs
-  // after all carving and lava placement (reads the chunk's final state);
-  // per-chunk seeded PRNG, in-chunk writes only, so generation order can
-  // never change the world.
-  _placeWaterfalls(chunk, colMega) {
+  // Is this cell against a solid wall? (horizontal neighbours only, so a
+  // ceiling doesn't count)
+  _againstWall(chunk, lx, y, lz) {
+    const solidish = (id) =>
+      id !== BLOCK.AIR && id !== BLOCK.LAVA && id !== BLOCK.WATER;
+    return (
+      solidish(chunk.get(lx - 1, y, lz)) || solidish(chunk.get(lx + 1, y, lz)) ||
+      solidish(chunk.get(lx, y, lz - 1)) || solidish(chunk.get(lx, y, lz + 1))
+    );
+  }
+
+  // Floods up to `max` connected cells of ONE flat floor level with `fluid`,
+  // starting at (lx, y, lz). A breadth-first walk over air cells at that
+  // exact y that still have solid ground under them, clipped to this chunk —
+  // so a pool is a puddle on a floor, never a column and never a spill into
+  // the neighbouring chunk. Returns the number of cells filled.
+  _floodPool(chunk, lx, y, lz, fluid, max) {
+    const size = CHUNK.SIZE;
+    if (chunk.get(lx, y, lz) !== BLOCK.AIR) return 0;
+    const queue = [lx, lz];
+    const seen = new Set([lz * size + lx]);
+    let filled = 0;
+    while (queue.length && filled < max) {
+      const cx = queue.shift();
+      const cz = queue.shift();
+      const under = chunk.get(cx, y - 1, cz);
+      if (chunk.get(cx, y, cz) !== BLOCK.AIR) continue;
+      if (under === BLOCK.AIR || under === BLOCK.LAVA || under === BLOCK.WATER) continue;
+      chunk.set(cx, y, cz, fluid);
+      filled++;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx;
+        const nz = cz + dz;
+        if (nx < 0 || nx >= size || nz < 0 || nz >= size) continue;
+        const key = nz * size + nx;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push(nx, nz);
+      }
+    }
+    return filled;
+  }
+
+  // --- underground water (Phase 23) -----------------------------------------
+
+  // Damp caves: single-block springs weeping from a wall, and small puddles
+  // on cave floors. Same machinery as the lava pools, its own seeded stream,
+  // spread over the whole cave band rather than concentrated at depth.
+  _placeSprings(chunk, colH) {
+    const size = CHUNK.SIZE;
+    const S = CAVES.SPRINGS;
+    const rng = mulberry32(hash2(this.seed ^ SALT_SPRING, chunk.cx, chunk.cz));
+    for (let attempt = 0; attempt < S.ATTEMPTS_PER_CHUNK; attempt++) {
+      // Interior cells only — the wall test never leaves the chunk.
+      const lx = 1 + Math.floor(rng() * (size - 2));
+      const lz = 1 + Math.floor(rng() * (size - 2));
+      const roll = rng();
+      const span = rng();
+      const top = Math.min(S.MAX_Y, colH[lz * size + lx] - 3);
+      if (top < S.MIN_Y) continue;
+      const startY = S.MIN_Y + Math.floor(span * (top - S.MIN_Y + 1));
+      if (roll < S.SPRING_CHANCE) {
+        // A wall spring: the highest air cell against rock in the column
+        // near the pick, so it reads as leaking out of the wall.
+        for (let y = startY; y >= S.MIN_Y; y--) {
+          if (chunk.get(lx, y, lz) !== BLOCK.AIR) continue;
+          if (!this._againstWall(chunk, lx, y, lz)) continue;
+          chunk.set(lx, y, lz, BLOCK.WATER);
+          break;
+        }
+      } else if (roll < S.SPRING_CHANCE + S.POOL_CHANCE) {
+        const y = this._floorBelow(chunk, lx, startY, lz, S.MIN_Y);
+        if (y === null) continue;
+        this._floodPool(chunk, lx, y, lz, BLOCK.WATER, S.POOL_MAX_CELLS);
+      }
+    }
+  }
+
+  // --- gravel and clay banks (Phase 23) -------------------------------------
+
+  // Cave floors go to gravel and clay near water, the way a vanilla cave pool
+  // sits in a soft bank instead of bare stone. Runs after every water-placing
+  // pass; reads only this chunk, writes only this chunk.
+  _placeShoreBanks(chunk, colH) {
+    const size = CHUNK.SIZE;
+    const P = UNDERGROUND.SHORE_PATCHES;
+    const x0 = chunk.cx * size;
+    const z0 = chunk.cz * size;
+    const R = P.REACH;
+    // Collect the floor cells beside water first, then convert — converting
+    // in place would let a fresh gravel cell seed more of itself.
+    const targets = [];
+    for (let lz = 0; lz < size; lz++) {
+      for (let lx = 0; lx < size; lx++) {
+        const top = Math.min(CAVES.MAX_Y, colH[lz * size + lx] - 1);
+        for (let y = CAVES.MIN_Y; y <= top; y++) {
+          if (chunk.get(lx, y, lz) !== BLOCK.WATER) continue;
+          for (let dz = -R; dz <= R; dz++) {
+            for (let dx = -R; dx <= R; dx++) {
+              const nx = lx + dx;
+              const nz = lz + dz;
+              if (nx < 0 || nx >= size || nz < 0 || nz >= size) continue;
+              for (let d = 0; d < P.DEPTH; d++) {
+                targets.push(nx, y - 1 - d, nz);
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < targets.length; i += 3) {
+      const lx = targets[i];
+      const y = targets[i + 1];
+      const lz = targets[i + 2];
+      if (!STONE_FAMILY[chunk.get(lx, y, lz)]) continue;
+      const r = hash01(
+        this.seed ^ SALT_SHORE ^ Math.imul(y, 0x9e3779b1), x0 + lx, z0 + lz,
+      );
+      if (r >= P.CHANCE) continue;
+      chunk.set(lx, y, lz, r < P.CHANCE * P.CLAY_CHANCE ? BLOCK.CLAY : BLOCK.GRAVEL);
+    }
+  }
+
+  // --- waterfall springs (Phase 15; Phase 23 re-anchored) -------------------
+
+  // Water columns pouring down a great cavern's wall into a small floor pool.
+  // The generated column IS the fall — world/fluids.js settles it into a
+  // flowing one once the chunk loads. Runs after all carving and lava
+  // placement (reads the chunk's final state); per-chunk seeded PRNG,
+  // in-chunk writes only, so generation order can never change the world.
+  // `inCavern` is the per-column mask world/caverns.js returns.
+  _placeWaterfalls(chunk, inCavern) {
     const size = CHUNK.SIZE;
     const W = CAVES.WATERFALL;
     const rng = mulberry32(hash2(this.seed ^ SALT_WATERFALL, chunk.cx, chunk.cz));
@@ -519,7 +655,7 @@ export class CaveCarver {
       const lz = 1 + Math.floor(rng() * (size - 2));
       const roll = rng(); // drawn unconditionally — the PRNG stream stays
                           // aligned however the gates below resolve
-      if (colMega[lz * size + lx] < W.MIN_GATE) continue;
+      if (!inCavern[lz * size + lx]) continue;
       if (roll >= W.CHANCE) continue;
       // Walk the band downward for the first ledge that can host a spring:
       // an air cell against a wall with a real drop beneath it.
@@ -610,7 +746,10 @@ export class CaveCarver {
   // chunk's cells are written (walks clip at the border), so generation
   // order can never change the world. Placement replaces the stone family
   // only — never air, cave interiors, dirt or ore already placed.
-  _placeVeins(chunk, blockId, salt, cfg) {
+  // `deepId` (Phase 23) is the block to write instead when the cell being
+  // replaced is deepslate, so a vein crossing the transition band comes out
+  // part stone ore and part deepslate ore.
+  _placeVeins(chunk, blockId, salt, cfg, deepId = null) {
     const size = CHUNK.SIZE;
     const rng = mulberry32(hash2(this.seed ^ salt, chunk.cx, chunk.cz));
     const span = cfg.MAX_Y - cfg.MIN_Y;
@@ -628,8 +767,12 @@ export class CaveCarver {
       while (placed < target && guard-- > 0) {
         if (cx >= 0 && cx < size && cz >= 0 && cz < size &&
             cy >= cfg.MIN_Y && cy <= cfg.MAX_Y) {
-          if (STONE_FAMILY[chunk.get(cx, cy, cz)]) {
-            chunk.set(cx, cy, cz, blockId);
+          const under = chunk.get(cx, cy, cz);
+          if (STONE_FAMILY[under]) {
+            chunk.set(
+              cx, cy, cz,
+              deepId !== null && under === BLOCK.DEEPSLATE ? deepId : blockId,
+            );
             placed++;
           }
         }

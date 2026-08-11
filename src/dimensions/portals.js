@@ -15,7 +15,9 @@
 import * as THREE from 'three';
 import { PORTALS, NETHER, PLAYER, OVERWORLD, CHUNK } from '../config.js';
 import { BLOCK, isSolid } from '../world/blocks.js';
-import { ensureAudio, getNoiseBuffer, audioBus } from '../systems/audio.js';
+import {
+  ensureAudio, getNoiseBuffer, audioBus, tryResume, audioIsPaused,
+} from '../systems/audio.js';
 
 // ---------------------------------------------------------------------------
 // Pure frame detection (node-testable)
@@ -147,11 +149,11 @@ export function frameObsidianCells(frame) {
 
 // A one-shot swept noise burst (ignition shimmer, travel whoosh).
 function sweep({ seconds, volume, from, to }) {
-  if (volume <= 0.01) return;
+  if (volume <= 0.01 || audioIsPaused()) return;
   const ctx = ensureAudio();
   if (!ctx) return;
   try {
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    tryResume();
     const src = ctx.createBufferSource();
     src.buffer = getNoiseBuffer();
     src.loop = true;
@@ -550,7 +552,7 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
         src.start();
         hum = { gain, clock: 0 };
       }
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      tryResume();
       hum.clock += dt;
       const wobble = 0.8 + 0.2 * Math.sin(hum.clock * 1.7);
       hum.gain.gain.value = volume * wobble;

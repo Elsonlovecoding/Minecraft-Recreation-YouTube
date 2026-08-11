@@ -22,6 +22,12 @@ src/
                          walls, ladders, doors, trapdoors, beds, signs,
                          flower pots, item frames. blocks.js hands it
                          `register`, so the pair is cycle-free
+    fluid_families.js    the lava and water id tables and their predicates
+                         (Phase 23 — the cut ARCHITECTURE mandated for
+                         blocks.js since Phase 21; moved verbatim, and
+                         blocks.js re-exports every symbol so no consumer
+                         changed). Takes BLOCK/BLOCKS as arguments the way
+                         shapes.js takes `register`, so the pair is cycle-free
     shape_tables.js      the box tables behind them (Phase 21 split of
                          shapes.js per the size cap): SHAPE_BOXES (render),
                          COLLISION_BOXES (physics), FLUSH_RECTS (face
@@ -33,9 +39,23 @@ src/
     noise.js             seeded simplex/fbm/Field3D machinery for the
                          carver (Phase 15 split out of caves.js per the
                          size cap — moved verbatim, byte-identical output)
-    caves.js             cave carving (tunnels, caverns, Phase 15 mega
-                         caverns + waterfall springs), ore placement, lava
-                         placement
+    caves.js             cave carving (tunnels + caverns from noise),
+                         ravines, surface entrances, ore placement, lava
+                         placement, underground water springs/pools and the
+                         gravel/clay banks beside them. Phase 23 retired the
+                         Phase 15 MEGA noise layer (three phases of tuning
+                         never produced a room) and rebuilt lava above the
+                         lake level as placed pools instead of a mask flood
+    caverns.js           the GREAT CAVERN pass (Phase 23): the large chambers,
+                         PLACED rather than thresholded out of noise — one per
+                         REGION_SIZE tile at a hashed centre and size, carved
+                         as a noise-warped superellipsoid with a mid-level
+                         shelf for ledges and drops, plus connector bores out
+                         to the tunnel network. Split from caves.js per the
+                         size cap; caves.js calls it as its last carve pass.
+                         Measured: 250 chambers over 4000x4000, one per ~253
+                         blocks, every one 36-58 across and 20-40 tall, and
+                         all of them reachable from open sky
     chunks.js            chunk data, meshing, face culling (Phase 17: the
                          mesher tables + special emitters split out into
                          emitters.js per the size cap)
@@ -175,7 +195,12 @@ src/
                          distance falloff + stereo pan from the camera, a
                          voice budget, and the sound catalogue. Module-level
                          `audio` singleton; dimensions/portals.js and
-                         systems/combat.js both route through it
+                         systems/combat.js both route through it.
+                         Phase 23 owns the PAUSE: `audio.setPaused()` suspends
+                         and resumes the whole AudioContext (main.js calls it
+                         every frame), and `tryResume()` is the ONE place any
+                         module may un-suspend it, so a sound emitted behind
+                         the pause overlay cannot restart the audio thread
     ambience.js          continuous, position-driven feel (Phase 22): the
                          player's footsteps/landing/splash/bubbles, vanilla's
                          randomDisplayTick over cells near the player (torch
@@ -281,11 +306,20 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 22 added four files rather than growing any (render/
+in this document. Phase 23 added two files rather than growing any
+(`world/caverns.js` 297 for the great-cavern pass, `world/fluid_families.js`
+94 for blocks.js's long-mandated fluid cut) and took `world/blocks.js` back
+UNDER the cap for the first time since Phase 21 — it was 908, the deepslate
+set would have made it 967, and the fluid families coming out leave it at 901.
+`world/caves.js` is 786 after gaining the water springs, the gravel/clay banks
+and the rebuilt lava placement (and losing the MEGA layer): under, but with no
+room left — **its next growth must take the ore/vein passes out**.
+`systems/audio.js` is 761 after the sound retune, and `entities/dragon.js`
+(878) is now the ONLY file over the cap — its rig cut, below, is the last one
+outstanding. Phase 22 added four files rather than growing any (render/
 particles.js 655, systems/audio.js 646, systems/ambience.js 288,
 entities/ender_pearl.js 178) and deliberately did NOT touch the two files
-already over the cap — `entities/dragon.js` (878) and `world/blocks.js` (908)
-still carry the mandated cuts below. systems/combat.js lost its private
+then over the cap. systems/combat.js lost its private
 WebAudio helpers to systems/audio.js and is 513 now. Phase 21 made five cuts: the long-mandated
 `systems/arrows.js` out of combat.js (which is 572 now, finally under),
 `player/placement.js` out of interaction.js (745), `player/body.js` out of
@@ -328,10 +362,12 @@ two local<->world transforms) is the mandated cut before anything else
 lands in it**;
 `world/blocks.js` gave up the whole Phase 21 building set to
 `world/shapes.js` (registrations) and `world/shape_tables.js` (the box
-tables) and sits at 908 — also OVER; **the fluid families (the lava/water
-id tables and their predicates) are its mandated cut**, and it needs the
-BLOCK/BLOCKS bindings passed in the way shapes.js takes `register`, or the
-import cycle bites.
+tables), and in Phase 23 made its mandated FLUID cut to
+`world/fluid_families.js` — the lava/water id tables and their predicates,
+moved verbatim, taking BLOCK/BLOCKS as arguments exactly the way shapes.js
+takes `register` so the import cycle never bites. It re-exports all ten
+symbols, so nothing else changed an import. 901 now, under the cap for the
+first time since Phase 21 even after the deepslate set landed in it.
 
 **Feel goes through the two singletons.** Anything that wants a particle or a
 sound imports `particles` (render/particles.js) or `audio` (systems/audio.js)

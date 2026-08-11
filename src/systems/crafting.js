@@ -116,6 +116,26 @@ for (const [set, M] of Object.entries(ARMOR_MATERIALS)) {
 }
 
 shaped([' B ', 'CCC'], { B: 'blaze_rod', C: 'cobblestone' }, 'brewing_stand');
+
+// Phase 23: cobbled deepslate is a stone crafting material, exactly as it is
+// in vanilla. This is not decoration — a player who digs straight down and
+// starts a base below y=0 has cobbled deepslate and no cobblestone, and
+// without these they could not build a furnace or replace a broken stone
+// pickaxe. Vanilla expresses it with a tag; this registry has no tags, so the
+// three recipes that call for cobblestone as *rock* get a twin. (The
+// cobblestone stairs/slab/wall recipes deliberately do NOT: those are
+// cobblestone the building block, and a deepslate building tier is out of
+// SPEC scope.)
+shaped(['CCC', 'C C', 'CCC'], { C: 'cobbled_deepslate' }, 'furnace');
+shaped([' B ', 'CCC'], { B: 'blaze_rod', C: 'cobbled_deepslate' }, 'brewing_stand');
+{
+  const key = { M: 'cobbled_deepslate', S: 'stick' };
+  shaped(['MMM', ' S ', ' S '], key, 'stone_pickaxe');
+  shaped(['M', 'M', 'S'], key, 'stone_sword');
+  shaped(['MM', 'MS', ' S'], key, 'stone_axe');
+  shaped(['M', 'S', 'S'], key, 'stone_shovel');
+  shaped(['MM', ' S', ' S'], key, 'stone_hoe');
+}
 shapeless(['blaze_rod'], 'blaze_powder', 2);
 shapeless(['blaze_powder', 'ender_pearl'], 'ender_eye');
 shaped(['G G', ' G '], { G: 'glass' }, 'glass_bottle'); // SPEC: 1 bottle from 3 glass

@@ -40,13 +40,18 @@
 //                water and leaves absorb partially
 
 import { TILE } from '../render/atlas.js';
-import { SHAPES, FLUIDS } from '../config.js';
+import { SHAPES } from '../config.js';
 // Phase 21: the shaped building blocks (stairs, slabs, fences, gates, walls,
 // ladders, doors, trapdoors, beds, signs, pots, frames) live in their own
 // module per the ARCHITECTURE size cap. It imports nothing from here — this
 // file hands it `register` and BLOCK — so the pair is cycle-free.
 import { SHAPED_BLOCK_IDS, registerBuildingBlocks } from './shapes.js';
 import { buildShapeTables } from './shape_tables.js';
+// Phase 23: the fluid families (the lava/water id tables and their
+// predicates) — the cut ARCHITECTURE.md has mandated for this file. Same
+// shape as shapes.js: it imports nothing from here, this file hands it the
+// id table, so the pair is cycle-free.
+import { buildFluidFamilies } from './fluid_families.js';
 
 // Numeric block ids. Chunk data is a Uint8Array of these, so keep ids < 256.
 // Append new blocks at the end — never renumber existing ids.
@@ -151,6 +156,19 @@ export const BLOCK = {
   WATER_FLOW_7: 75,
   WATER_FALL: 76,
   ...SHAPED_BLOCK_IDS,
+  // Phase 23: deepslate. Below DEEPSLATE.TOP_Y the stone the terrain fills
+  // with becomes deepslate (blended over the band down to FULL_Y), and every
+  // ore vein that lands in it takes its deepslate variant. Ids continue after
+  // the Phase 21 shaped set, which ends at ITEM_FRAME_W = 162.
+  DEEPSLATE: 163,
+  COBBLED_DEEPSLATE: 164,
+  DEEPSLATE_COAL_ORE: 165,
+  DEEPSLATE_IRON_ORE: 166,
+  DEEPSLATE_GOLD_ORE: 167,
+  DEEPSLATE_REDSTONE_ORE: 168,
+  DEEPSLATE_DIAMOND_ORE: 169,
+  // Phase 23: clay, in patches on cave floors near underground water.
+  CLAY: 170,
 };
 
 export const BLOCKS = [];
@@ -532,6 +550,52 @@ register(BLOCK.ANDESITE, 'andesite', 'Andesite', {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 23 — deepslate. The stone of the deep: same role as stone, twice the
+// hardness (SPEC's stone is 1.5, vanilla's deepslate is 3.0), dropping
+// cobbled deepslate exactly as stone drops cobblestone. Its five ores are the
+// deepslate variants of the SPEC ore table — same tool tier and same drops as
+// their stone twins, just tougher rock around them (vanilla 4.5).
+// world/terrain.js decides where deepslate replaces stone; world/caves.js
+// picks the matching ore variant per vein cell.
+// ---------------------------------------------------------------------------
+
+register(BLOCK.DEEPSLATE, 'deepslate', 'Deepslate', {
+  faces: { all: TILE.DEEPSLATE }, hardness: 3.0, tool: 'pickaxe', minTier: 'wood',
+  drops: [{ item: 'cobbled_deepslate', count: 1 }],
+});
+register(BLOCK.COBBLED_DEEPSLATE, 'cobbled_deepslate', 'Cobbled Deepslate', {
+  faces: { all: TILE.COBBLED_DEEPSLATE }, hardness: 3.5, tool: 'pickaxe',
+  minTier: 'wood',
+});
+register(BLOCK.DEEPSLATE_COAL_ORE, 'deepslate_coal_ore', 'Deepslate Coal Ore', {
+  faces: { all: TILE.DEEPSLATE_COAL_ORE }, hardness: 4.5, tool: 'pickaxe',
+  minTier: 'wood', drops: [{ item: 'coal', count: 1 }],
+});
+register(BLOCK.DEEPSLATE_IRON_ORE, 'deepslate_iron_ore', 'Deepslate Iron Ore', {
+  faces: { all: TILE.DEEPSLATE_IRON_ORE }, hardness: 4.5, tool: 'pickaxe',
+  minTier: 'stone', drops: [{ item: 'raw_iron', count: 1 }],
+});
+register(BLOCK.DEEPSLATE_GOLD_ORE, 'deepslate_gold_ore', 'Deepslate Gold Ore', {
+  faces: { all: TILE.DEEPSLATE_GOLD_ORE }, hardness: 4.5, tool: 'pickaxe',
+  minTier: 'iron', drops: [{ item: 'raw_gold', count: 1 }],
+});
+register(BLOCK.DEEPSLATE_REDSTONE_ORE, 'deepslate_redstone_ore', 'Deepslate Redstone Ore', {
+  faces: { all: TILE.DEEPSLATE_REDSTONE_ORE }, hardness: 4.5, tool: 'pickaxe',
+  minTier: 'iron', drops: [{ item: 'redstone', count: [4, 5] }],
+});
+register(BLOCK.DEEPSLATE_DIAMOND_ORE, 'deepslate_diamond_ore', 'Deepslate Diamond Ore', {
+  faces: { all: TILE.DEEPSLATE_DIAMOND_ORE }, hardness: 4.5, tool: 'pickaxe',
+  minTier: 'iron', drops: [{ item: 'diamond', count: 1 }],
+});
+
+// Clay (Phase 23): the soft grey-blue bank that forms where underground
+// water pools. Shovel material, drops itself. Its atlas tile is generated at
+// load time (render/atlas.js) — the shipped atlas has no clay texture.
+register(BLOCK.CLAY, 'clay', 'Clay', {
+  faces: { all: TILE.CLAY }, hardness: 0.6, tool: 'shovel',
+});
+
+// ---------------------------------------------------------------------------
 // Phase 21 — flowing water (world/fluids.js). The mirror of the lava family:
 // faces null keeps the cube emitter away (the fluid emitter renders the
 // partial-height cell), transparent for culling, opacity 1 like the source
@@ -639,57 +703,20 @@ export function faceTiles(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Water family (Phase 21) — the mirror of the lava tables above
+// Fluid families (Phase 23 — the mandated cut to world/fluid_families.js)
 // ---------------------------------------------------------------------------
+//
+// The lava and water id tables, their predicates and fluidHeight moved out
+// verbatim; every one of them is re-exported here, so `import { isWater } from
+// './blocks.js'` keeps working exactly as it did. The builder takes BLOCK and
+// BLOCKS as arguments the way world/shapes.js takes `register`, which is what
+// keeps the pair cycle-free.
 
-export const WATER_LEVEL_OF = (() => {
-  const table = new Int8Array(BLOCKS.length).fill(-1);
-  table[BLOCK.WATER] = 0;
-  for (let level = 1; level <= 7; level++) {
-    table[BLOCK.WATER_FLOW_1 + level - 1] = level;
-  }
-  table[BLOCK.WATER_FALL] = 0;
-  return table;
-})();
-
-export function isWater(id) {
-  return WATER_LEVEL_OF[id] >= 0;
-}
-
-export function isWaterSource(id) {
-  return id === BLOCK.WATER;
-}
-
-export function waterFlowLevel(id) {
-  const level = WATER_LEVEL_OF[id];
-  return level >= 1 ? level : null;
-}
-
-export const WATER_FLOW_BY_LEVEL = [
-  null,
-  BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
-  BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FLOW_7,
-];
-
-// Surface height of a fluid cell as a fraction of its block — 1 for sources
-// and falling columns, stepping down per horizontal flow level. The mesher
-// renders at this height and the player's fluid line reads it, so a 1/8-deep
-// film can't make anyone swim (Phase 21: one table, two consumers).
-export function fluidHeight(id) {
-  const lava = LAVA_LEVEL_OF[id];
-  if (lava >= 0) {
-    if (id === BLOCK.LAVA) return 1;
-    return id === BLOCK.LAVA_FALL
-      ? FLUIDS.FALL_HEIGHT : FLUIDS.FLOW_HEIGHTS[lava - 1];
-  }
-  const water = WATER_LEVEL_OF[id];
-  if (water >= 0) {
-    if (id === BLOCK.WATER) return 1;
-    return id === BLOCK.WATER_FALL
-      ? FLUIDS.FALL_HEIGHT : FLUIDS.WATER_FLOW_HEIGHTS[water - 1];
-  }
-  return 0;
-}
+export const {
+  LAVA_LEVEL_OF, isLava, isLavaSource, lavaFlowLevel,
+  WATER_LEVEL_OF, WATER_FLOW_BY_LEVEL, isWater, isWaterSource, waterFlowLevel,
+  fluidHeight,
+} = buildFluidFamilies(BLOCK, BLOCKS);
 
 // ---------------------------------------------------------------------------
 // Furnace family + oriented placement (Phase 10)
@@ -767,40 +794,6 @@ export function torchSupportCell(id, x, y, z) {
   if (!lean) return null;
   if (lean[0] === 0 && lean[1] === 0) return { x, y: y - 1, z };
   return { x: x - lean[0], y, z: z - lean[1] };
-}
-
-// ---------------------------------------------------------------------------
-// Lava family (Phase 12 — flowing lava, world/fluids.js)
-// ---------------------------------------------------------------------------
-
-// Flow level per lava id: 0 for the source and the falling column (both
-// spread at full strength), 1..3 for horizontal flow cells. -1 = not lava.
-// Kept as a flat array for the physics/mesher hot loops.
-export const LAVA_LEVEL_OF = (() => {
-  const table = new Int8Array(BLOCKS.length).fill(-1);
-  table[BLOCK.LAVA] = 0;
-  table[BLOCK.LAVA_FLOW_1] = 1;
-  table[BLOCK.LAVA_FLOW_2] = 2;
-  table[BLOCK.LAVA_FLOW_3] = 3;
-  table[BLOCK.LAVA_FALL] = 0;
-  return table;
-})();
-
-// Any lava cell — source, flow or fall (contact damage, fluid physics,
-// pathfinding avoidance, item burning all key off this).
-export function isLava(id) {
-  return LAVA_LEVEL_OF[id] !== undefined && LAVA_LEVEL_OF[id] >= 0;
-}
-
-export function isLavaSource(id) {
-  return id === BLOCK.LAVA;
-}
-
-// Horizontal flow level (1..3) of a flowing cell, or null for anything else
-// (including the source and the falling column).
-export function lavaFlowLevel(id) {
-  const level = LAVA_LEVEL_OF[id];
-  return level >= 1 ? level : null;
 }
 
 // ---------------------------------------------------------------------------

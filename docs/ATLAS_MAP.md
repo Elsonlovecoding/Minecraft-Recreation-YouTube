@@ -8,6 +8,15 @@ Index = row * 16 + column, row-major from top-left.
 Indices 0-57 are unchanged from the previous atlas.
 Indices 58-68 are new: deepslate variants and ground plants.
 
+**Generated tiles.** Indices at the free tail of the grid are painted into the
+loaded atlas at boot by `render/atlas.js` — art this project ships no texture
+for, on the same pattern `render/item_art.js` uses for item sprites. They are
+listed below with the shipped tiles because everything downstream (the chunk
+mesher, the HUD, item icons, particles) samples ONE atlas by tile index and
+cannot tell the difference. Note that index 58 previously held the generated
+end-portal-frame-with-eye art; the deepslate atlas overwrote it, so that tile
+moved to 69 rather than renumbering anything.
+
 | Index | Texture | Status |
 |---|---|---|
 | 0 | grass_block_top | ok |
@@ -79,3 +88,5 @@ Indices 58-68 are new: deepslate variants and ground plants.
 | 66 | dandelion | ok |
 | 67 | poppy | ok |
 | 68 | dead_bush | ok |
+| 69 | end_portal_frame_eye | generated at boot (frame top + the eye) |
+| 70 | clay | generated at boot (Phase 23 cave-floor clay banks) |

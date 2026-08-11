@@ -274,53 +274,109 @@ export const CAVES = {
     THRESHOLD_SHALLOW: 0.85,
   },
 
-  // Mega caverns (Phase 15 — the "caves are all narrow tunnels" report): a
-  // DISTINCT large-cave pass, separate from the tunnel noise. A very-low-
-  // frequency 2D region mask gates where they exist at all (uncommon but
-  // findable); inside a region, a low-frequency squashed 3D field carves
-  // where it exceeds THRESHOLD — genuinely huge chambers, 30-60+ blocks
-  // across and 20+ tall, stacked into multiple levels where the field
-  // folds. The threshold rises to CEILING (unreachable) toward region edges
-  // and the vertical band edges, so chambers close smoothly.
-  MEGA: {
-    SCALE_XZ: 1 / 110,
-    SCALE_Y: 1 / 58,
-    OCTAVES: 2,
-    THRESHOLD: 0.52,         // field value carving starts at (region core)
-    CEILING: 1.05,           // unreachable threshold (fbm stays within ±1)
-    MIN_Y: -52,              // above the lava-lake band's deep flood
-    MAX_Y: 26,               // never near the surface (sea level 62)
-    EDGE_FADE: 8,            // threshold ramp to CEILING at the band edges
-    REGION_SCALE: 1 / 420,   // rarity mask frequency (region ~ hundreds of blocks)
-    REGION_START: 0.48,      // mask noise where mega regions begin
-    REGION_FULL: 0.66,       // mask noise where the region gate saturates
+  // GREAT CAVERNS (Phase 23) — the real answer to "every cave is a narrow
+  // tunnel". Phases 15, 17 and 22 each tried to grow big rooms by thresholding
+  // another 3D noise field (the old CAVES.MEGA); measured over a 256x256
+  // region that pass carved 0.1% of the cells it was offered and produced
+  // scattered fragments, never a room. This pass does not use a field at all:
+  // caverns are PLACED. The world is tiled into REGION_SIZE squares, each of
+  // which deterministically hosts at most one chamber at a hashed centre and
+  // a hashed size, carved as a noise-warped superellipsoid — so the size,
+  // the spacing and the rate are set here directly instead of being hoped for.
+  //
+  // Shape: |dx/rx|^2 + |dz/rz|^2 + |dy/ry|^POWER_Y < 1 + irregularity, where
+  // the y exponent flattens floor and ceiling into a room rather than a
+  // lens, and a low-frequency 3D field pushes the wall in and out so no two
+  // chambers read the same. A SHELF noise leaves part of a mid-height slab
+  // uncarved, which is what makes a chamber multi-level: ledges, drops and a
+  // lower floor you can see down onto. Two hashed connector bores leave the
+  // chamber near floor height and climb gently outward until they meet the
+  // tunnel network.
+  GREAT_CAVERN: {
+    REGION_SIZE: 224,        // world tiles this wide host at most one chamber
+    CHANCE: 0.72,            // ...and do so this often — ~1 per 264 blocks
+    MARGIN: 40,              // keep the centre this far inside its region so
+                             // two neighbouring chambers can never overlap
+    MIN_Y: -50,              // above the lava-lake flood at -54
+    MAX_Y: 24,               // and far below sea level (62)
+    RADIUS_MIN: 18,          // horizontal radii -> a longest axis of 36..58
+    RADIUS_MAX: 29,          // blocks; the wall warp spreads that either way
+    RADIUS_ASPECT: 0.85,     // the shorter axis is at least this fraction of
+                             // the longer one, which is what keeps even the
+                             // narrow axis of the smallest chamber above 30
+                             // (2 x 18 x 0.85) instead of slot-shaped
+    HEIGHT_MIN: 20,          // full chamber height, floor to ceiling
+    HEIGHT_MAX: 40,
+    POWER_Y: 3.2,            // >2 flattens floor and ceiling (a room, not a lens)
+    WARP: { SCALE_XZ: 1 / 34, SCALE_Y: 1 / 26, OCTAVES: 2, AMOUNT: 0.24 },
+                             // wall wobble as a fraction of the radius
+    SHELF: {
+      CHANCE: 0.55,          // chance a chamber gets a mid-level shelf
+      SCALE: 1 / 23,         // 2D noise frequency of the shelf's outline
+      COVER: 0.05,           // noise threshold: higher = less of the floor
+                             // survives as shelf (the field's median is ~0,
+                             // so 0.05 keeps a little under half of the span)
+      THICKNESS: 3,          // shelf slab thickness in blocks
+      SPAN: 0.70,            // shelf reaches this fraction of the radii
+      LEVEL_MIN: 0.30,       // shelf height as a fraction of the chamber,
+      LEVEL_MAX: 0.55,       // measured up from the floor
+    },
+    CONNECTORS: {
+      COUNT: 2,              // bores leaving each chamber
+      RADIUS: 2.2,           // bore radius (walkable)
+      LENGTH_MIN: 40,        // ...run this far out to meet the tunnel net
+      LENGTH_MAX: 90,
+      RISE: 0.22,            // blocks climbed per block travelled
+      WANDER: 0.35,          // radians of sine sway over the run
+      FLOOR_OFFSET: 3,       // bore mouth this far above the chamber floor
+    },
   },
 
-  // Waterfall springs (Phase 15): rare water columns pouring down mega-cavern
-  // walls into a small floor pool. Static water (this game's water doesn't
-  // flow yet) — the column IS the waterfall. Deterministic per chunk, writes
-  // only inside the owning chunk.
+  // Waterfall springs (Phase 15; Phase 23 re-anchored them to the great
+  // caverns now that those are real): water columns pouring down a cavern
+  // wall into a small floor pool. Water flows now (world/fluids.js settles
+  // it), but the generated column keeps the fall solid from the first frame.
+  // Deterministic per chunk, writes only inside the owning chunk.
   WATERFALL: {
     ATTEMPTS_PER_CHUNK: 2,   // spring-column candidates per chunk
     CHANCE: 0.3,             // chance an eligible candidate actually springs
-    MIN_GATE: 0.5,           // only well inside a mega region
-    MIN_Y: -20,              // springs sit in the upper cavern walls
+    MIN_Y: -40,              // springs sit in the upper cavern walls
     MAX_Y: 24,
     MIN_DROP: 5,             // needs at least this much open air below
     MAX_FALL: 32,            // column length cap
   },
 
-  // Lava placement in carved space (Phase 10 — replaces the old "everything
-  // below y=10 floods" rule that drowned the deep caves in lava):
+  // Underground water (Phase 23): springs and puddles anywhere in the cave
+  // band, not only inside a great cavern — vanilla's cave floors are damp.
+  // A spring is a single source block leaking from a wall or ceiling; a pool
+  // is a small flat sheet of water on a cave floor.
+  SPRINGS: {
+    ATTEMPTS_PER_CHUNK: 3,   // candidate cells per chunk
+    SPRING_CHANCE: 0.22,     // ...that become a single-block wall spring
+    POOL_CHANCE: 0.16,       // ...or the seed of a floor pool
+    POOL_MAX_CELLS: 14,      // flood cap — a puddle, never a lake
+    MIN_Y: -50,
+    MAX_Y: 45,
+  },
+
+  // Lava placement in carved space (Phase 10; rewritten in Phase 23 — the
+  // Phase 10 rule flooded EVERY cave floor cell inside a pool-mask region
+  // over the whole band, which is why lava lakes kept showing up 40 blocks
+  // above where they belong: measured over 256x256, 3040 lava cells sat
+  // above y=-54, in sheets):
   //   - full lava lakes only at/below LAKE_MAX_Y (all carved cells flood)
-  //   - between LAKE_MAX_Y and OVERWORLD.LAVA_POOL_MAX_Y, only small
-  //     occasional pools: 1-deep puddles on cave floors inside sparse
-  //     pool-mask regions, plus rare single-block wall leaks
+  //   - above it, lava is PLACED, never masked: a few seeded sites per chunk,
+  //     each flooding at most POOL_MAX_CELLS of connected flat floor, plus
+  //     rare single-block wall springs. Both get rarer with height.
   LAVA: {
     LAKE_MAX_Y: -54,         // vanilla-style lava-flood level
-    POOL_MASK_SCALE: 1 / 55, // 2D pool-region mask frequency
-    POOL_MASK_MIN: 0.42,     // mask noise (-1..1) above which puddles form
-    LEAK_CHANCE: 0.0012,     // per carved wall-adjacent cell in the pool band
+    POOL_ATTEMPTS_PER_CHUNK: 2, // candidate pool sites per chunk...
+    POOL_CHANCE: 0.30,       // ...each this likely to actually be one
+    POOL_MAX_CELLS: 8,       // "small isolated pools of a few blocks"
+    POOL_MAX_Y: -12,         // no pools at all above this — the shallow caves
+                             // stay dry apart from the odd wall spring
+    SPRING_CHANCE: 0.0004,   // per carved wall-adjacent cell above the lakes
+    SPRING_MAX_Y: 8,         // ...and none above this
   },
 
   // Surface entrances: above MAX_Y tunnels keep carving only inside sparse
@@ -376,6 +432,24 @@ export const UNDERGROUND = {
   },
   // Gravel pockets in stone — the renewable flint source underground.
   GRAVEL_POCKETS: { MIN_Y: -56, MAX_Y: 56, ATTEMPTS_PER_CHUNK: 2, SIZE_MIN: 8, SIZE_MAX: 16 },
+
+  // Deepslate (Phase 23): below TOP_Y the terrain's stone fill becomes
+  // deepslate. The change is not a line — through the band from TOP_Y down to
+  // FULL_Y each stone block independently rolls deepslate with a probability
+  // that rises from 0 to 1 with depth, so the two interleave in a speckled
+  // transition exactly like vanilla's. At/below FULL_Y everything is
+  // deepslate. Ore veins landing in it take their deepslate variant.
+  DEEPSLATE: { TOP_Y: 0, FULL_Y: -8 },
+
+  // Gravel and clay banks on cave floors beside underground water (Phase 23):
+  // a floor cell within REACH of a water cell may turn to gravel or clay,
+  // spreading over a small patch so the result reads as a bank, not confetti.
+  SHORE_PATCHES: {
+    REACH: 2,                // blocks from water a floor cell may convert
+    CLAY_CHANCE: 0.45,       // of converted cells, this fraction is clay...
+    CHANCE: 0.55,            // ...and this fraction of eligible cells convert
+    DEPTH: 2,                // how deep below the floor surface it goes
+  },
 };
 
 // Overworld heightmap, biomes and decoration (world/terrain.js).
@@ -1521,10 +1595,12 @@ export const UI = {
   // vanilla's proportions — a small icon with the countdown BENEATH it,
   // not a captioned panel that intrudes on the view).
   EFFECTS_HUD: {
-    ICON_PX: 24,                  // the framed icon square
-    ART_PX: 18,                   // the item sprite inside it
-    LABEL_PX: 10,                 // countdown font size
-    GAP_PX: 4,                    // space between two effects
+    // Phase 23 bug fix: doubled in both dimensions — at 24px the icon was a
+    // smudge and the countdown under it was unreadable at 1080p.
+    ICON_PX: 48,                  // the framed icon square
+    ART_PX: 36,                   // the item sprite inside it
+    LABEL_PX: 20,                 // countdown font size
+    GAP_PX: 8,                    // space between two effects
     TOP_PX: 8,                    // offset from the top screen edge
     RIGHT_PX: 8,                  // ...and the right edge
   },
@@ -2084,7 +2160,10 @@ export const PARTICLES = {
   STEP: { COUNT: 2, SIZE: 0.09, SPEED: 0.9, LIFE: [0.3, 0.6], GRAVITY: 0.8 },
   SPRINT_STEP_COUNT: 4,           // sprinting kicks up more
   STEP_INTERVAL: 0.42,            // seconds between walking footsteps
-  SPRINT_STEP_INTERVAL: 0.30,     // ...and while sprinting
+  SPRINT_STEP_INTERVAL: 0.34,     // ...and while sprinting (Phase 23: 0.30
+                                  // put ~4.3 steps a second under the player,
+                                  // faster than vanilla and part of why the
+                                  // sprint loop read as a continuous noise)
   LAND: { COUNT: 18, SIZE: 0.10, SPEED: 2.6, LIFE: [0.4, 0.8], GRAVITY: 0.9 },
   LAND_MIN_FALL: 1.2,             // blocks fallen before a landing burst shows
 
@@ -2152,7 +2231,16 @@ export const AUDIO = {
   // mobs dying from turning into noise.
   COMPRESSOR: { THRESHOLD: -22, KNEE: 26, RATIO: 8, ATTACK: 0.004, RELEASE: 0.22 },
 
-  FOOTSTEP_VOLUME: 0.32,
+  // Phase 23 retune. Footsteps are the most-heard sound in the game and were
+  // both too loud and too long; sprinting no longer gets a volume boost at
+  // all (vanilla sprint steps are faster, not louder — boosting them was half
+  // of the reported "strange, unnatural" sprint noise), and landing has its
+  // own heavier sound instead of a footstep played at 1.8x.
+  FOOTSTEP_VOLUME: 0.26,
+  SPRINT_STEP_VOLUME: 1.0,        // multiplier on a sprinting step (was 1.15)
+  SNEAK_STEP_VOLUME: 0.35,        // ...and on a sneaking one
+  LAND_VOLUME: 0.42,
+  LAND_MAX_VOLUME: 1.35,          // cap on the fall-height scaling
   BREAK_VOLUME: 0.62,
   PLACE_VOLUME: 0.58,
   MINING_VOLUME: 0.24,            // the loop while a block is being dug

@@ -69,7 +69,7 @@ export function createAmbience({ world, player, dimensions }) {
       if (id !== BLOCK.AIR) {
         particles.landing(p.x, p.y, p.z, id, body.lastLanding);
         const group = blockSoundGroup(blockDef(id).name);
-        audio.footstep(group, p, Math.min(1.8, 0.7 + body.lastLanding / 8));
+        audio.land(group, p, Math.min(AUDIO.LAND_MAX_VOLUME, 0.7 + body.lastLanding / 8));
       }
       stepTimer = 0;
     }
@@ -88,7 +88,8 @@ export function createAmbience({ world, player, dimensions }) {
           particles.footstep(p.x, p.y, p.z, id, body.sprinting);
           audio.footstep(
             blockSoundGroup(blockDef(id).name), p,
-            body.sneaking ? 0.4 : body.sprinting ? 1.15 : 1,
+            body.sneaking ? AUDIO.SNEAK_STEP_VOLUME
+              : body.sprinting ? AUDIO.SPRINT_STEP_VOLUME : 1,
           );
         }
       }
