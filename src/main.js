@@ -41,10 +41,14 @@ import { createItemManager } from './entities/items.js';
 import { createFallingBlocks } from './entities/falling.js';
 import { createMobs } from './entities/mobs.js';
 import { createEnderEyes } from './entities/ender_eye.js';
+import { createEnderPearls } from './entities/ender_pearl.js';
 import { createDragonFight } from './entities/dragon.js';
 import { createSmeltingSystem } from './systems/smelting.js';
 import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat, rayAABB } from './systems/combat.js';
+import { createAmbience } from './systems/ambience.js';
+import { audio } from './systems/audio.js';
+import { particles } from './render/particles.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
@@ -69,6 +73,13 @@ async function init() {
 
   const atlasTexture = await loadAtlas();
 
+  // Phase 22: the two feel systems. Both are module-level singletons any
+  // system can emit into (the CHUNK_LIGHT_UNIFORMS pattern) — before these
+  // calls every emit is a silent no-op, which is what keeps the node
+  // harnesses DOM-free. The particle pool needs the atlas, so it starts
+  // here; the AudioContext waits for the first click (autoplay policy).
+  canvas.addEventListener('pointerdown', () => audio.unlock());
+
   // Phase 3: the world renders as streamed chunk meshes. A small area builds
   // synchronously before the first frame; the rest arrives budgeted per frame.
   const world = new World();
@@ -87,6 +98,10 @@ async function init() {
   scene.add(netherGroup);
   scene.add(endGroup);
   world.bindScene(overworldGroup, chunkMaterials);
+  // The particle pool lives in the scene root, not a dimension group: its
+  // contents are cleared on every dimension switch (coordinates mean
+  // nothing in another world), so there is nothing to keep hidden.
+  particles.init({ scene, world });
   // Phase 19: the overworld generator's stronghold pass doubles as the
   // single source of layout truth for the end-portal runtime and the
   // loot-chest scan (one shared blueprint cache).
@@ -232,6 +247,9 @@ async function init() {
     scene, player, items, sfx: combat.sfx,
     getTarget: () => strongholdCenter(TERRAIN.SEED),
   });
+  // Phase 22: thrown ender pearls — a real projectile that teleports the
+  // player where it lands, for 2.5 hearts of fall damage.
+  const enderPearls = createEnderPearls({ scene, world, player, stats, camera });
   let portals; // assigned below — clicks can only arrive long after init
   let endPortal; // assigned below, same rule
   const interaction = createInteraction({
@@ -247,6 +265,8 @@ async function init() {
     // A held eye of ender right-clicked (Phase 18): throw it. Phase 19:
     // right-clicked ON an empty portal frame, it fills the frame instead.
     onThrowEye: () => enderEyes.throwEye(),
+    // A held ender pearl right-clicked (Phase 22): throw it.
+    onThrowPearl: () => enderPearls.throwPearl(),
     onFillFrame: (target) => endPortal.fillFrame(target),
     // A freshly placed sign opens its text entry right away (vanilla).
     onPlaceSign: (cell) => signs.beginEdit(cell),
@@ -383,7 +403,7 @@ async function init() {
     world, dayNight, mobs, fluids,
     managers: [
       items, mobs, falling, combat, fluids, smelting, brewing, chests,
-      spawners, wart, enderEyes, signs, frames,
+      spawners, wart, enderEyes, enderPearls, signs, frames, particles,
     ],
     defs: {
       overworld: { group: overworldGroup, sky: null, spawning: true },
@@ -423,6 +443,10 @@ async function init() {
       },
     },
   });
+  // Phase 22: the ambience driver — player footsteps/landings/splashes and
+  // the world's random display ticks. It reads state only; nothing else
+  // depends on it, so it is created last and updated last.
+  const ambience = createAmbience({ world, player, dimensions });
   portals = createPortals({ world, scene, player, stats, camera, dimensions });
   world.addBlockListener(portals.onBlockChanged);
   // Phase 19: end-portal runtime — frame filling, activation on the 12th
@@ -436,7 +460,11 @@ async function init() {
   // long after init finishes.
   dragonFight = createDragonFight({
     world, scene, player, stats, combat, dimensions, generator: endGenerator,
-    onVictory: () => screens.showVictory(),
+    onVictory: () => {
+      // The one genuine milestone this game has: the vanilla level-up chime.
+      audio.levelUp();
+      screens.showVictory();
+    },
   });
 
   const buildStart = performance.now();
@@ -533,6 +561,10 @@ async function init() {
   window.__smelting = smelting;
   window.__brewing = brewing;
   window.__enderEyes = enderEyes;
+  window.__enderPearls = enderPearls;
+  window.__particles = particles;
+  window.__ambience = ambience;
+  window.__audio = audio;
   window.__chests = chests;
   window.__spawners = spawners;
   window.__wart = wart;
@@ -575,9 +607,16 @@ async function init() {
   // vacuum its own death drops back up before the respawn teleport.
   const onPickup = (name, count, durability) => {
     if (stats.dead) return 0;
-    return durability != null
+    const taken = durability != null
       ? count - inventory.addStack({ name, count, durability })
       : count - inventory.add(name, count);
+    // Phase 22: a small sparkle and blip on anything that actually went in.
+    if (taken > 0) {
+      const p = player.body.position;
+      particles.pickup(p.x, p.y + 0.9, p.z);
+      audio.pickup();
+    }
+    return taken;
   };
 
   // Defensive: if the block backing an open container screen stops being
@@ -638,6 +677,7 @@ async function init() {
       smelting.update(delta); // furnaces run with the UI closed, independently
       brewing.update(delta);  // brewing stands too (Phase 18)
       enderEyes.update(delta); // thrown eyes of ender in flight (Phase 18)
+      enderPearls.update(delta); // thrown pearls + the arrival teleport
       chests.update(delta);   // lid animation + chunk-visibility follow
       spawners.update(delta); // blaze spawner cycles + spinning displays
       wart.update(delta);     // nether wart growth timers
@@ -651,7 +691,17 @@ async function init() {
                               // spawns the fight the same frame)
       chunkMaterials.scrollLava(delta); // animated flowing-lava texture
       chunkMaterials.scrollPortal(delta); // animated portal swirl
+      // Phase 22 feel: footsteps/landings/splashes, the random display tick
+      // that finds torches, lava and portals nearby, the fluid ambience
+      // beds and the cave tones. Last, so it reads this frame's body state.
+      ambience.update(delta);
     }
+    // Phase 22: the listener follows the camera (position AND facing, for
+    // the stereo pan), and the particle pool integrates. Both run outside
+    // the pause gate with a zero delta while paused — the pool must keep
+    // its instance buffers in place so a paused frame still draws them.
+    audio.setListener(camera);
+    particles.update(paused ? 0 : delta, camera.position);
     world.updateStreaming(camera.position); // terrain loads even while paused
     // The End fight's visibility follows the active dimension even while
     // paused — respawn/victory clicks switch dimensions from overlay
@@ -684,11 +734,17 @@ async function init() {
       wasEyeInLava = false;
     }
     if (!paused) updateSleep(delta);
-    // The boss bar: shown for as long as the dragon lives (Phase 21).
+    // The boss bar: shown for as long as the dragon lives. Phase 22 fixed
+    // the reported "empty space where it should be" — the bar is now driven
+    // by BEING IN THE END, not by the fight having already ticked. Arriving
+    // (or arriving and pausing before the first unpaused frame) used to
+    // leave `health` null for as many frames as it took the fight to
+    // initialise, and the bar stayed hidden through all of them.
     const dragonHealth = dragonFight.health;
+    const dragonAlive = dragonFight.state !== 'dying' && dragonFight.state !== 'dead';
     setBossBar(
-      dimensions.activeKey === 'end' && dragonHealth !== null && dragonHealth > 0
-        ? { fraction: dragonHealth / DRAGON.HEALTH }
+      dimensions.activeKey === 'end' && dragonAlive
+        ? { fraction: (dragonHealth ?? DRAGON.HEALTH) / DRAGON.HEALTH }
         : null,
       paused ? 0 : delta,
     );

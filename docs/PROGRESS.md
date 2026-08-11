@@ -15,81 +15,98 @@ into the End, destroy the crystals, kill the Ender Dragon, and step through
 the activated exit portal to the victory screen. The SPEC's success test is
 met end to end.
 
-Phase last completed: **Phase 21 — POLISH: the building set, and the
-reported bugs.
+Phase last completed: **Phase 22 — POLISH: particles and sound.
 
-CRAFTING AND COMBAT — gold tools in all four classes (the real Minecraft
-trade: speed 12, the fastest of any tier, on 33 durability, with WOOD's
-harvest level so a golden pickaxe still can't touch diamond ore); the hoe
-in all five tiers (craftable, inert — this game has no farming); the
-SHIELD (6 planks + 1 iron): hold right-click to raise it after a 0.25s
-delay, and any melee, arrow or blast arriving from the front is negated
-outright for one point of durability, with the guard slowing the walk and
-dropping on attack/eat/draw; SHEARS (2 iron) now craftable, shearing sheep
-as before and harvesting leaf blocks.
+The game is no longer silent, and nothing you do goes unacknowledged.
 
-BUILDING BLOCKS — stairs and slabs in all five materials (cobblestone,
-planks, stone brick, sandstone, nether brick), oak fences and fence gates,
-cobblestone walls; every one of them a REAL SHAPE: one box table per block
-(`world/shape_tables.js`) feeds BOTH the mesher's new generic shape emitter
-and the collision sweep in `player/body.js` and `entities/entity.js`, so
-stairs are walked up in two half steps, slabs are half height, and fences
-and walls stand 1.5 blocks so a jump cannot clear them and mobs cannot path
-onto them. Stairs rotate to the way the player faces; a second slab of the
-same material on a matching slab makes the full block.
+PARTICLES (`render/particles.js`) — ONE fixed, pooled, capped simulation
+(PARTICLES.MAX 2000) drawn in exactly TWO instanced draw calls: textured
+cubes cropped from a block's own atlas tile, and flat coloured cubes.
+Nothing is allocated after boot — the per-particle state lives in flat typed
+arrays and one linear pass per frame integrates AND writes both instance
+buffers. Breaking a block bursts its own texture (with block collision and
+bounce), placing puffs it, footsteps kick up scuffs tinted to the block
+underfoot (more when sprinting), landing throws a ring scaled to the fall,
+entering water splashes and swimming trails bubbles, lava rises embers and
+occasionally pops, explosions expand smoke + debris + a core flash,
+hits throw red, anything that dies puffs, pickups sparkle, end portals
+swirl purple, endermen leave a purple column at BOTH ends of a blink, and
+torches and glowstone flicker. Measured: 0.16ms/frame at 1900 live
+particles, 0.30ms in the brief's worst case (a creeper blast beside a lava
+lake with mobs dying), 0.25ms/frame for particles AND ambience combined in
+a busy scene.
 
-UTILITY — LADDERS (7 sticks) that hang on a wall face and climb at the
-vanilla 2.35 b/s while you hold forward into them (jump climbs, sneak
-holds, letting go slides down slowly, and a ladder resets fall distance);
-DOORS, two blocks tall, both halves swinging together on right-click and
-breaking together; TRAPDOORS; BEDS (3 wool + 3 planks) that set the respawn
-point on use and, at night with nothing hostile within 8 blocks, fade the
-screen and skip to dawn; SIGNS with a four-line entry panel on placement
-and the text rendered onto the board face.
+SOUND (`systems/audio.js`) — the whole game, synthesised with the Web Audio
+API; no audio files ship and none load. One AudioContext; every sound is a
+LAYER of two to four oscillator/noise voices (a body tone, a transient, a
+click) so a stone footstep reads as a boot on rock rather than a beep;
+everything routes through a bus compressor, which is what makes a dozen
+simultaneous events land as one satisfying thump instead of clipping mush.
+Positional sounds attenuate with distance and pan across the stereo field
+from the camera's right vector, and a voice budget drops the overflow.
+Footsteps and break/place/mining vary by material (stone, dirt, grass,
+sand, gravel, wood, wool, glass, metal, netherrack), and the catalogue
+covers player/mob hurt and death, the swing and the thwack that lands, bow
+draw/release and arrow impact, the creeper's hiss and the blast, the
+ghast's shriek, the blaze's crackle, the enderman's warp, splashes,
+bubbles, lava pops, eating, pickup, the level-up chime on victory, looping
+water and lava ambience whose gain follows the fluid around you, the end
+portal's hum, and rare distant cave tones underground. dimensions/portals.js
+and systems/combat.js both gave up their private WebAudio code to it — ONE
+context, ONE compressor for the game.
 
-DECORATION — bookshelves (6 planks + 3 books, books being 3 leather since
-this game has no paper), item frames that mount and pop out any item, and
-flower pots (empty and potted-sapling).
-
-MATERIALS — CHARCOAL from smelting any log, burning exactly like coal and
-lighting torches through its own recipe; stone bricks from 4 stone;
-sandstone from 4 sand; iron/gold/diamond/coal block forms, both ways.
+AMBIENCE (`systems/ambience.js`) — the per-frame half: the player's own
+footsteps/landing/splash/bubbles, and vanilla's randomDisplayTick sampling
+~14 000 random cells a second around the player so torches, lava, glowstone
+and end portals emit wherever they actually are.
 
 THE SIX REPORTED BUGS —
-(1) water buckets: the placement path tested green as it stood, so it was
-hardened rather than rewritten (it now lives in `player/placement.js` with
-the rest of the placement rules) and given the regression test it never
-had; what was actually missing was that placed water DID NOTHING, which is
-(6);
-(2) the Ender Dragon's framerate: the model was never rebuilt per frame
-(it has been a driven rig since Phase 20), so the measurable costs were cut
-instead — hitboxes now write into a preallocated pool behind a
-bounding-sphere ray reject, the ten crystals share ONE material and cache
-their blast-target list, and End chunk generation tests only the pillars
-whose cylinder can actually reach the chunk. Measured: the whole fight
-costs ~0.1ms of JS per frame;
-(3) the boss bar: Minecraft's purple bar with the "Ender Dragon" caption
-across the top of the screen, easing down as it takes damage, shown for
-exactly as long as the dragon lives;
-(4) the perch: the dragon now settles ONTO the fountain — front claws
-splayed onto the raised rim, rear feet folded on the bedrock base, neck
-arched DOWN so the head comes to the player, which is what makes melee the
-perch-phase answer;
-(5) the End island: 88-106 blocks across measured, now 102-118 (SPEC's
-"roughly 100" as a floor rather than an average), and the pillars cut from
-40-70 blocks of shaft to the vanilla 14-40 above the surface, rooted 26
-deep so the column itself is still 40-66 blocks of obsidian — with
-DRAGON.HEAL.RANGE retuned 40 -> 30 so the perch stays out of crystal range;
-(6) fluid flow: WATER now runs the same automaton lava has since Phase 12
-— spreading 7 with a 0.25s tick, falling when unsupported, receding when
-its feed is cut, vanilla's two-sources-make-a-source rule — and both
-fluids render at their own partial height per level on their own scrolling
-texture, so a stream reads as moving and each step visibly lower.
+(1) the boss bar: it is MAGENTA now (vanilla's PINK), captioned "Ender
+Dragon" above it, across the top centre, at z-index 12 with its visibility
+forced every frame it shows — and it no longer waits for the dragon fight's
+first tick, because ARRIVING in the End is what shows it (health null on
+the arrival frame used to leave it hidden);
+(2) water buckets: placement now runs its OWN fluid-aware ray instead of
+reusing the block raycast's target. The block ray skips fluids entirely, so
+aiming anywhere at a pool, a stream or the water you are standing in
+resolved to the solid floor under it — or to nothing past reach — and the
+click silently did nothing. Flow re-verified end to end: a placed source
+spreads exactly 7 cells, each one visibly lower, fills a depression, and
+falls when its support is knocked out;
+(3) golden apples: ABSORPTION II — 4 extra hearts for 2:00 — plus
+Regeneration II for 5s. The yellow hearts sit in their own row directly
+above the red health hearts and empty completely before real health takes
+anything. The row's visibility is written every frame rather than only on a
+change, because a stale write is exactly the shape of the "no yellow hearts
+appear" report;
+(4) held-item mirroring: SPRITE_TILT yaws the item slab ~180°, so what
+faces the camera is its BACK — the mirror image. Tools were screenshot-
+tuned in that pose and read right, so they keep it; everything else is
+mirrored back with a negative local X scale (same pose, right-way-round
+picture). Held BLOCKS were checked and are NOT mirrored — items.js's face
+table is byte-identical to the mesher's in world/emitters.js — so they were
+left exactly as they were;
+(5) ender pearls (`entities/ender_pearl.js`): right-click throws one on a
+real gravity arc, swept in sub-steps so it cannot tunnel, and the player
+teleports to where it lands for the vanilla 5 points (2.5 hearts);
+(6) thrown eyes of ender render THROUGH terrain (depth test off, drawn
+last) with a sparkling wake — following the bearing is the whole point, and
+an eye that vanishes behind the hill it is crossing tells you nothing. The
+material is CLONED per eye: the cache is shared with the hand, the drops and
+the UI icons.
 
-Five ARCHITECTURE cuts came with it, including the ARROW split out of
-combat.js that has been mandated since Phase 17.**
+Also: the potion-effect indicator shrank to vanilla's proportions — a 24px
+framed icon with the countdown BENEATH it, in a row across the top-right
+corner (three simultaneous effects now occupy 80x35px in total, where ONE
+used to take 82x38 and they stacked downward into the view).
 
-Previous phase: **Phase 20 — the final fight: the End rebuilt
+Four new files, no file grown past the cap, and dragon.js/blocks.js
+deliberately untouched (they still carry their mandated cuts).**
+
+Previous phase: **Phase 21 — the building set and the Phase 20 bug reports
+(see the Session log).**
+
+Earlier: **Phase 20 — the final fight: the End rebuilt
 complete (dimensions/end.js — the ~110-block end-stone island floating
 over void with a ragged coast and a dead-flat central plateau, TEN
 obsidian pillars ringing the centre at radius ~33 with heights climbing
@@ -235,6 +252,41 @@ normal flood fill), and the mandated ui/screens.js split
 
 - `index.html` — importmap pinned to three@0.160.0 (unpkg), fullscreen canvas,
   pointer-lock hint overlay.
+- **Phase 22 particles** — `render/particles.js`. ONE pooled simulation, TWO
+  instanced draw calls (textured atlas-crop cubes / flat coloured cubes),
+  struct-of-arrays state, nothing allocated after boot, hard-capped at
+  PARTICLES.MAX. Emitters: blockBreak / blockPlace / footstep / landing /
+  splash / bubble / ember / lavaPop / flame / sparkle / explosion / damage /
+  death / pickup / portal / enderTrail. Spawn-time light tint, spawn-time
+  distance cull, per-particle block collision behind a live-count gate,
+  sRGB->linear colour decode (the renderer encodes on output — skipping this
+  rendered dark smoke as pale grey). Cleared on every dimension switch.
+- **Phase 22 sound** — `systems/audio.js`. One AudioContext -> per-voice
+  graph -> bus gain -> compressor -> master. Layered voices, per-material
+  timbre table, distance falloff + stereo pan off the camera's right vector,
+  a voice budget and a per-sound retrigger gap. `blockSoundGroup(name)`
+  derives a block's material from its registry NAME (blocks.js stays a block
+  registry, not a sound one). `audio.setLoop(name, gain, spec)` is the
+  continuous-bed API (water, lava, the end-portal hum).
+  `ensureAudio()`/`getNoiseBuffer()`/`audioBus()` are exported so
+  dimensions/portals.js shares the one context.
+- **Phase 22 ambience** — `systems/ambience.js`: footsteps paced off real
+  ground speed, the landing burst, the water splash on transition, the
+  bubble trail, vanilla's randomDisplayTick (~14 000 cells/second in a
+  21-cube around the player), a cached end-portal cell list driving its
+  swirl and hum, the fluid ambience census, and the cave tone.
+- **Phase 22 HUD** — `ui/hud.js`: the MAGENTA boss bar (config
+  UI.BOSS_BAR carries the palette and caption), the ABSORPTION row (four
+  gold hearts, `heartDataUrl(variant, palette)` draws the same shape in a
+  second palette; the row sits directly above the health hearts and pushes
+  the armour bar up while it shows), and the potion-effect chips resized to
+  config UI.EFFECTS_HUD — a small framed icon with the countdown beneath,
+  laid out in a row across the top-right corner.
+- **Phase 22 ender pearls** — `entities/ender_pearl.js`: gravity arc,
+  sub-stepped sweep (no tunnelling at 22 b/s), teleport to the landing point
+  with a headroom climb, 5 points of arrival damage, purple burst and warp
+  at both ends. Wired like the eyes (`onThrowPearl` in main.js, in the
+  dimension managers list).
 - **Phase 21 building set** — `world/shapes.js` (ids + registry entries) and
   `world/shape_tables.js` (the box tables) hold stairs/slabs/fences/gates/
   walls/ladders/doors/trapdoors/beds/signs/pots/frames; the mesher's generic
@@ -3273,6 +3325,49 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Partially built
 
+- Phase 22 deliberate slices:
+  - Particles are small textured/coloured CUBES, not vanilla's camera-facing
+    quads. The brief asked for cubes; they tumble on a per-instance yaw+pitch
+    so they don't read as a grid of flat squares.
+  - Particle collision is a cheap axis-separated point test against a cell's
+    collision boxes, and only for the kinds that ask for it (break debris,
+    landing). Above PARTICLES.COLLIDE_MAX live it is skipped entirely — the
+    cap is a frame-time guarantee, not a correctness one.
+  - Particles are lit ONCE, at spawn, from `world.getLight` (the mobs.js
+    rule). They don't relight as they drift or as night falls.
+  - Particles are cleared on a dimension switch rather than stored (their
+    coordinates mean nothing in another world) and are NOT frozen visually
+    while the game is paused — the pool holds its last uploaded frame, which
+    is what a paused game should look like.
+  - There is no smoke from torches, no crit/enchant sparkle, no fire particle
+    on a burning entity, and no vanilla "block landed on" dust. The brief's
+    list is covered; these are not on it.
+  - Sound is synthesised, so it is *evocative* rather than sampled: a stone
+    footstep is a filtered noise transient over a short body tone, not a
+    recording. Mob voices are one shape pitched by the mob's height rather
+    than a per-mob timbre. There is no music.
+  - The stereo pan is a StereoPannerNode driven by the camera's right vector
+    (no HRTF, no PannerNode per voice — far cheaper and, for a blocky game,
+    indistinguishable).
+  - The looping ambience beds (water, lava, end portal) are built lazily and
+    then run for the session at whatever gain the census sets, including 0.
+    Starting and stopping them would click.
+  - `AUDIO.MAX_VOICES` drops the overflow silently: past 24 concurrent
+    one-shots a new sound simply doesn't play. Under the brief's worst case
+    the compressor, not the cap, is what does the work.
+  - The nether portal keeps its OWN particles and hum in
+    dimensions/portals.js (Phase 15, still working); ambience.js deliberately
+    skips NETHER_PORTAL so nothing is doubled. Only the context is shared.
+  - "Level-up" has no XP system to hang on (this game has none): the chime
+    plays on the one genuine milestone the game has, the victory, and softly
+    on a golden apple.
+  - Ender pearls hit BLOCKS only — they pass through mobs (vanilla damages
+    them) — and they never spawn an endermite. A pearl thrown into open sky
+    despawns after ENDER_PEARL.MAX_SECONDS with no teleport.
+  - The eye of ender draws through terrain by turning its depth test off,
+    so it also draws over the hand pass' worth of world in front of it. That
+    is the point of the fix; there is no distance-based "x-ray only when
+    occluded" refinement.
 - No stub modules remain — entities/dragon.js, the last one, became the
   dragon fight in Phase 20. Every file in ARCHITECTURE.md's layout is
   real.
@@ -3586,10 +3681,28 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._ All six Phase 20 follow-up reports are closed (see
-the Phase 21 status entry); the water-bucket one turned out to be a
-symptom of water not flowing rather than a fault in the placement path,
-which tested green as it stood and now carries a regression test.
+_Nothing known broken._ All six Phase 21 follow-up reports are closed — see
+the Phase 22 status entry, and the automated coverage in the Notes below.
+
+Worth recording honestly about two of them:
+- The **water bucket** placement path tested GREEN in isolation again this
+  phase (a bucket right-clicked at a plain floor has always worked). What
+  reproduces the report is aiming at WATER: the block raycast skips fluids,
+  so the click resolved to the floor under the pool or to nothing at all.
+  Placement now runs its own fluid-aware ray and takes the fluid cell
+  directly, which is also the vanilla rule.
+- The **golden apple** was reported twice. The second report is the one the
+  code now matches: ABSORPTION II (4 hearts), not vanilla's Absorption I
+  (2). The first round's mechanism was verified working end to end through
+  the real hold-to-eat path — the hearts DID render — so what changed is the
+  amount, the row's per-frame visibility write, and four hearts being far
+  harder to miss than two.
+- The **held-item mirroring** report named blocks as well as items. Blocks
+  were measured, not assumed: `entities/items.js`'s face/UV table is
+  byte-identical to the mesher's in `world/emitters.js`, so a held mini-cube
+  shows exactly what a placed block shows, and it was left alone. The
+  mirroring was entirely in the SPRITE pose (SPRITE_TILT's ~180° yaw shows
+  the slab's back face) and is fixed for everything that is not a tool.
 
 ---
 
@@ -3603,8 +3716,42 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
+- **Phase 22 APIs.** `particles` (render/particles.js) and `audio`
+  (systems/audio.js) are module-level SINGLETONS: import and call, no wiring.
+  Both are inert until main.js runs `particles.init({ scene, world })` and
+  the first `audio.unlock()` (the canvas pointerdown listener), which is what
+  keeps them safe to import from anywhere. Add a new effect by adding an
+  emitter method to the ParticleSystem class and its numbers to
+  config PARTICLES; add a new sound by adding a method that calls
+  `playLayer(name, parts, { place, volume, key })` and its numbers to
+  config AUDIO. `blockSoundGroup(name)` maps a block registry name to a
+  material timbre — extend the string tests there, NOT world/blocks.js.
+- **Harness notes that cost this session real time.** `__interaction`
+  gained `debugRightClick()` (test scaffolding beside `debugSetMouse`): a
+  right-click PRESS only resolves through the pending flag the real
+  mousedown sets, so `debugSetMouse(false, true)` alone can never test a
+  bucket, a pearl or any other use action. And driving `interaction.update()`
+  by hand does NOT move the camera — the camera is derived in
+  `player.update()`, so a targeting test must let real frames run
+  (`debugForceInput(true)` keeps the loop alive without pointer lock) after
+  `setView`. Fluid-flow tests must wait on GAME time, not wall clock: under
+  SwiftShader the whole world runs at ~10fps and heavy `setBlock` loops
+  (2000 cells) stall it for minutes — build small arenas.
+- **Do not emit from `player/body.js` or `entities/entity.js`.** Both are
+  deliberately three.js-free and node-constructible, and importing the
+  particle/audio singletons would drag `three` into them. Their feedback is
+  edge-detected by their managers instead: `entities/mobs.js` compares
+  `entity.health` to `mob.shownHealth` each frame (which covers EVERY damage
+  source — melee, arrows, blasts, burning, suffocation), and
+  `systems/ambience.js` reads `body.lastLanding` / `horizontalSpeed` /
+  `touchingWater`. Keep it that way.
+- **Per-instance colours must be sRGB-decoded.** The renderer encodes
+  linear -> sRGB on output and three decodes any colour you hand a material,
+  but an instanced attribute bypasses that: `render/particles.js` runs config
+  hexes through SRGB_TO_LINEAR at spawn. Skipping it renders dark smoke as
+  pale grey (it did, until it was caught in a screenshot).
 - **THE GAME IS COMPLETE AND POLISHED.** Phase 20 shipped the finale;
-  Phase 21 shipped the building set and cleared every reported bug. What
+  Phase 21 shipped the building set; Phase 22 shipped the feel. What
   is left is maintenance context, in rough priority order:
   - TWO files are over the ARCHITECTURE cap and both carry a MANDATED CUT:
     `entities/dragon.js` (878 — cut the rig: spawnDragon/attach/
@@ -3641,8 +3788,10 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
     should become a two-storey room (bookshelf walls, wooden walkways,
     ladder) and the portal room a taller chamber with a raised walkway
     around the frame. Cosmetic — the run is completable as is.
-  - SPEC "feel" rows never built: footstep/break/place sounds (only the
-    procedural combat/portal synths exist), rivers, water flow.
+  - ~~SPEC "feel" rows never built: footstep/break/place sounds, rivers,
+    water flow~~ — Phase 21 shipped water flow, Phase 22 shipped every
+    sound and particle row. RIVERS are now the ONE unbuilt SPEC feature
+    left in the whole document; they need a fluid-aware carver pass.
 - Phase 20 APIs: `createDragonFight` (entities/dragon.js) owns the whole
   End fight; it deliberately does NOT join the dimension managers list —
   it gates every update on `dimensions.activeKey === 'end'` and syncs
@@ -4022,3 +4171,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 20 | **The finale — the game is feature complete.** The End rebuilt whole (dimensions/end.js): ~110-block island with a flat central plateau, 10 obsidian pillars (heights 40→70 climbing the ring, bedrock crystal seats), the inactive bedrock exit-portal fountain (base disc, rim, 20-cell well, torch-lit column), deterministic and shared with the fight via one EndGenerator instance. End crystals (entities/crystals.js): the real-sheet spinning cage/core/base display on every pillar, poppable by any hit through the combat facade, exploding for real. The Ender Dragon (entities/dragon.js + DRAGON_MODEL/END_CRYSTAL_MODEL in models.js, converted from the vanilla rigs with the wing-membrane texOffs trick): a kinematic banked flyer with driven bezier neck/tail chains, circling/strafing/perching phases, wing knockback, the perch breath cone, 200hp with head-only full damage (body 0.25x), perch projectile-immunity, crystal healing at 3/s over a visible beam with the feeder-pop sting, a 5.5s death sequence (glide to centre, nine wheeling light beams, white-out) that fills the exit portal and spawns the layered-box dragon egg. Victory (ui/screens.js): entering the active portal shows the victory screen; Return Home lands at the overworld spawn, inventory intact. Combat integration via the main.js combatTargets facade — combat.js untouched. TEST_CHEST removed (mandated; restored by request in the follow-up with an expanded End-fight kit). 25 node fight checks + 21 browser end-to-end checks green, zero console errors; screenshot-verified (island, dragon in flight, crystals, healing beam, perch, breath, death beams, active portal + egg, victory screen) | Polish only: combat.js arrow split (the standing cap mandate), stronghold room upgrades (Phase 19 report), sounds/rivers/water flow (SPEC "feel"), no XP/egg-block (documented deviations) |
 | 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |
 | 21 | **Polish: the building set.** Gold tools + hoes in five tiers, the shield (raise to negate frontal melee/arrows/blasts), craftable shears (sheep AND leaf blocks). Stairs and slabs in five materials, fences, fence gates, cobblestone walls, ladders, doors, trapdoors, beds, signs, bookshelves, item frames, flower pots — every one a REAL SHAPE from ONE box table (`world/shapes.js` + `world/shape_tables.js`) that feeds both the mesher's new generic `emitShape` and the collision sweeps, so fences really are 1.5 tall and slabs really are half height. Ladders climb at the vanilla 2.35 b/s; doors/gates/trapdoors toggle; beds set spawn and skip the night; signs take four lines of text on placement. Charcoal from any log (fuel + torches), stone bricks, sandstone, the four block forms both ways, books from leather. The six reported bugs: water bucket placement hardened + regression-tested, the End fight's per-frame cost cut to ~0.1ms (preallocated hitboxes behind a ray reject, one shared crystal material, cached blast targets, chunk-local pillar tests), the purple boss bar, the dragon now GRIPPING the fountain with its head craned down, the island 102-118 across with vanilla 14-40 pillars (HEAL.RANGE 40->30), and WATER FLOW on the lava automaton with both fluids rendering at partial height on their own scrolling texture. Five ARCHITECTURE cuts: systems/arrows.js (mandated since Phase 17), player/placement.js, player/body.js, world/shapes.js + world/shape_tables.js. 88 automated checks green, zero console errors, screenshot-verified. | dragon.js (878) and blocks.js (908) over the cap with their cuts mandated; rivers; sounds; no upside-down/corner stairs, no door hinges, no sign font |
+| 22 | **Polish: particles and sound.** `render/particles.js` — ONE pooled, capped, allocation-free particle simulation in TWO instanced draw calls (textured cubes cropped from a block's own atlas tile; flat coloured cubes), struct-of-arrays state, spawn-time light tint and distance cull, gated block collision, sRGB-decoded colours: block break/place, footstep scuffs and landing bursts tinted to the block underfoot, water splash + bubble trail, lava embers and pops, expanding explosion smoke/debris/flash, red damage hits, death puffs, pickup sparkles, end-portal swirls, enderman blink columns, torch and glowstone flicker. `systems/audio.js` — the WHOLE game's sound synthesised with the Web Audio API (no files): one context, layered 2-4 voice sounds, a bus compressor, distance falloff + stereo pan, a voice budget, per-material footstep/break/place/mining timbres, hurt/death, swing/hit, bow draw/release/impact, hiss/boom/shriek/crackle/warp, splash/bubble/lava pop, pickup, the victory chime, looping water/lava/portal ambience and underground cave tones; combat.js and portals.js gave up their private WebAudio for it. `systems/ambience.js` — footsteps/landing/splash/bubbles plus vanilla's randomDisplayTick. Measured 0.16ms/frame at 1900 particles, 0.25ms/frame for particles + ambience together in a busy scene, 0.30ms in the creeper-beside-lava worst case. The six reported bugs: the MAGENTA boss bar shown by ARRIVING in the End (not by the fight's first tick), water buckets placing through a fluid-aware ray (aiming at water used to no-op) with flow re-verified 7 cells/step-lower/fills/falls, golden apples granting Absorption II — 4 yellow hearts for 2:00 — plus 5s of Regeneration II, with a HUD row above the health hearts that empties first, and the potion-effect indicator shrunk to vanilla's small top-right icon + countdown, held non-tool items un-mirrored (blocks measured identical to the mesher and left alone), ender pearls as a real thrown projectile that teleports for 2.5 hearts, and thrown eyes of ender drawing through terrain. 50 automated browser checks green, zero console errors, screenshot-verified. | Rivers (the last unbuilt SPEC feature); dragon.js (878) and blocks.js (908) still over the cap with their mandated cuts; particles are cubes not billboards and are lit once at spawn; no music; no XP so "level-up" rides the victory |

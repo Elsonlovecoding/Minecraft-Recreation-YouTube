@@ -23,8 +23,21 @@ import {
   BED_INFO, BED_HEAD_BY_FACING, FACING_DELTA, isBed, isSign, isItemFrame,
   isDoor, LADDER_BY_FACING, SIGN_IDS, isClimbable,
 } from '../world/blocks.js';
+import { particles } from '../render/particles.js';
+import { audio, blockSoundGroup } from '../systems/audio.js';
 
 const FACING_INDEX = { N: 0, S: 1, E: 2, W: 3 };
+
+// Phase 22: every successful placement puffs the block's own texture and
+// thumps in its material. One helper, called from each success path, so a
+// door and a slab sound exactly like the generic case.
+function placedFeedback(x, y, z, id) {
+  particles.blockPlace(x, y, z, id);
+  audio.placeBlock(
+    blockSoundGroup(blockDef(id).name),
+    { x: x + 0.5, y: y + 0.5, z: z + 0.5 },
+  );
+}
 
 // A cell a new block may replace: air and fluids only (shared with the
 // bucket actions).
@@ -71,6 +84,7 @@ export function createPlacement({
     const heldSlab = SLAB_ITEM_FAMILIES[name];
     if (heldSlab && SLAB_FAMILY_OF[target.id] === heldSlab) {
       world.setBlock(target.x, target.y, target.z, heldSlab.full);
+      placedFeedback(target.x, target.y, target.z, heldSlab.full);
       hand.consume(1);
       startSwing(hand.key);
       return true;
@@ -120,6 +134,7 @@ export function createPlacement({
       const facing = DOOR_INFO[placed].facing;
       world.setBlock(x, y, z, placed);
       world.setBlock(x, y + 1, z, DOOR_UPPER_BY_FACING[FACING_INDEX[facing]]);
+      placedFeedback(x, y, z, placed);
       hand.consume(1);
       startSwing(hand.key);
       return true;
@@ -133,12 +148,14 @@ export function createPlacement({
       if (!freeCell(hx, y, hz)) return false;
       world.setBlock(x, y, z, placed);
       world.setBlock(hx, y, hz, BED_HEAD_BY_FACING[FACING_INDEX[facing]]);
+      placedFeedback(x, y, z, placed);
       hand.consume(1);
       startSwing(hand.key);
       return true;
     }
 
     world.setBlock(x, y, z, placed);
+    placedFeedback(x, y, z, placed);
     hand.consume(1); // the hand visuals refresh via the subscription
     startSwing(hand.key);
     if (isSign(placed)) onPlaceSign?.({ x, y, z });
@@ -155,6 +172,7 @@ export function createPlacement({
     if (!inWorld(target.y + 1)) return false;
     if (world.getBlock(target.x, target.y + 1, target.z) !== BLOCK.AIR) return false;
     world.setBlock(target.x, target.y + 1, target.z, plant.block);
+    placedFeedback(target.x, target.y + 1, target.z, plant.block);
     hand.consume(1);
     startSwing(hand.key);
     return true;

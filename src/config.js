@@ -644,6 +644,7 @@ export const STATS = {
   HEART_PX: 18,                 // HUD heart icon size
   HUNGER_PX: 18,                // HUD drumstick icon size
   ARMOR_PX: 18,                 // HUD armour icon size (Phase 13)
+  ABSORPTION_PX: 18,            // HUD yellow absorption heart size (Phase 22)
 
   // Contact damage (cactus registers damagesOnContact; lava handled above)
   CACTUS_DAMAGE: 1,             // per contact tick (half a heart, vanilla)
@@ -1047,6 +1048,15 @@ export const EFFECTS = {
   STRENGTH_SECONDS: 180,          // vanilla 3:00
   STRENGTH_BONUS_DAMAGE: 3,       // vanilla Strength I: +3 melee damage
   HEALING_AMOUNT: 4,              // vanilla Instant Health I: 2 hearts
+  // The golden apple (Phase 22 bug fix): vanilla grants Absorption I for
+  // 2:00 — 2 extra (yellow) hearts that soak damage before real health —
+  // plus Regeneration II for 5 seconds.
+  GOLDEN_APPLE: {
+    ABSORPTION_HEALTH: 8,         // Absorption II: 8 points = 4 yellow hearts
+    ABSORPTION_SECONDS: 120,      // 2:00
+    REGENERATION_SECONDS: 5,      // Regeneration II, 5s
+    REGENERATION_INTERVAL: 1.25,  // seconds per healed point (Regen II = 25 ticks)
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1067,6 +1077,12 @@ export const ENDER_EYE = {
   BOB_HZ: 1.6,                    // hover bob rate
   BOB_BLOCKS: 0.12,               // hover bob amplitude
   SHATTER_FLASH_SECONDS: 0.35,    // the little burst when an eye breaks
+  // Phase 22: a thrown eye draws THROUGH terrain (depth test off, drawn
+  // last) — following its bearing is the whole point, so it must never
+  // disappear behind the hill it is crossing.
+  RENDER_ORDER: 900,
+  TRAIL_PER_SECOND: 22,           // purple sparks left in its wake
+  TRAIL_COLOR: 0x9ce8b0,          // the eye's own pale green-teal
 };
 
 // ---------------------------------------------------------------------------
@@ -1484,14 +1500,33 @@ export const UI = {
   BLOCK_ICON_PX: 64,              // canvas resolution of isometric block icons
   DURABILITY_BAR_PX: 3,           // height of the durability bar in a slot
 
-  // The boss bar (Phase 21): Minecraft's purple bar across the top of the
-  // screen while the Ender Dragon lives, depleting as it takes damage.
+  // The boss bar (Phase 21; Phase 22 made it MAGENTA and unmissable):
+  // Minecraft's boss bar across the top centre of the screen while the
+  // Ender Dragon lives, captioned above and depleting as it takes damage.
   BOSS_BAR: {
     WIDTH_PX: 380,                // bar width (vanilla is 182 art px at 2x)
-    HEIGHT_PX: 10,                // the bar itself
+    HEIGHT_PX: 12,                // the bar itself
     TOP_PX: 14,                   // offset from the top screen edge
-    LABEL_PX: 15,                 // caption font size
+    LABEL_PX: 16,                 // caption font size
     EASE_RATE: 6,                 // 1/s easing of the depleting fill
+    LABEL: 'Ender Dragon',        // the caption above the bar
+    // Vanilla's BossBar.Color.PINK reads as magenta on screen.
+    FILL_TOP: '#ff8bf0',          // gradient: lit top edge...
+    FILL_MID: '#f217c8',          // ...the magenta body...
+    FILL_BOTTOM: '#a1067f',       // ...and the shaded bottom
+    TRACK: '#2a0a24',             // the empty track behind the fill
+  },
+
+  // Active potion effects, top-right (Phase 18; Phase 22 shrank them to
+  // vanilla's proportions — a small icon with the countdown BENEATH it,
+  // not a captioned panel that intrudes on the view).
+  EFFECTS_HUD: {
+    ICON_PX: 24,                  // the framed icon square
+    ART_PX: 18,                   // the item sprite inside it
+    LABEL_PX: 10,                 // countdown font size
+    GAP_PX: 4,                    // space between two effects
+    TOP_PX: 8,                    // offset from the top screen edge
+    RIGHT_PX: 8,                  // ...and the right edge
   },
 
   // The sleep fade (Phase 21 — beds): a full-screen wash while night passes.
@@ -2004,6 +2039,149 @@ export const END_CRYSTAL = {
   BEAM_WIDTH: 0.22,             // healing-beam thickness (blocks)
   BEAM_COLOR: 0xe0b8ff,         // pale violet
   BEAM_OPACITY: 0.75,
+};
+
+// ---------------------------------------------------------------------------
+// Ender pearls (entities/ender_pearl.js — Phase 22): right-clicking one
+// throws it as a real projectile; wherever it lands the player teleports,
+// taking the vanilla 5 points (2.5 hearts) of fall damage on arrival.
+// ---------------------------------------------------------------------------
+
+export const ENDER_PEARL = {
+  SPEED: 22,                      // launch speed, blocks/s (vanilla ~1.5 b/t)
+  GRAVITY: 20,                    // arc pull, blocks/s^2
+  DRAG: 0.008,                    // per-second velocity damping
+  MAX_SECONDS: 8,                 // safety despawn (a pearl thrown at the sky)
+  SPAWN_FORWARD: 0.35,            // launch offset ahead of the eye (blocks)
+  SPAWN_DOWN: 0.12,               // ...and a touch below it, like vanilla
+  SPRITE_SIZE: 0.32,              // rendered slab edge (blocks)
+  SPIN_RATE: 6.0,                 // rad/s tumble
+  STEP_SECONDS: 1 / 120,          // sub-step for the swept collision test
+  TELEPORT_DAMAGE: 5,             // SPEC/vanilla: 2.5 hearts on arrival
+  TRAIL_PER_SECOND: 26,           // purple particles left behind in flight
+  ARRIVAL_CLEARANCE: 0.02,        // lift off the landing face before standing
+};
+
+// ---------------------------------------------------------------------------
+// Particles (render/particles.js — Phase 22). ONE pooled instanced mesh pair
+// draws every particle in the game: textured cubes sampling the block atlas
+// (break debris, footstep scuffs, landing bursts) and flat coloured cubes
+// (smoke, embers, splashes, magic). The pool is fixed and capped, so heavy
+// scenes drop the OLDEST particle rather than allocating.
+// ---------------------------------------------------------------------------
+
+export const PARTICLES = {
+  MAX: 2000,                      // hard pool cap (both meshes share it)
+  GRAVITY: 16,                    // default fall, blocks/s^2 (scaled per kind)
+  DRAG: 1.4,                      // default per-second velocity damping
+  BOUNCE: 0.28,                   // velocity kept when debris hits ground
+  COLLIDE_MAX: 700,               // above this live count, skip block collision
+  CULL_DISTANCE: 72,              // never spawn further than this from the eye
+  ATLAS_CROP: 0.25,               // block-break cubes sample a quarter tile
+
+  BREAK: { COUNT: 14, SIZE: 0.11, SPEED: 3.0, LIFE: [0.5, 1.1], GRAVITY: 1.0 },
+  PLACE: { COUNT: 7, SIZE: 0.09, SPEED: 1.4, LIFE: [0.25, 0.5], GRAVITY: 0.55 },
+  STEP: { COUNT: 2, SIZE: 0.09, SPEED: 0.9, LIFE: [0.3, 0.6], GRAVITY: 0.8 },
+  SPRINT_STEP_COUNT: 4,           // sprinting kicks up more
+  STEP_INTERVAL: 0.42,            // seconds between walking footsteps
+  SPRINT_STEP_INTERVAL: 0.30,     // ...and while sprinting
+  LAND: { COUNT: 18, SIZE: 0.10, SPEED: 2.6, LIFE: [0.4, 0.8], GRAVITY: 0.9 },
+  LAND_MIN_FALL: 1.2,             // blocks fallen before a landing burst shows
+
+  SPLASH: { COUNT: 26, SIZE: 0.09, SPEED: 4.2, LIFE: [0.4, 0.9], GRAVITY: 1.1,
+            COLOR: 0xbfe4ff },
+  BUBBLE: { SIZE: 0.07, RISE: 1.1, LIFE: [0.6, 1.2], COLOR: 0xd8f2ff,
+            PER_SECOND: 9 },
+  EMBER: { SIZE: 0.095, RISE: 0.85, LIFE: [0.8, 1.6], COLOR: 0xffb02a },
+  LAVA_POP: { COUNT: 5, SIZE: 0.1, SPEED: 3.4, LIFE: [0.6, 1.1], GRAVITY: 0.9,
+              COLOR: 0xff7418 },
+  SMOKE: { SIZE: 0.34, RISE: 0.9, LIFE: [0.9, 1.9], COLOR: 0x3a3632 },
+  EXPLOSION: { SMOKE: 34, DEBRIS: 26, SPEED: 7.0, DEBRIS_SIZE: 0.13,
+               DEBRIS_LIFE: [0.6, 1.4], DEBRIS_COLOR: 0x6b6459 },
+  DAMAGE: { COUNT: 9, SIZE: 0.10, SPEED: 2.2, LIFE: [0.3, 0.6], GRAVITY: 0.8,
+            COLOR: 0xd21f1f },
+  DEATH: { COUNT: 22, SIZE: 0.16, SPEED: 1.3, LIFE: [0.5, 1.0], GRAVITY: -0.1,
+           COLOR: 0xe8e8e8 },
+  PICKUP: { COUNT: 5, SIZE: 0.07, SPEED: 1.4, LIFE: [0.25, 0.5],
+            COLOR: 0xfff3a8 },
+  PORTAL: { SIZE: 0.105, LIFE: [0.9, 1.7], RADIUS: 1.5, COLOR: 0xb44cff,
+            PER_SECOND: 14 },
+  ENDER: { COUNT: 16, SIZE: 0.11, SPEED: 1.6, LIFE: [0.5, 1.1],
+           COLOR: 0xa14cff },
+  FLAME: { SIZE: 0.105, RISE: 0.35, LIFE: [0.5, 1.0], COLOR: 0xffb444,
+           PER_HIT: 2 },
+  SPARKLE: { SIZE: 0.085, RISE: 0.1, LIFE: [0.5, 1.0], COLOR: 0xfff0b0 },
+  BREATH: { SIZE: 0.5, LIFE: [0.6, 1.2], COLOR: 0xc060ff },
+
+  // The random "display tick" that finds torches, lava, glowstone and end
+  // portals near the player (systems/ambience.js — vanilla's randomDisplayTick).
+  // Vanilla samples ~20 000 random cells a second around the player and
+  // lets whatever it lands on decide; the numbers below are that, scaled to
+  // this radius. A cell is visited ~0.6 times a second, which is what makes
+  // a torch flicker rather than stream.
+  AMBIENT: {
+    RADIUS: 10,                   // cells sampled around the player
+    SAMPLES_PER_SECOND: 14000,    // random cells tested each second (each
+                                  // cell in the cube gets visited ~1.5x/s)
+    MAX_PER_FRAME: 1600,          // ...never more than this in one frame
+    TORCH_CHANCE: 1.0,            // per hit, chance a flame spawns
+    LAVA_CHANCE: 0.55,
+    LAVA_POP_CHANCE: 0.02,
+    GLOWSTONE_CHANCE: 0.35,
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Sound (systems/audio.js — Phase 22). Everything is synthesised with the
+// Web Audio API: no files ship with this game. Voices are layered (each
+// sound is 2-4 oscillator/noise components), routed through a compressor so
+// a dozen simultaneous events read as ONE satisfying thump rather than
+// clipping mush, and attenuated by distance from the listener with a stereo
+// pan derived from the camera's right vector.
+// ---------------------------------------------------------------------------
+
+export const AUDIO = {
+  MASTER_VOLUME: 0.55,            // the whole game's output level
+  MAX_VOICES: 24,                 // concurrent one-shots; the rest are dropped
+  VOICE_MIN_GAP: 0.012,           // seconds between two copies of one sound
+  HEARING_RANGE: 26,              // blocks: silence beyond this
+  ROLLOFF: 1.35,                  // >1 = quieter faster with distance
+  PAN_WIDTH: 0.85,                // maximum stereo spread
+  PAN_NEAR: 1.5,                  // blocks under which a sound is centred
+  // The bus compressor: what keeps a creeper blast beside a lava lake with
+  // mobs dying from turning into noise.
+  COMPRESSOR: { THRESHOLD: -22, KNEE: 26, RATIO: 8, ATTACK: 0.004, RELEASE: 0.22 },
+
+  FOOTSTEP_VOLUME: 0.32,
+  BREAK_VOLUME: 0.62,
+  PLACE_VOLUME: 0.58,
+  MINING_VOLUME: 0.24,            // the loop while a block is being dug
+  MINING_INTERVAL: 0.28,          // seconds between mining ticks
+  HURT_VOLUME: 0.7,
+  SWING_VOLUME: 0.4,
+  PICKUP_VOLUME: 0.28,
+  LEVEL_UP_VOLUME: 0.6,
+
+  // Continuous ambience (systems/ambience.js): looping beds whose gain
+  // follows how much fluid is around the player.
+  WATER_AMBIENCE_VOLUME: 0.20,
+  LAVA_AMBIENCE_VOLUME: 0.30,
+  FLUID_AMBIENCE_RADIUS: 8,       // cells sampled around the player
+  FLUID_AMBIENCE_FULL: 26,        // fluid cells for full ambience volume
+  AMBIENCE_RESPONSE: 1.6,         // 1/s gain easing
+
+  // The end portal's hum (the nether portal keeps its own in portals.js).
+  PORTAL_HUM_VOLUME: 0.16,
+  PORTAL_SCAN_SECONDS: 0.25,      // how often nearby portal cells are re-found
+
+  // Cave ambience: rare distant echoing tones while underground in the dark.
+  CAVE: {
+    MIN_GAP: 32,                  // seconds between candidate moments
+    MAX_GAP: 95,
+    MAX_SKY_LIGHT: 4,             // only where daylight can't reach
+    MAX_Y: 52,                    // ...and only below this height
+    VOLUME: 0.5,
+  },
 };
 
 // ---------------------------------------------------------------------------

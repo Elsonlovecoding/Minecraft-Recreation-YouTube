@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { PORTALS, NETHER, PLAYER, OVERWORLD, CHUNK } from '../config.js';
 import { BLOCK, isSolid } from '../world/blocks.js';
+import { ensureAudio, getNoiseBuffer, audioBus } from '../systems/audio.js';
 
 // ---------------------------------------------------------------------------
 // Pure frame detection (node-testable)
@@ -137,26 +138,12 @@ export function frameObsidianCells(frame) {
 }
 
 // ---------------------------------------------------------------------------
-// Procedural ambience (WebAudio, failure-silent — the combat synth pattern)
+// Procedural ambience (WebAudio, failure-silent). Phase 22 moved the context
+// itself into systems/audio.js — ONE AudioContext for the whole game, with
+// the portal's voices on the same compressed bus as everything else. The
+// graphs below are unchanged; only where they come from and where they end
+// up moved.
 // ---------------------------------------------------------------------------
-
-let audioCtx = null;
-let noiseBuffer = null;
-
-function ensureAudio() {
-  if (audioCtx !== null) return audioCtx;
-  try {
-    const AC = window.AudioContext ?? window.webkitAudioContext;
-    if (!AC) return null;
-    audioCtx = new AC();
-    noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  } catch {
-    audioCtx = null;
-  }
-  return audioCtx;
-}
 
 // A one-shot swept noise burst (ignition shimmer, travel whoosh).
 function sweep({ seconds, volume, from, to }) {
@@ -166,7 +153,7 @@ function sweep({ seconds, volume, from, to }) {
   try {
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     const src = ctx.createBufferSource();
-    src.buffer = noiseBuffer;
+    src.buffer = getNoiseBuffer();
     src.loop = true;
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
@@ -180,7 +167,7 @@ function sweep({ seconds, volume, from, to }) {
     gain.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(audioBus());
     src.start(t);
     src.stop(t + seconds + 0.05);
   } catch {
@@ -549,7 +536,7 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
     try {
       if (!hum) {
         const src = ctx.createBufferSource();
-        src.buffer = noiseBuffer;
+        src.buffer = getNoiseBuffer();
         src.loop = true;
         const filter = ctx.createBiquadFilter();
         filter.type = 'bandpass';
@@ -559,7 +546,7 @@ export function createPortals({ world, scene, player, stats, camera, dimensions 
         gain.gain.value = 0;
         src.connect(filter);
         filter.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(audioBus());
         src.start();
         hum = { gain, clock: 0 };
       }

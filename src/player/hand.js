@@ -24,6 +24,22 @@ import {
   createBlockMesh, createExtrudedItemMesh, createModelMesh, itemVisualInfo,
 } from '../entities/items.js';
 
+// Items whose art was TUNED for the SPRITE_TILT pose. That pose yaws the
+// slab ~180°, so what faces the camera is its BACK — and the back of a flat
+// sprite is its mirror image. Long-handled tools read correctly either way
+// (the diagonal is what sells them) and were screenshot-matched to vanilla
+// in that pose, so they keep it; everything else was coming out left-right
+// flipped in the hand (the Phase 22 golden-apple report) and gets its art
+// mirrored back with a negative local X scale — same pose, right-way-round
+// picture.
+const TOOL_SHAPED = /_(pickaxe|axe|shovel|sword|hoe)$/;
+const TOOL_SHAPED_NAMES = new Set([
+  'bow', 'shears', 'flint_and_steel', 'shield', 'fishing_rod',
+]);
+function isToolShaped(name) {
+  return TOOL_SHAPED.test(name) || TOOL_SHAPED_NAMES.has(name);
+}
+
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
@@ -206,6 +222,8 @@ export function createHand({ inventory, combat }) {
         });
         mesh.position.set(...H.SPRITE_OFFSET);
         mesh.rotation.set(...rig.spriteTilt);
+        // Un-mirror everything that isn't a tool (see TOOL_SHAPED above).
+        if (!isToolShaped(name)) mesh.scale.x *= -1;
         rig.heldMesh = mesh;
         rig.arm.visible = rig.showBareArm && mesh.children.length === 0;
       }
