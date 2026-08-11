@@ -637,7 +637,8 @@ export const TERRAIN = {
     FLOWER_FIELD_MIN: 0.30,    // field value where flower clusters begin
     FLOWER_CHANCE: 0.075,      // per-column chance inside a cluster
     DEAD_BUSH_CHANCE: 0.012,   // per desert sand column
-    SEED_DROP_CHANCE: 0.125,   // breaking short grass drops seeds this often
+    // (the seed drop chance is per-block data — it lives in short grass's
+    // drop table in world/plants.js, like every other drop roll)
   },
 
   // Phase 24 — occasional small surface lava pools in mountains and deserts.
@@ -1927,10 +1928,10 @@ export const DAY_NIGHT = {
       STARS: 0.25, TINT: 0xffd9b0 },
     { T: 0.575, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
-      STARS: 1, TINT: 0x8fa8e8 },
+      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
     { T: 0.925, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
-      STARS: 1, TINT: 0x8fa8e8 },
+      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
     { T: 0.9625, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0 },
@@ -1954,8 +1955,6 @@ export const CELESTIAL = {
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
-  SUN_COLOR: 0xfff7d0,            // legacy flat-quad tints (kept for the
-  MOON_COLOR: 0xdfe4f2,           // texture painters' base hues)
 };
 
 // Phase 24 — clouds: vanilla's flat white blocky slab layer. A hashed
@@ -1982,12 +1981,11 @@ export const CLOUDS = {
 // sphere, wheeling with the sun's orbit, alpha driven by the KEYFRAMES'
 // STARS channel so they fade in through dusk and out through dawn.
 export const STARS = {
-  COUNT: 420,
+  COUNT: 800,                     // over the FULL sphere — roughly half are
+                                  // above the horizon at any moment of the
+                                  // wheel's turn
   SIZE: 1.8,                      // screen pixels (no distance attenuation)
   RADIUS: 850,                    // just inside the sky dome
-  MIN_Y: -0.12,                   // lowest spawn height on the unit sphere —
-                                  // a few dip below the horizon so the wheel
-                                  // never shows a hard floor
   SEED: 0x57a125,
 };
 

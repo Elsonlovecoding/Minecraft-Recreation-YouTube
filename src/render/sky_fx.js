@@ -142,13 +142,16 @@ export function createClouds() {
 
 // A fixed hashed starfield on the celestial sphere, parented to the sky dome
 // (which follows the camera) inside a group the cycle rotates with the sun's
-// orbit angle — the stars wheel across the night like the real thing.
+// orbit angle — the stars wheel across the night like the real thing. The
+// field covers the FULL sphere: the wheel turns 360° per day, so any band
+// of empty sphere would sweep across the visible sky (the first cut seeded
+// only the upper band and midnight showed a half-empty sky).
 export function createStars(sky) {
   const S = STARS;
   const rng = mulberry32(S.SEED);
   const positions = new Float32Array(S.COUNT * 3);
   for (let i = 0; i < S.COUNT; i++) {
-    const y = S.MIN_Y + (1 - S.MIN_Y) * rng();
+    const y = rng() * 2 - 1; // uniform over the whole sphere
     const a = rng() * Math.PI * 2;
     const r = Math.sqrt(Math.max(0, 1 - y * y));
     positions[i * 3] = Math.cos(a) * r * S.RADIUS;

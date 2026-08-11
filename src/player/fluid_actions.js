@@ -13,7 +13,7 @@
 // hold-repeat must not run.
 
 import { OVERWORLD, CHUNK, PLAYER } from '../config.js';
-import { BLOCK, blockDef } from '../world/blocks.js';
+import { BLOCK, blockDef, isCrossPlant } from '../world/blocks.js';
 import { raycastVoxel, isTargetable, isReplaceable } from './interaction.js';
 import { particles } from '../render/particles.js';
 import { audio } from '../systems/audio.js';
@@ -57,11 +57,19 @@ export function createFluidActions({
     } else {
       const target = hit ?? getTarget();
       if (!target) return false;
-      const [fx, fy, fz] = target.face;
-      if (fx === 0 && fy === 0 && fz === 0) return false;
-      x = target.x + fx;
-      y = target.y + fy;
-      z = target.z + fz;
+      if (isCrossPlant(target.id)) {
+        // Phase 24: a cross plant is replaceable — the bucket pours into
+        // its cell rather than onto the face above it.
+        x = target.x;
+        y = target.y;
+        z = target.z;
+      } else {
+        const [fx, fy, fz] = target.face;
+        if (fx === 0 && fy === 0 && fz === 0) return false;
+        x = target.x + fx;
+        y = target.y + fy;
+        z = target.z + fz;
+      }
     }
     if (y < OVERWORLD.MIN_Y || y >= OVERWORLD.MIN_Y + CHUNK.HEIGHT) return false;
     if (!isReplaceable(world.getBlock(x, y, z))) return false;

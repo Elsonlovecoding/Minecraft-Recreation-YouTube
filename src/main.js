@@ -217,17 +217,7 @@ async function init() {
     if (!isCrossPlant(above) || plantCanSitOn(above, id)) return;
     const def = blockDef(above);
     world.setBlock(x, y + 1, z, BLOCK.AIR);
-    for (const drop of def.drops) {
-      if (drop.chance !== undefined && Math.random() >= drop.chance) continue;
-      const count = Array.isArray(drop.count)
-        ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
-        : drop.count;
-      if (count > 0) {
-        items.spawn(drop.item, count, {
-          x: x + 0.5, y: y + 1 + ITEMS.DROP_SPAWN_Y_OFFSET, z: z + 0.5,
-        });
-      }
-    }
+    items.spawnDrops(def.drops, x, y + 1, z);
   });
   let screens;
   // Phase 11 death flow: any open screen closes first (grid and cursor

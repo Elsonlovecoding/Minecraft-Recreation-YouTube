@@ -120,6 +120,30 @@ out the same session that grew their parents; `world/plants.js` and
 `world/blocks.js` (915) now carry the next mandated cuts (see
 ARCHITECTURE.md).
 
+THE REVIEW ROUND — a full-diff review before shipping surfaced eight real
+issues, all fixed and re-verified the same session:
+- AIMING AT A PLANT now places INTO its cell (vanilla's replaceable rule).
+  The raycast stops on the tuft (hardness 0 = targetable), so the naive
+  face-offset floated blocks one cell ABOVE the grass; placement and the
+  bucket path both synthesize the click down to the soil now. Verified
+  through the real right-click path in the browser: dirt aimed at a tuft
+  lands in the tuft's cell, nothing floats.
+- The STARFIELD covers the full sphere (COUNT 420→800). The first cut
+  seeded only the upper band, and since the wheel turns 360° per day the
+  empty cap swept across the visible sky — half-starless at midnight.
+- Surface lava pools PLUG their rim ring at pool level where a cave or
+  ravine pierced it — the one remaining way the settle scan could pour a
+  pool into a cave.
+- Flowers are OBTAINABLE via shears (hand-breaking still drops nothing,
+  per the brief); their items and placement rules were dead code.
+- ONE drops roller: `items.spawnDrops` (chance / [min,max] / fallback) —
+  interaction.js, wart.js and the plant-pop listener all call it; there
+  were three diverging copies.
+- Dead config removed (PLANTS.SEED_DROP_CHANCE — the chance lives in the
+  drop table; CELESTIAL.SUN_COLOR/MOON_COLOR), the night keyframes
+  reference LIGHTING.NIGHT_SKY_TINT instead of repeating its hex, and
+  placePlants gates flowers on the cheap hash before the fbm field.
+
 ---
 
 Previous phase: **Phase 23 — POLISH: deepslate and the underground.**

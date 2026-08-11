@@ -53,11 +53,16 @@ export function registerPlants(register, BLOCK) {
     drops: [{ item: 'wheat_seeds', count: 1, chance: 0.125 }],
     shearDrops: [{ item: 'short_grass', count: 1 }],
   });
+  // The brief: hand-breaking drops nothing. Shears are the deliberate
+  // obtain path (the leaves/short-grass precedent), so the flower items —
+  // placeable on grass/dirt — are actually reachable in play.
   plant(BLOCK.DANDELION, 'dandelion', 'Dandelion', TILE.DANDELION, {
     drops: [],
+    shearDrops: [{ item: 'dandelion', count: 1 }],
   });
   plant(BLOCK.POPPY, 'poppy', 'Poppy', TILE.POPPY, {
     drops: [],
+    shearDrops: [{ item: 'poppy', count: 1 }],
   });
   plant(BLOCK.DEAD_BUSH, 'dead_bush', 'Dead Bush', TILE.DEAD_BUSH, {
     drops: [],

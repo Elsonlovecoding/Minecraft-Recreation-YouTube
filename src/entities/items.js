@@ -769,8 +769,34 @@ export function createItemManager({ world, scene }) {
     return prev;
   }
 
+  // Roll a registry drop table at a block cell and spawn what lands — THE
+  // one drops roller (Phase 24: player/interaction.js, world/wart.js and
+  // main.js's plant-pop listener all had their own copies drifting apart).
+  // Semantics per world/blocks.js: `chance` entries roll independently;
+  // `count` may be a number or an inclusive [min, max]; `fallback` entries
+  // drop only when no chance entry succeeded (gravel's flint-or-gravel).
+  function spawnDrops(drops, x, y, z) {
+    let chanceDropped = false;
+    for (const drop of drops) {
+      if (drop.fallback && chanceDropped) continue;
+      if (drop.chance !== undefined) {
+        if (Math.random() >= drop.chance) continue;
+        chanceDropped = true;
+      }
+      const count = Array.isArray(drop.count)
+        ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
+        : drop.count;
+      if (count > 0) {
+        spawn(drop.item, count, {
+          x: x + 0.5, y: y + ITEMS.DROP_SPAWN_Y_OFFSET, z: z + 0.5,
+        });
+      }
+    }
+  }
+
   return {
     spawn,
+    spawnDrops,
     update,
     clear,
     swapDimensionState,

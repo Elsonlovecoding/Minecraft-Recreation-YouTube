@@ -616,12 +616,13 @@ export class TerrainGenerator {
 
         let id = 0;
         if (surface.top === BLOCK.GRASS_BLOCK) {
-          const flowerField = fbm(
-            this.flowerNoise, x * P.FLOWER_FIELD_SCALE, z * P.FLOWER_FIELD_SCALE, 2,
-          );
+          // Hash gate first — it rejects ~92% of columns for the price of a
+          // hash, so the cluster field only ever samples for real candidates.
           if (
-            flowerField > P.FLOWER_FIELD_MIN &&
-            hash01(this.seed ^ SALT_FLOWER, x, z) < P.FLOWER_CHANCE
+            hash01(this.seed ^ SALT_FLOWER, x, z) < P.FLOWER_CHANCE &&
+            fbm(
+              this.flowerNoise, x * P.FLOWER_FIELD_SCALE, z * P.FLOWER_FIELD_SCALE, 2,
+            ) > P.FLOWER_FIELD_MIN
           ) {
             id = hash01(this.seed ^ SALT_FLOWER_TYPE, x >> 4, z >> 4) < 0.5
               ? BLOCK.DANDELION
@@ -729,17 +730,31 @@ export class TerrainGenerator {
         const pool = this._surfacePoolFor(rx, rz);
         if (!pool) continue;
         const r2 = pool.radius * pool.radius;
+        const rim2 = (pool.radius + 1) * (pool.radius + 1);
         for (let lz = 0; lz < size; lz++) {
           for (let lx = 0; lx < size; lx++) {
             const dx = x0 + lx - pool.px;
             const dz = z0 + lz - pool.pz;
-            if (dx * dx + dz * dz > r2) continue;
+            const d2 = dx * dx + dz * dz;
+            if (d2 > rim2) continue;
+            const open = (id) =>
+              id === BLOCK.AIR || id === BLOCK.WATER || id === BLOCK.LAVA;
+            if (d2 > r2) {
+              // The rim ring: the relief gate guarantees its TERRAIN stands
+              // above the lava, but a cave or ravine may have carved through
+              // it at pool level — plug that cell, or the settle scan finds
+              // an edge lava cell with an open side and pours the pool into
+              // the cave (the exact apron artifact this pass exists to end).
+              if (open(chunk.get(lx, pool.level, lz))) {
+                chunk.set(lx, pool.level, lz, BLOCK.STONE);
+              }
+              continue;
+            }
             const col = colAt(x0 + lx, z0 + lz);
             for (let y = pool.level + 1; y <= col.height; y++) {
               chunk.set(lx, y, lz, BLOCK.AIR);
             }
-            const under = chunk.get(lx, pool.level - 1, lz);
-            if (under === BLOCK.AIR || under === BLOCK.WATER || under === BLOCK.LAVA) {
+            if (open(chunk.get(lx, pool.level - 1, lz))) {
               chunk.set(lx, pool.level - 1, lz, BLOCK.STONE);
             }
             chunk.set(lx, pool.level, lz, BLOCK.LAVA);
