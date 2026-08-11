@@ -31,6 +31,14 @@ let noiseBuffer = null;
 let bus = null;      // everything one-shot routes here (pre-compressor)
 let master = null;
 let failed = false;
+// Phase 23 bug fix: the game freezes on Esc but the water ambience, the lava
+// bed and the portal hum kept running, because a looping voice is a live
+// graph node — nothing about pausing the game loop stops it. The whole
+// context suspends instead. Every path that would otherwise resume a
+// suspended context (playLayer, setLoop, dimensions/portals.js) goes through
+// tryResume, which refuses while paused — otherwise the next sound the game
+// tried to emit would un-suspend it behind the pause.
+let paused = false;
 
 // The shared AudioContext. Also used by dimensions/portals.js, which had its
 // own before this module existed — one context for the whole game.
@@ -78,6 +86,20 @@ export function getNoiseBuffer() {
 export function audioBus() {
   ensureAudio();
   return bus ?? ctx?.destination ?? null;
+}
+
+// Resume the context if the browser has parked it (autoplay policy, tab
+// switch) — but never while the game is paused. The ONE place any module
+// resumes the context.
+export function tryResume() {
+  if (paused || !ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
+
+// Is the game paused? Callers that build continuous graphs check this so
+// they don't spin one up behind the pause overlay.
+export function audioIsPaused() {
+  return paused;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +156,16 @@ function makeOutput(pan) {
 }
 
 // One oscillator voice with an ADSR-ish envelope and an optional pitch glide.
+//
+// `lowpass` (Phase 23) rounds the voice off at a corner frequency. A raw
+// sawtooth or square has energy all the way up the spectrum and that is
+// precisely what makes a synthesised sound read as SYNTHESISED — the buzz in
+// the reported "harsh" hurt and hit sounds is the top two octaves of a
+// sawtooth nothing was ever taking off. Rolling it away leaves the body of
+// the tone, which is the part that carries the character.
 function tone(out, t0, {
   type = 'sine', freq = 440, freqTo = null, seconds = 0.2, volume = 0.4,
-  attack = 0.005, detune = 0, curve = 'exp',
+  attack = 0.005, detune = 0, curve = 'exp', lowpass = null,
 }) {
   const osc = ctx.createOscillator();
   osc.type = type;
@@ -150,7 +179,16 @@ function tone(out, t0, {
   gain.gain.linearRampToValueAtTime(volume, t0 + attack);
   if (curve === 'linear') gain.gain.linearRampToValueAtTime(0.0001, t0 + seconds);
   else gain.gain.exponentialRampToValueAtTime(0.0001, t0 + seconds);
-  osc.connect(gain);
+  let head = osc;
+  if (lowpass !== null) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = lowpass;
+    filter.Q.value = 0.7;
+    osc.connect(filter);
+    head = filter;
+  }
+  head.connect(gain);
   gain.connect(out);
   osc.start(t0);
   osc.stop(t0 + seconds + 0.02);
@@ -188,7 +226,7 @@ function noise(out, t0, {
 // `place` is { x, y, z } for a positional sound, or null for a UI sound.
 // Returns false when the sound was dropped (out of earshot, budget, retrigger).
 function playLayer(name, parts, { place = null, volume = 1, key = name } = {}) {
-  if (volume <= 0.005) return false;
+  if (volume <= 0.005 || paused) return false;
   const c = ensureAudio();
   if (!c) return false;
   let gain = volume;
@@ -208,7 +246,7 @@ function playLayer(name, parts, { place = null, volume = 1, key = name } = {}) {
   voices++;
   let longest = 0;
   try {
-    if (c.state === 'suspended') c.resume().catch(() => {});
+    tryResume();
     const out = makeOutput(pan);
     out.gain.value = gain;
     for (const part of parts) {
@@ -239,6 +277,9 @@ export function blockSoundGroup(name) {
       name.includes('wart')) return 'grass';
   if (name.includes('wool') || name === 'bed') return 'wool';
   if (name.includes('gravel')) return 'gravel';
+  // Deepslate (Phase 23) before the generic stone fallback: it is denser and
+  // tighter than stone and vanilla gives it its own sound group.
+  if (name.includes('deepslate')) return 'deepslate';
   if (name.includes('sandstone')) return 'stone';
   if (name.includes('sand')) return 'sand'; // sand and soul sand
   if (name.includes('dirt') || name.includes('farmland') || name.includes('clay')) {
@@ -256,20 +297,28 @@ export function blockSoundGroup(name) {
   return 'stone'; // stone, ore, brick, obsidian, bedrock, end stone...
 }
 
-// Per-group timbre. `body` is the pitched thump, `grit` the noise transient.
+// Per-group timbre. `body` is the low reference the thump is built around,
+// `grit` the surface noise on top, `decay` the length of ONE footstep.
+//
+// Phase 23 halved every `decay`: the reported "strange, unnatural" sprint
+// noise was footsteps 130-200ms long firing every ~230ms, so each step was
+// still sounding when the next began and the run turned into a continuous
+// warble instead of a series of taps. A real footstep is a transient — under
+// 100ms — and the gap between them is as much of the sound as the taps are.
 const MATERIAL = {
-  stone:      { body: 150, grit: 1500, q: 1.2, filter: 'bandpass', decay: 0.13, bright: 1.0 },
-  dirt:       { body: 110, grit: 520,  q: 0.9, filter: 'lowpass',  decay: 0.12, bright: 0.8 },
-  grass:      { body: 130, grit: 2300, q: 0.8, filter: 'bandpass', decay: 0.10, bright: 0.7 },
-  sand:       { body: 95,  grit: 3600, q: 0.6, filter: 'highpass', decay: 0.17, bright: 0.7 },
-  gravel:     { body: 120, grit: 1100, q: 1.6, filter: 'bandpass', decay: 0.15, bright: 0.9 },
-  wood:       { body: 195, grit: 780,  q: 2.4, filter: 'bandpass', decay: 0.14, bright: 1.0 },
-  wool:       { body: 90,  grit: 300,  q: 0.7, filter: 'lowpass',  decay: 0.11, bright: 0.55 },
-  glass:      { body: 900, grit: 5200, q: 3.0, filter: 'highpass', decay: 0.16, bright: 1.1 },
-  metal:      { body: 420, grit: 3000, q: 4.0, filter: 'bandpass', decay: 0.20, bright: 1.1 },
-  netherrack: { body: 105, grit: 900,  q: 1.0, filter: 'lowpass',  decay: 0.13, bright: 0.85 },
-  water:      { body: 260, grit: 1800, q: 0.8, filter: 'bandpass', decay: 0.20, bright: 0.8 },
-  lava:       { body: 70,  grit: 400,  q: 0.9, filter: 'lowpass',  decay: 0.30, bright: 0.9 },
+  stone:      { body: 150, grit: 1500, q: 1.2, filter: 'bandpass', decay: 0.070, bright: 1.0 },
+  deepslate:  { body: 138, grit: 1250, q: 1.6, filter: 'bandpass', decay: 0.075, bright: 0.95 },
+  dirt:       { body: 110, grit: 520,  q: 0.9, filter: 'lowpass',  decay: 0.065, bright: 0.8 },
+  grass:      { body: 130, grit: 2300, q: 0.8, filter: 'bandpass', decay: 0.055, bright: 0.7 },
+  sand:       { body: 95,  grit: 3600, q: 0.6, filter: 'highpass', decay: 0.085, bright: 0.7 },
+  gravel:     { body: 120, grit: 1100, q: 1.6, filter: 'bandpass', decay: 0.080, bright: 0.9 },
+  wood:       { body: 195, grit: 780,  q: 2.4, filter: 'bandpass', decay: 0.075, bright: 1.0 },
+  wool:       { body: 90,  grit: 300,  q: 0.7, filter: 'lowpass',  decay: 0.055, bright: 0.55 },
+  glass:      { body: 900, grit: 5200, q: 3.0, filter: 'highpass', decay: 0.085, bright: 1.1 },
+  metal:      { body: 420, grit: 3000, q: 4.0, filter: 'bandpass', decay: 0.105, bright: 1.1 },
+  netherrack: { body: 105, grit: 900,  q: 1.0, filter: 'lowpass',  decay: 0.070, bright: 0.85 },
+  water:      { body: 260, grit: 1800, q: 0.8, filter: 'bandpass', decay: 0.110, bright: 0.8 },
+  lava:       { body: 70,  grit: 400,  q: 0.9, filter: 'lowpass',  decay: 0.160, bright: 0.9 },
 };
 
 const materialOf = (group) => MATERIAL[group] ?? MATERIAL.stone;
@@ -285,8 +334,30 @@ class Audio {
 
   // main.js: resume on the first gesture so the very first footstep sounds.
   unlock() {
-    const c = ensureAudio();
-    if (c && c.state === 'suspended') c.resume().catch(() => {});
+    ensureAudio();
+    tryResume();
+  }
+
+  // main.js calls this every frame with the pause state. Suspending the
+  // AudioContext stops EVERYTHING at once — one-shots mid-flight, the looping
+  // ambience beds, the portal hum — and resuming picks them all back up where
+  // they were, which is exactly what pausing a game should sound like. Edge
+  // triggered: suspend/resume are cheap but not free, and calling them every
+  // frame would fight the browser.
+  setPaused(next) {
+    const want = !!next;
+    if (want === paused) return;
+    paused = want;
+    // Don't CREATE a context just to suspend it — before the first sound
+    // there is nothing playing to stop.
+    const c = ctx;
+    if (!c) return;
+    try {
+      if (want) c.suspend().catch(() => {});
+      else c.resume().catch(() => {});
+    } catch {
+      // an audio failure must never touch gameplay
+    }
   }
 
   setListener(camera) {
@@ -297,18 +368,49 @@ class Audio {
     return !!ensureAudio();
   }
 
+  // The AudioContext's own state ('running' | 'suspended' | 'closed'), or
+  // null before there is one. Dev scaffolding: this is how a harness or the
+  // console confirms that pausing really did stop the audio thread rather
+  // than merely stopping new sounds from starting.
+  get contextState() {
+    return ctx ? ctx.state : null;
+  }
+
   // --- movement -------------------------------------------------------------
 
-  // A boot on a surface: a soft pitched thump plus the material's grit.
+  // A boot on a surface. TWO NOISE LAYERS AND NO OSCILLATOR: the body of the
+  // step is low-passed noise, the surface is the material's own grit on top.
+  //
+  // Phase 22 built this the other way round — a 150 Hz sine gliding down to
+  // 90 Hz at half the layer's volume — and a pitched glide is not what a boot
+  // on rock sounds like; it is what a synthesiser sounds like. Every step
+  // played the same two notes, so walking was a repeating musical figure and
+  // sprinting (a step every ~230 ms) was the reported "strange, unnatural
+  // noise". Noise has no pitch to repeat, and the per-step `p` spread is wide
+  // enough that no two consecutive steps land in the same place.
   footstep(group, place, volume = 1) {
     const m = materialOf(group);
-    const p = 0.9 + Math.random() * 0.25;
+    const p = 0.82 + Math.random() * 0.36;
     return playLayer('step', [
-      { kind: 'tone', type: 'sine', freq: m.body * p, freqTo: m.body * p * 0.6,
-        seconds: m.decay, volume: 0.5, attack: 0.004 },
+      { kind: 'noise', filterType: 'lowpass', frequency: m.body * p * 2.4,
+        seconds: m.decay, volume: 0.6, attack: 0.001 },
       { kind: 'noise', filterType: m.filter, frequency: m.grit * p, q: m.q,
-        seconds: m.decay * 1.2, volume: 0.45 * m.bright, attack: 0.002 },
+        seconds: m.decay * 0.75, volume: 0.26 * m.bright, attack: 0.001 },
     ], { place, volume: volume * AUDIO.FOOTSTEP_VOLUME, key: `step:${group}` });
+  }
+
+  // Landing from a fall: the same materials, heavier and longer than a step.
+  // Phase 22 reused footstep() at up to 1.8x volume for this, which just made
+  // a footstep loud; a real landing is lower and rounder, not louder.
+  land(group, place, volume = 1) {
+    const m = materialOf(group);
+    const p = 0.85 + Math.random() * 0.25;
+    return playLayer('land', [
+      { kind: 'noise', filterType: 'lowpass', frequency: m.body * p * 1.6,
+        seconds: m.decay * 2.2, volume: 0.75, attack: 0.001 },
+      { kind: 'noise', filterType: m.filter, frequency: m.grit * p * 0.85, q: m.q,
+        seconds: m.decay * 1.4, volume: 0.3 * m.bright, attack: 0.002 },
+    ], { place, volume: volume * AUDIO.LAND_VOLUME, key: 'land' });
   }
 
   // --- blocks ---------------------------------------------------------------
@@ -318,11 +420,14 @@ class Audio {
     const p = 0.85 + Math.random() * 0.3;
     return playLayer('break', [
       { kind: 'noise', filterType: m.filter, frequency: m.grit * p * 1.3,
-        freqTo: m.grit * p * 0.5, q: m.q, seconds: 0.26, volume: 0.6 * m.bright },
+        freqTo: m.grit * p * 0.5, q: m.q, seconds: 0.20, volume: 0.6 * m.bright },
+      // The block coming loose: a short low knock, rolled off so the
+      // triangle's upper partials don't ring out as a note.
       { kind: 'tone', type: 'triangle', freq: m.body * p * 1.4,
-        freqTo: m.body * p * 0.5, seconds: 0.22, volume: 0.4 },
+        freqTo: m.body * p * 0.5, seconds: 0.12, volume: 0.26,
+        lowpass: m.body * 4 },
       { kind: 'noise', at: 0.03, filterType: 'highpass', frequency: 2600 * p,
-        seconds: 0.12, volume: 0.25 * m.bright },
+        seconds: 0.10, volume: 0.22 * m.bright },
     ], { place, volume: volume * AUDIO.BREAK_VOLUME, key: `break:${group}` });
   }
 
@@ -330,22 +435,26 @@ class Audio {
     const m = materialOf(group);
     const p = 0.9 + Math.random() * 0.2;
     return playLayer('place', [
-      { kind: 'tone', type: 'sine', freq: m.body * p * 1.1, freqTo: m.body * p * 0.7,
-        seconds: 0.15, volume: 0.55 },
+      // A block set down is a thud, not a note — same fix as the footstep.
+      { kind: 'noise', filterType: 'lowpass', frequency: m.body * p * 2.6,
+        seconds: 0.085, volume: 0.62, attack: 0.001 },
       { kind: 'noise', filterType: m.filter, frequency: m.grit * p, q: m.q,
-        seconds: 0.11, volume: 0.4 * m.bright },
+        seconds: 0.07, volume: 0.3 * m.bright, attack: 0.001 },
     ], { place, volume: volume * AUDIO.PLACE_VOLUME, key: `place:${group}` });
   }
 
   // One tick of the mining loop — interaction.js repeats it while digging.
+  // This one fires several times a second for as long as a block takes, so
+  // it has to be the least intrusive sound in the game: the Phase 22 square
+  // wave under it buzzed, and at four ticks a second the buzz was the sound.
   mineTick(group, place, volume = 1) {
     const m = materialOf(group);
     const p = 0.8 + Math.random() * 0.45;
     return playLayer('mine', [
       { kind: 'noise', filterType: m.filter, frequency: m.grit * p, q: m.q * 1.4,
-        seconds: 0.09, volume: 0.5 * m.bright, attack: 0.002 },
-      { kind: 'tone', type: 'square', freq: m.body * p * 0.8,
-        freqTo: m.body * p * 0.6, seconds: 0.07, volume: 0.18 },
+        seconds: 0.07, volume: 0.5 * m.bright, attack: 0.001 },
+      { kind: 'noise', filterType: 'lowpass', frequency: m.body * p * 2.2,
+        seconds: 0.05, volume: 0.22, attack: 0.001 },
     ], { place, volume: volume * AUDIO.MINING_VOLUME, key: `mine:${group}` });
   }
 
@@ -361,22 +470,25 @@ class Audio {
   // The wooden thwack of a landed melee hit.
   hit(place, volume = 1) {
     return playLayer('hit', [
-      { kind: 'noise', filterType: 'lowpass', frequency: 900, seconds: 0.1,
+      { kind: 'noise', filterType: 'lowpass', frequency: 900, seconds: 0.09,
         volume: 0.7 },
-      { kind: 'tone', type: 'triangle', freq: 220, freqTo: 110, seconds: 0.12,
-        volume: 0.4 },
+      { kind: 'tone', type: 'triangle', freq: 220, freqTo: 110, seconds: 0.10,
+        volume: 0.32, lowpass: 700 },
     ], { place, volume });
   }
 
-  // A grunt: the player's own hurt sound is centred (place null).
+  // A grunt: the player's own hurt sound is centred (place null). The
+  // sawtooth is the vocal rasp — Phase 23 rolls it off at 900 Hz so it reads
+  // as a voice rather than the buzz it was, and the sine underneath carries
+  // the weight.
   playerHurt(volume = 1) {
     return playLayer('playerHurt', [
-      { kind: 'tone', type: 'sawtooth', freq: 300, freqTo: 150, seconds: 0.28,
-        volume: 0.35, attack: 0.008 },
-      { kind: 'tone', type: 'sine', freq: 148, freqTo: 96, seconds: 0.3,
-        volume: 0.4, attack: 0.01, detune: -12 },
+      { kind: 'tone', type: 'sawtooth', freq: 300, freqTo: 150, seconds: 0.24,
+        volume: 0.26, attack: 0.012, lowpass: 900 },
+      { kind: 'tone', type: 'sine', freq: 148, freqTo: 96, seconds: 0.28,
+        volume: 0.42, attack: 0.012, detune: -12 },
       { kind: 'noise', filterType: 'bandpass', frequency: 700, q: 1.5,
-        seconds: 0.16, volume: 0.3 },
+        seconds: 0.13, volume: 0.22 },
     ], { volume: volume * AUDIO.HURT_VOLUME, key: 'playerHurt' });
   }
 
@@ -384,20 +496,22 @@ class Audio {
   mobHurt(place, pitch = 1, volume = 1) {
     return playLayer('mobHurt', [
       { kind: 'tone', type: 'sawtooth', freq: 340 * pitch, freqTo: 170 * pitch,
-        seconds: 0.24, volume: 0.35 },
+        seconds: 0.20, volume: 0.26, attack: 0.01, lowpass: 1100 * pitch },
+      { kind: 'tone', type: 'sine', freq: 168 * pitch, freqTo: 112 * pitch,
+        seconds: 0.22, volume: 0.26, attack: 0.01 },
       { kind: 'noise', filterType: 'bandpass', frequency: 1100 * pitch, q: 1.2,
-        seconds: 0.18, volume: 0.35 },
+        seconds: 0.15, volume: 0.28 },
     ], { place, volume: volume * AUDIO.HURT_VOLUME, key: 'mobHurt' });
   }
 
   death(place, pitch = 1, volume = 1) {
     return playLayer('death', [
       { kind: 'tone', type: 'sawtooth', freq: 300 * pitch, freqTo: 70 * pitch,
-        seconds: 0.7, volume: 0.4, attack: 0.01 },
+        seconds: 0.6, volume: 0.28, attack: 0.015, lowpass: 850 * pitch },
       { kind: 'tone', type: 'sine', freq: 150 * pitch, freqTo: 48 * pitch,
-        seconds: 0.75, volume: 0.35 },
+        seconds: 0.65, volume: 0.38, attack: 0.012 },
       { kind: 'noise', at: 0.05, filterType: 'lowpass', frequency: 1400,
-        freqTo: 260, seconds: 0.5, volume: 0.3 },
+        freqTo: 260, seconds: 0.45, volume: 0.26 },
     ], { place, volume, key: 'death' });
   }
 
@@ -425,8 +539,8 @@ class Audio {
     return playLayer('arrowHit', [
       { kind: 'noise', filterType: 'highpass', frequency: 2400, seconds: 0.09,
         volume: 0.55, attack: 0.001 },
-      { kind: 'tone', type: 'square', freq: 380, freqTo: 160, seconds: 0.08,
-        volume: 0.25 },
+      { kind: 'tone', type: 'triangle', freq: 380, freqTo: 160, seconds: 0.07,
+        volume: 0.22, lowpass: 1200 },
     ], { place, volume, key: 'arrowHit' });
   }
 
@@ -460,7 +574,7 @@ class Audio {
   shriek(place, volume = 1) {
     return playLayer('shriek', [
       { kind: 'tone', type: 'sawtooth', freq: 760, freqTo: 300, seconds: 0.7,
-        volume: 0.3, attack: 0.03 },
+        volume: 0.24, attack: 0.05, lowpass: 2200 },
       { kind: 'noise', filterType: 'bandpass', frequency: 1000, freqTo: 2400,
         q: 1.4, seconds: 0.65, volume: 0.45, attack: 0.02 },
     ], { place, volume, key: 'shriek' });
@@ -474,7 +588,7 @@ class Audio {
       { kind: 'noise', at: 0.06, filterType: 'highpass', frequency: 4200,
         seconds: 0.25, volume: 0.25 },
       { kind: 'tone', type: 'sawtooth', freq: 140, freqTo: 70, seconds: 0.3,
-        volume: 0.2 },
+        volume: 0.16, attack: 0.02, lowpass: 420 },
     ], { place, volume, key: 'flame' });
   }
 
@@ -505,8 +619,8 @@ class Audio {
     return playLayer('deflect', [
       { kind: 'noise', filterType: 'highpass', frequency: 1600, seconds: 0.14,
         volume: 0.55, attack: 0.002 },
-      { kind: 'tone', type: 'square', freq: 700, freqTo: 320, seconds: 0.1,
-        volume: 0.2 },
+      { kind: 'tone', type: 'triangle', freq: 700, freqTo: 320, seconds: 0.09,
+        volume: 0.22, lowpass: 2400 },
     ], { place, volume, key: 'deflect' });
   }
 
@@ -596,6 +710,7 @@ class Audio {
   // still running — cheaper and click-free versus start/stop churn).
   // `spec` builds the graph on first use: { filter, frequency, q, tone? }.
   setLoop(name, targetGain, spec) {
+    if (paused) return;
     const c = ensureAudio();
     if (!c) return;
     let loop = this.loops.get(name);
@@ -633,7 +748,7 @@ class Audio {
       }
     }
     try {
-      if (c.state === 'suspended') c.resume().catch(() => {});
+      tryResume();
       loop.clock += 1 / 60;
       const wobble = 0.85 + 0.15 * Math.sin(loop.clock * (spec.wobbleHz ?? 0.9));
       loop.gain.gain.value = targetGain * wobble;

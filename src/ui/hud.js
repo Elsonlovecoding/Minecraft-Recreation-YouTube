@@ -366,24 +366,25 @@ export function initHud(inventory) {
       background: rgba(190, 0, 0, 0.30); opacity: 0;
     }
     #hud-effects {
-      /* active potion effects: a small framed icon with the countdown
-         BENEATH it, top-right — vanilla's proportions (Phase 22 shrank the
-         Phase 18 panel, which intruded on the view) */
+      /* active potion effects: a framed icon with the countdown BENEATH it,
+         top-right. Phase 23 doubled the icon and the countdown (the reported
+         "too small to read"); the frame's rules scale with it so the border
+         stays proportional instead of turning into a hairline. */
       position: fixed; top: ${UI.EFFECTS_HUD.TOP_PX}px;
       right: ${UI.EFFECTS_HUD.RIGHT_PX}px; z-index: 5;
       display: flex; flex-direction: row; gap: ${UI.EFFECTS_HUD.GAP_PX}px;
       align-items: flex-start; pointer-events: none;
     }
     .hud-effect {
-      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
     }
     .hud-effect .hud-effect-icon {
       width: ${UI.EFFECTS_HUD.ICON_PX}px; height: ${UI.EFFECTS_HUD.ICON_PX}px;
       box-sizing: border-box;
       display: flex; align-items: center; justify-content: center;
       background: rgba(12, 12, 12, 0.55);
-      border: 1px solid rgba(0, 0, 0, 0.85);
-      box-shadow: 0 0 0 1px rgba(190, 190, 190, 0.25);
+      border: ${Math.max(1, Math.round(UI.EFFECTS_HUD.ICON_PX / 24))}px solid rgba(0, 0, 0, 0.85);
+      box-shadow: 0 0 0 ${Math.max(1, Math.round(UI.EFFECTS_HUD.ICON_PX / 24))}px rgba(190, 190, 190, 0.25);
     }
     .hud-effect span {
       color: #fff; font: ${UI.EFFECTS_HUD.LABEL_PX}px/1 monospace;

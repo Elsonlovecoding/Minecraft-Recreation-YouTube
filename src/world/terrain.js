@@ -9,7 +9,7 @@
 //
 // All tunables live in config.js TERRAIN / OVERWORLD.
 
-import { OVERWORLD, CHUNK, TERRAIN } from '../config.js';
+import { OVERWORLD, CHUNK, TERRAIN, UNDERGROUND } from '../config.js';
 import { BLOCK } from './blocks.js';
 import { CaveCarver } from './caves.js';
 import { StrongholdGenerator } from '../dimensions/stronghold.js';
@@ -145,6 +145,19 @@ const SALT_CACTUS = 0xcac7;
 const SALT_DITHER = 0xd17e;
 const SALT_BEDROCK = 0xbedd;
 const SALT_LEAF = 0x1eaf;
+const SALT_DEEPSLATE = 0xdee9;
+
+// Phase 23 — the deepslate transition. Below UNDERGROUND.DEEPSLATE.TOP_Y the
+// stone the column fills with turns to deepslate, but NOT on a line: through
+// the band down to FULL_Y each block independently rolls deepslate with a
+// probability rising from 0 to 1, so the two interleave in a speckled band the
+// player walks down through. At or below FULL_Y it is all deepslate.
+function deepslateChance(y) {
+  const D = UNDERGROUND.DEEPSLATE;
+  if (y > D.TOP_Y) return 0;
+  if (y <= D.FULL_Y) return 1;
+  return (D.TOP_Y - y) / (D.TOP_Y - D.FULL_Y);
+}
 
 export class TerrainGenerator {
   constructor(seed = TERRAIN.SEED) {
@@ -379,6 +392,14 @@ export class TerrainGenerator {
         else if (depth <= surface.fillerDepth) id = surface.filler;
         else if (depth <= surface.fillerDepth + surface.subDepth) id = surface.sub;
         else id = BLOCK.STONE;
+      }
+      // Deepslate replaces the stone of the deep — including the stone
+      // between the jagged bedrock, which is deeper than anything.
+      if (id === BLOCK.STONE) {
+        const p = deepslateChance(y);
+        if (p > 0 && hash3_01(this.seed ^ SALT_DEEPSLATE, wx, y, wz) < p) {
+          id = BLOCK.DEEPSLATE;
+        }
       }
       chunk.set(lx, y, lz, id);
     }

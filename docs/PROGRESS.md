@@ -15,7 +15,71 @@ into the End, destroy the crystals, kill the Ender Dragon, and step through
 the activated exit portal to the victory screen. The SPEC's success test is
 met end to end.
 
-Phase last completed: **Phase 22 — POLISH: particles and sound.
+Phase last completed: **Phase 23 — POLISH: deepslate and the underground.**
+
+The deep world now looks and mines like the deep world, and the caves
+finally have rooms in them.
+
+DEEPSLATE (`world/terrain.js`, `world/blocks.js`, atlas 58-64) — below y=0 the
+stone the terrain fills with is deepslate, and the change is not a line: over
+the band from y=0 down to y=-8 each block independently rolls deepslate with a
+probability rising 0 -> 1, so the two interleave in a speckled transition you
+walk down through (measured: 0% at y0, 26% at y-2, 52% at y-4, 76% at y-6,
+100% at y-8). Hardness 3.0 — exactly twice SPEC's stone — dropping cobbled
+deepslate the way stone drops cobblestone, and every ore vein that lands in
+deepslate takes its deepslate variant (a vein straddling the band comes out
+half and half). Cobbled deepslate is a stone crafting material like vanilla:
+furnace, brewing stand and the five stone tools all accept it, which matters
+because a player who digs down and bases below y=0 has no cobblestone at all.
+
+GREAT CAVERNS (`world/caverns.js` — a new file) — the report that "this has
+failed to land across three previous phases" was correct, and it was correct
+for a structural reason. Phases 15, 17 and 22 each tried to grow rooms by
+thresholding another 3D noise field; measured over 256x256, that pass carved
+0.1% of the cells it was offered, because a noise iso-surface near its own
+95th percentile is a scatter of fragments and no retuning changes that shape.
+So caverns are PLACED now. The world tiles into 224-block regions, each
+hosting at most one chamber (72%) at a hashed centre, carved as a
+noise-warped superellipsoid whose y exponent flattens floor and ceiling into
+an actual room. A mid-level shelf noise leaves part of a slab uncarved — that
+is the multi-level: a mezzanine with a drop off its edge. Two connector bores
+leave near floor height and climb outward into the tunnel network.
+VERIFIED, not asserted: 5 chambers in a 512x512 world, one per ~229 blocks
+of travel, 32-56 blocks across and 20-40 tall by construction, and a flood
+fill from open sky reaches 5 of 5. In the running game, standing at
+(292, -30, 308) measures 38x51 blocks of open space with 18 up and 18 down.
+
+LAVA ABOVE -54 — the PROGRESS entry marking this fixed in Phase 10 was wrong
+and is corrected below. Phase 10 asked a 2D mask whether a COLUMN was in a
+"pool region" and then flooded every cave-floor cell in it from -53 up to
+y=9; whole cave floors came out molten and read as lava lakes 40 blocks above
+the level that should have them. Measured over 256x256: 3040 lava cells above
+y=-54. Nothing above the lake level is masked now — a few seeded sites per
+chunk each flood at most 8 connected floor cells below y=-12, plus rare
+single-block wall springs. Re-measured over 384x384: 27 lava cells per
+100x100 columns where the old rule gave 464, a 17x reduction, and the caves
+above y=-11 are essentially dry.
+
+WATER, GRAVEL AND CLAY — cave floors are damp: single-block springs weeping
+from walls and small floor puddles across the whole band, waterfall columns
+down great-cavern walls, and gravel/clay banks wherever water sits (clay's
+atlas tile is generated at boot, like the item art).
+
+SOUND RETUNE + PAUSE (`systems/audio.js`) — footsteps were built around a
+150 Hz sine gliding to 90 Hz, so every step played the same two notes and
+sprinting (a step every ~230 ms, each 156 ms long) warbled: that is the
+reported "strange, unnatural noise". Footsteps are two noise layers and no
+oscillator now, every decay is roughly halved, landing has its own heavier
+sound instead of a footstep at 1.8x, and sprinting no longer gets a volume
+boost. `tone()` gained a lowpass so the sawtooth and square voices behind the
+hurt/hit/mine/arrow sounds stop buzzing. And pausing pauses the sound:
+`audio.setPaused()` suspends the whole AudioContext (verified in-browser:
+running -> suspended -> running, with a sound requested while paused refused
+rather than sneaking the context back on).
+
+---
+
+Phase 22 — POLISH: particles and sound.
 
 The game is no longer silent, and nothing you do goes unacknowledged.
 
@@ -224,7 +288,7 @@ whole arms up/down 6 blocks, tall crenellated towers, and an enclosed
 guarantees; the Nether brightened: ambient floor 6 -> 9 with a warmer
 red-orange fog and tint, lava oceans lighting their shores through the
 normal flood fill), and the mandated ui/screens.js split
-(ui/containers.js — the chest/furnace/brewing screen sections)**
+(ui/containers.js — the chest/furnace/brewing screen sections).
 
 ---
 
@@ -250,6 +314,56 @@ normal flood fill), and the mandated ui/screens.js split
 
 ## Working
 
+- **Phase 23 deepslate** — `world/terrain.js` `deepslateChance` +
+  `UNDERGROUND.DEEPSLATE`, blocks 163-169, atlas 58-64. Below `TOP_Y` (0) the
+  column fill's stone becomes deepslate, blended over the band to `FULL_Y`
+  (-8) by an independent per-block hash roll, so the transition is a speckled
+  interleave rather than a plane. Hardness 3.0 (2x SPEC's stone), drops
+  cobbled deepslate; the five deepslate ores carry their stone twins' tool
+  tier and drops at hardness 4.5. `world/caves.js` `_placeVeins` takes a
+  `deepId` and picks it per cell from the block being replaced, so veins
+  crossing the band come out mixed. `STONE_FAMILY` and `CARVABLE` both
+  include deepslate; the granite/diorite/andesite pass targets `BLOCK.STONE`
+  only, so the deep world stays deepslate. Cobbled deepslate is a stone
+  crafting material (`systems/crafting.js`): furnace, brewing stand and the
+  five stone tools, which is what stops a below-zero base being a trap.
+- **Phase 23 great caverns** — `world/caverns.js`, `CAVES.GREAT_CAVERN`.
+  PLACED chambers, not a noise threshold: the world tiles into `REGION_SIZE`
+  (224) squares, each hosting at most one chamber at `CHANCE` (0.72) with a
+  hashed centre, radii (long axis 36-58; the short axis is held at 85% of it,
+  which is what keeps even the smallest chamber above 30 on both), height
+  (20-40), shelf and connectors. The body is
+  `|dx/rx|² + |dz/rz|² + |dy/ry|^3.2 < (1 + 0.24·warp)²` — the y exponent is
+  what makes it a room rather than a lens, and the warp field is what makes
+  no two alike. `SHELF` leaves a 3-block slab partly uncarved at 30-55% of
+  the chamber height for the ledges and drops. `CONNECTORS` bores two
+  swaying, climbing 2.2-radius passages out from floor level. Carving is
+  split by box (body box and per-connector box) so a chamber costs what it
+  writes; generation is 6.2 ms/chunk over a cavern versus 6.5 ms on plain
+  terrain. Pure in (seed, world position), in-chunk writes only:
+  regenerating a chunk in a different order gives 0 differing cells.
+- **Phase 23 underground water and banks** — `_placeSprings`,
+  `_placeShoreBanks` and the re-anchored `_placeWaterfalls` in
+  `world/caves.js` (`CAVES.SPRINGS`, `CAVES.WATERFALL`,
+  `UNDERGROUND.SHORE_PATCHES`). Wall springs and floor puddles across the
+  cave band, waterfall columns keyed to the great caverns' own column mask,
+  and gravel/clay conversion of floor cells within 2 blocks of any water.
+  Over 384x384: 1121 underground water cells, 2645 clay, 14647 gravel.
+- **Phase 23 lava placement** — `world/caves.js` `_placeLava` +
+  `_floodPool`/`_floorBelow`/`_againstWall`, `CAVES.LAVA`. Full flood at and
+  below -54 unchanged; above it, seeded sites flood at most 8 connected
+  floor cells below `POOL_MAX_Y` (-12), plus wall springs at 0.0004 per
+  eligible cell up to y=8. 27 lava cells per 100x100 columns above -54,
+  against 464 under the Phase 10 rule.
+- **Phase 23 sound and pause** — `systems/audio.js`. Footsteps are two noise
+  layers with no oscillator, `MATERIAL.decay` roughly halved across the
+  board, `land()` is its own heavier sound, `tone()` takes a `lowpass` that
+  tames every sawtooth/square voice, and `SPRINT_STEP_INTERVAL` went 0.30 ->
+  0.34. `audio.setPaused()` suspends/resumes the AudioContext (main.js calls
+  it every frame with the pause state); `tryResume()` is the single place any
+  module may un-suspend it, and `playLayer`/`setLoop`/portals.js all refuse
+  while paused. `audio.contextState` exposes the context's own state for the
+  harness.
 - `index.html` — importmap pinned to three@0.160.0 (unpkg), fullscreen canvas,
   pointer-lock hint overlay.
 - **Phase 22 particles** — `render/particles.js`. ONE pooled simulation, TWO
@@ -902,6 +1016,13 @@ normal flood fill), and the mandated ui/screens.js split
     practical. Census over 192×192: zero lava at/above y=10, zero unflooded
     lake cells, pool band ~0.07 cells per column (was: every carved cell
     below y=10).
+    **CORRECTED IN PHASE 23 — this fix did not hold, and the census above
+    measured the wrong thing.** "Zero lava at/above y=10" was true and
+    beside the point: the complaint is about y=-54 to y=10, where the rule
+    flooded EVERY cave-floor cell of every column inside a pool-mask
+    region, producing continuous molten sheets that read as lava lakes far
+    above the level that should have them. Re-measured over 256x256: 3040
+    lava cells above y=-54. The mask is gone — see the Phase 23 lava entry.
   - **Cave size variety** (`CAVES.TUNNEL.GIRTH`, cavern retune): tunnel
     radius is modulated along the passage by a low-frequency girth field
     (0.55–1.35×, clamped ≥1 above the cave band so surface mouths stay
@@ -3681,8 +3802,25 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._ All six Phase 21 follow-up reports are closed — see
-the Phase 22 status entry, and the automated coverage in the Notes below.
+_Nothing known broken._ All three Phase 22 follow-up reports are closed (the
+sprint/footstep sound, audio not pausing with the game, the too-small potion
+indicator), as are the four Phase 23 underground items — see the Phase 23
+status entry and the measurements in the Notes below.
+
+The one thing worth flagging for the next session is not a break but a
+CAVEAT on what "verified" means here: the cavern, ore, lava and water numbers
+come from a headless harness that drives the real `TerrainGenerator`, plus a
+Chromium run of the real game. Chromium in this environment has no GPU, so
+the browser run measures correctness (block layout, reachability, HUD sizes,
+audio context state) and NOT framerate — the 60fps target is unmeasured this
+phase. Chunk GENERATION cost was measured directly and is unchanged
+(6.2 ms/chunk over a cavern, 6.5 ms on plain terrain).
+
+Also honest about the previous record: the Phase 10 entry claiming lava
+placement was fixed has been marked CORRECTED in place rather than deleted.
+It was not a lie, it measured the wrong quantity — "zero lava at/above y=10"
+while the actual complaint lived between -54 and 10. A census that cannot
+fail the thing being reported is not evidence.
 
 Worth recording honestly about two of them:
 - The **water bucket** placement path tested GREEN in isolation again this
@@ -3716,6 +3854,53 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
+- **Great caverns are placed, not sampled — do not "tune" them back into a
+  noise field.** `world/caverns.js` exists because three phases proved the
+  noise-threshold approach cannot make a room: at a threshold high enough to
+  be rare, an fBm iso-surface is a scatter of fragments, and the knobs
+  (frequency, threshold, region mask) trade rarity against size without ever
+  buying volume. If a future phase wants bigger, rarer, or more caverns, the
+  numbers to change are `CAVES.GREAT_CAVERN.RADIUS_*`, `HEIGHT_*`,
+  `REGION_SIZE` and `CHANCE` — they map directly onto blocks and spacing,
+  which is the entire point of placing them.
+- **How to verify world generation without a GPU.** The claims in this
+  phase's status entry came from a headless harness: import
+  `world/terrain.js` in node with a stub for `three` (the only browser
+  dependency in the generation path is `render/atlas.js`'s import), give it a
+  15-line `Chunk` class matching `world/chunks.js`'s get/set/index, and
+  generate a region into one flat array. Two measurements were worth more
+  than everything else:
+  - **Connected components are useless for finding caverns.** The tunnel
+    network links the whole region into one component that trivially passes
+    any "is it 30 blocks across" test. Use CLEARANCE instead: erode the air
+    set N times with the 6-neighbourhood and cluster the survivors. Tunnels
+    die by N≈4; anything alive at N=8 is a room.
+  - **Ore rarity must be measured per solid block INSIDE the ore's Y band**,
+    not per column. Per-column counts made iron look more common than coal
+    purely because iron's band is 97 levels deep and coal's usable band is
+    about 65. Per-block, the SPEC ordering is exactly right: coal 3.49,
+    iron 3.15, redstone 1.79, gold 1.14, diamond 0.67 per 1000.
+- **Diamond findability, with the arithmetic.** At y -59..-50 diamond ore is
+  1 per 572 solid blocks. An iron pickaxe through deepslate (hardness 3.0,
+  6x tier) is 0.5 s/block, so 10 minutes of strip mining breaks 1200 blocks
+  and exposes roughly 3600 — about 6 diamond ore. Deepslate doubling the
+  mining time was the thing to watch here: it halves the blocks-per-minute,
+  and the target is still met with margin. If deepslate ore hardness (4.5)
+  is ever raised, re-run that sum.
+- **The browser harness needs three.js served locally.** unpkg.com is
+  blocked by the sandbox's egress policy, so a Playwright run must
+  `page.route('https://unpkg.com/**', ...)` and fulfil `three.module.js`
+  from a local `npm install three@0.160.0`. index.html stays pinned to the
+  CDN — that is SPEC, and the interception is test-only. Chromium here has
+  no GPU (swiftshader, ~13 fps), so chunk streaming takes 1-2 minutes to
+  fill in after a teleport: wait on `world.streamStats().meshed`, and expect
+  the count to plateau well below the full ring.
+- **Seeing underground in a screenshot.** The game has real light
+  propagation, so a teleport into a cave renders black. `__inventory.add('torch', 8)`
+  puts the held light in hand (LIGHTING.HELD_LIGHT), which lights a few
+  blocks — but for judging the SHAPE of a cavern, render a cross-section
+  from the world data instead of trying to photograph it. That is what
+  settled this phase's question in one look.
 - **Phase 22 APIs.** `particles` (render/particles.js) and `audio`
   (systems/audio.js) are module-level SINGLETONS: import and call, no wiring.
   Both are inert until main.js runs `particles.init({ scene, world })` and
@@ -4172,3 +4357,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 18 | Brewing (systems/brewing.js + the ui/containers.js screens split): the 5-slot brewing stand (3 gated bottle slots / ingredient / blaze-powder fuel loaded 20 ops at a time), the SPEC potion table brewing all matching bottles per 20s operation, glass bottles filling at water sources, potions drunk through the hold path leaving their bottle, real effects in stats.js (fire resistance suppressing all lava/fire damage 3:00 — the run-critical one — strength +3 melee, instant healing) with a HUD countdown chip and tinted-bottle item art everywhere; the enderman (real 2.9-block model + jaw layer, exact-camera stare-to-aggro with the creepy head-lift, blink on hit / into dry ground out of water damage / to a distant target, ender pearls, rare overworld night spawns); eyes of ender flying to the DETERMINISTIC stronghold point (dimensions/stronghold.js, 1000-2000 blocks from spawn per seed), hovering, dropping back or shattering 20%; blazes retuned to real values (volley of 3, 5s cooldown, 5 dmg + 4s burn on direct hits, 1.2s wind-up with a body flare); fortresses grown to the real scale (384-block regions, ~100-piece blueprints to ~300 blocks, 112-block bridges, staircase galleries between deck levels, tall crenellated towers, an enclosed 3x3-room keep); the Nether brightened (ambient floor 9, warm red-orange fog). 659 node + 75 browser checks, zero console errors | Stronghold generation (must anchor to strongholdCenter), the End + dragon; glistering melon has no source (healing optional per SPEC); magma cream is a 25% blaze drop (vanilla sources out of scope); interaction.js (~806) and combat.js (~803) carry mandated-split notes |
 | 21 | **Polish: the building set.** Gold tools + hoes in five tiers, the shield (raise to negate frontal melee/arrows/blasts), craftable shears (sheep AND leaf blocks). Stairs and slabs in five materials, fences, fence gates, cobblestone walls, ladders, doors, trapdoors, beds, signs, bookshelves, item frames, flower pots — every one a REAL SHAPE from ONE box table (`world/shapes.js` + `world/shape_tables.js`) that feeds both the mesher's new generic `emitShape` and the collision sweeps, so fences really are 1.5 tall and slabs really are half height. Ladders climb at the vanilla 2.35 b/s; doors/gates/trapdoors toggle; beds set spawn and skip the night; signs take four lines of text on placement. Charcoal from any log (fuel + torches), stone bricks, sandstone, the four block forms both ways, books from leather. The six reported bugs: water bucket placement hardened + regression-tested, the End fight's per-frame cost cut to ~0.1ms (preallocated hitboxes behind a ray reject, one shared crystal material, cached blast targets, chunk-local pillar tests), the purple boss bar, the dragon now GRIPPING the fountain with its head craned down, the island 102-118 across with vanilla 14-40 pillars (HEAL.RANGE 40->30), and WATER FLOW on the lava automaton with both fluids rendering at partial height on their own scrolling texture. Five ARCHITECTURE cuts: systems/arrows.js (mandated since Phase 17), player/placement.js, player/body.js, world/shapes.js + world/shape_tables.js. 88 automated checks green, zero console errors, screenshot-verified. | dragon.js (878) and blocks.js (908) over the cap with their cuts mandated; rivers; sounds; no upside-down/corner stairs, no door hinges, no sign font |
 | 22 | **Polish: particles and sound.** `render/particles.js` — ONE pooled, capped, allocation-free particle simulation in TWO instanced draw calls (textured cubes cropped from a block's own atlas tile; flat coloured cubes), struct-of-arrays state, spawn-time light tint and distance cull, gated block collision, sRGB-decoded colours: block break/place, footstep scuffs and landing bursts tinted to the block underfoot, water splash + bubble trail, lava embers and pops, expanding explosion smoke/debris/flash, red damage hits, death puffs, pickup sparkles, end-portal swirls, enderman blink columns, torch and glowstone flicker. `systems/audio.js` — the WHOLE game's sound synthesised with the Web Audio API (no files): one context, layered 2-4 voice sounds, a bus compressor, distance falloff + stereo pan, a voice budget, per-material footstep/break/place/mining timbres, hurt/death, swing/hit, bow draw/release/impact, hiss/boom/shriek/crackle/warp, splash/bubble/lava pop, pickup, the victory chime, looping water/lava/portal ambience and underground cave tones; combat.js and portals.js gave up their private WebAudio for it. `systems/ambience.js` — footsteps/landing/splash/bubbles plus vanilla's randomDisplayTick. Measured 0.16ms/frame at 1900 particles, 0.25ms/frame for particles + ambience together in a busy scene, 0.30ms in the creeper-beside-lava worst case. The six reported bugs: the MAGENTA boss bar shown by ARRIVING in the End (not by the fight's first tick), water buckets placing through a fluid-aware ray (aiming at water used to no-op) with flow re-verified 7 cells/step-lower/fills/falls, golden apples granting Absorption II — 4 yellow hearts for 2:00 — plus 5s of Regeneration II, with a HUD row above the health hearts that empties first, and the potion-effect indicator shrunk to vanilla's small top-right icon + countdown, held non-tool items un-mirrored (blocks measured identical to the mesher and left alone), ender pearls as a real thrown projectile that teleports for 2.5 hearts, and thrown eyes of ender drawing through terrain. 50 automated browser checks green, zero console errors, screenshot-verified. | Rivers (the last unbuilt SPEC feature); dragon.js (878) and blocks.js (908) still over the cap with their mandated cuts; particles are cubes not billboards and are lit once at spawn; no music; no XP so "level-up" rides the victory |
+| 23 | **Polish: deepslate and the underground.** Deepslate below y=0 (`world/terrain.js`), blended over the band to y=-8 by a per-block hash roll so the transition is speckled rather than a plane — hardness 3.0 (2x stone), dropping cobbled deepslate, with all five ores taking their deepslate variant in it (blocks 163-169, atlas 58-64) and cobbled deepslate accepted as a stone crafting material (furnace, brewing stand, the five stone tools). **GREAT CAVERNS** (`world/caverns.js` — new): the fourth attempt at big caves and the first that works, because it stops sampling noise and PLACES them — 224-block regions, 72% each, hashed centre/radii/height, a superellipsoid body (y exponent 3.2 = a room, not a lens) warped by a 3D field, a mid-level shelf slab for the ledges and drops, and two climbing connector bores into the tunnel network. Verified: 5 chambers per 512x512 (one per ~229 blocks), 32-56 across and 20-40 tall, 5/5 reachable by flood fill from open sky, 38x51x36 of open space measured in the running game. Lava above -54 rebuilt as placed pools (a few seeded sites per chunk flooding ≤8 floor cells below y=-12, plus rare wall springs) after the Phase 10 mask flooded whole cave floors: 464 → 27 cells per 100x100 columns. Underground water springs and puddles, waterfalls down cavern walls, gravel/clay banks beside them (clay's tile generated at boot, like the item art; the frame-with-eye tile moved to 69 since the new atlas overwrote 58). Ore distribution re-measured PER SOLID BLOCK inside each SPEC band — coal 3.49 / iron 3.15 / redstone 1.79 / gold 1.14 / diamond 0.67 per 1000 — and diamond is 1 per 572 at y-59..-50, about 6 exposed in 10 minutes of strip mining even at deepslate's doubled hardness. The three reported bugs: footsteps rebuilt as pure noise with halved decays and no sprint volume boost (the 150→90 Hz sine glide under every step WAS the "strange, unnatural" sprint noise), a `lowpass` on `tone()` taming every sawtooth/square voice, a dedicated landing sound; `audio.setPaused()` suspending the whole AudioContext on pause (verified running→suspended→running, sounds refused while paused); the potion indicator doubled to 48px with a 20px countdown. Two ARCHITECTURE cuts, one of them the long-mandated `world/fluid_families.js` out of blocks.js (901 now — under the cap for the first time since Phase 21). 69-module import smoke + 33 registry/crafting/fluid checks + the generation survey + a Chromium end-to-end run, zero console errors. | Rivers (the last unbuilt SPEC feature); `entities/dragon.js` (878) is now the only file over the cap, its rig cut still mandated; `world/caves.js` at 786 has no room left (ore/vein passes are its next cut); framerate UNMEASURED this phase (no GPU in the sandbox — generation cost was measured directly and is unchanged); the atlas's four new plant tiles (65-68) are unused, no ground plants were added |

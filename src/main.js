@@ -696,6 +696,13 @@ async function init() {
       // beds and the cave tones. Last, so it reads this frame's body state.
       ambience.update(delta);
     }
+    // Phase 23 bug fix: pausing the game pauses the SOUND. Freezing the
+    // update loop never silenced the looping ambience beds — a running
+    // BufferSource is a live graph node, not something the game loop drives —
+    // so water kept lapping behind the pause overlay. Suspending the whole
+    // AudioContext stops every voice at once and resuming picks them up
+    // where they left off. Edge-triggered inside audio.setPaused.
+    audio.setPaused(paused);
     // Phase 22: the listener follows the camera (position AND facing, for
     // the stereo pan), and the particle pool integrates. Both run outside
     // the pause gate with a zero delta while paused — the pool must keep
