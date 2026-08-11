@@ -12,7 +12,7 @@ import {
 } from '../config.js';
 import {
   BLOCK, BLOCKS, LAVA_LEVEL_OF, WATER_LEVEL_OF, WART_STAGE,
-  HAS_SHAPE, FLUSH_RECTS, shapeBoxesAt, fluidHeight,
+  HAS_SHAPE, FLUSH_RECTS, shapeBoxesAt, fluidHeight, CROSS_PLANT_TILE,
 } from './blocks.js';
 import { getUV, TILE } from '../render/atlas.js';
 
@@ -122,6 +122,13 @@ export const WART_HEIGHT = new Float32Array(NUM_IDS);
 for (const [id, stage] of Object.entries(WART_STAGE)) {
   WART_HEIGHT[id] = SHAPES.WART.STAGE_HEIGHTS[stage];
 }
+
+// Cross-plane plants (Phase 24): per-id atlas tile, -1 = not a plant. The
+// dispatch check in buildChunkMesh reads this — before the generic cube
+// path, so the plants' registry `faces` (kept for break particles and item
+// art) never emit cube geometry.
+export const CROSS_TILE = new Int16Array(NUM_IDS).fill(-1);
+for (const [id, tile] of Object.entries(CROSS_PLANT_TILE)) CROSS_TILE[id] = tile;
 
 // ---------------------------------------------------------------------------
 // Torch box model (Phase 11) — a WIDTH x HEIGHT x WIDTH post: floor torches
@@ -432,6 +439,47 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
         bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
         bucket.count += 4;
       }
+    }
+  };
+
+  // Cross-plane plants (Phase 24): two DoubleSide quads crossing in an X in
+  // the alpha-cutout pass, lit flat by the plant's own cell (the wart rule —
+  // no AO on paper-thin planes, full brightness like vanilla's unshaded
+  // plants; the cell's light IS the light of the block it sits on, since an
+  // opacity-0 plant never attenuates it). The diagonal endpoints sit
+  // sqrt(2)/4 in from the cell corners so each quad's in-plane width is
+  // exactly 1 and the art is never stretched — vanilla's `rescale: true`.
+  // A per-position world hash nudges the cross off-centre so a field of
+  // grass reads as scattered growth, not a lattice.
+  const emitCross = (lx, iy, lz, id) => {
+    const bucket = buckets[PASS_CUTOUT];
+    const y = iy + MIN_Y;
+    const [sky, blk] = ownLight(lx, iy, lz);
+    const { u0, v0, u1, v1 } = tileUV(CROSS_TILE[id]);
+    const wx = chunk.cx * SIZE + lx;
+    const wz = chunk.cz * SIZE + lz;
+    let h = (Math.imul(wx, 0x27d4eb2d) ^ Math.imul(wz, 0x165667b1)) | 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+    const off = SHAPES.PLANT.OFFSET;
+    const cx = lx + 0.5 + (((h & 0xff) / 255) - 0.5) * 2 * off;
+    const cz = lz + 0.5 + ((((h >>> 8) & 0xff) / 255) - 0.5) * 2 * off;
+    const d = Math.SQRT2 / 4;
+    for (const s of [1, -1]) { // the two diagonals: (+,+) and (+,-)
+      const base = bucket.count;
+      // Corner order (0,0)(1,0)(0,1)(1,1) in the quad's UV frame.
+      bucket.pos.push(
+        cx - d, y, cz - d * s,
+        cx + d, y, cz + d * s,
+        cx - d, y + 1, cz - d * s,
+        cx + d, y + 1, cz + d * s,
+      );
+      bucket.uv.push(u0, v0, u1, v0, u0, v1, u1, v1);
+      for (let k = 0; k < 4; k++) {
+        bucket.col.push(1, 1, 1);
+        bucket.lig.push(sky, blk);
+      }
+      bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      bucket.count += 4;
     }
   };
 
@@ -775,7 +823,7 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
   };
 
   return {
-    emitTorch, emitFluidFlow, emitPortal, emitWart,
+    emitTorch, emitFluidFlow, emitPortal, emitWart, emitCross,
     emitBrewingStand, emitBars, emitEndFrame, emitEndPortal, emitShape,
   };
 }

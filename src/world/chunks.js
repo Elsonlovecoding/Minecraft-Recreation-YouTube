@@ -24,7 +24,8 @@ import {
   PASS_NONE, PASS_OPAQUE, PASS_CUTOUT, PASS_WATER, PASS_LAVA, PASS_PORTAL,
   PASS_WATER_FLOW, PASS_COUNT,
   IS_TRANSPARENT, OCCLUDES_AO, SELF_CULL, INSET, PASS, TILES,
-  IS_FLUID_FLOW, IS_WATER_CELL, WART_HEIGHT, FACES, tileUV, createSpecialEmitters,
+  IS_FLUID_FLOW, IS_WATER_CELL, WART_HEIGHT, CROSS_TILE, FACES, tileUV,
+  createSpecialEmitters,
 } from './emitters.js';
 
 const SIZE = CHUNK.SIZE;
@@ -310,7 +311,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   // flowing-lava cells, the portal slab, the nether wart crop. They close
   // over this mesh's buckets/light window through the ctx.
   const {
-    emitTorch, emitFluidFlow, emitPortal, emitWart,
+    emitTorch, emitFluidFlow, emitPortal, emitWart, emitCross,
     emitBrewingStand, emitBars, emitEndFrame, emitEndPortal, emitShape,
   } = createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W });
 
@@ -361,6 +362,13 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         }
         if (WART_HEIGHT[id] > 0) {
           emitWart(lx, iy, lz, id);
+          continue;
+        }
+        // Phase 24: cross-plane plants — dispatched before the generic cube
+        // path so their registry tiles (kept for particles/item art) never
+        // emit cube faces.
+        if (CROSS_TILE[id] >= 0) {
+          emitCross(lx, iy, lz, id);
           continue;
         }
         // Phase 19 specials: the brewing stand box model, iron-bar panes,

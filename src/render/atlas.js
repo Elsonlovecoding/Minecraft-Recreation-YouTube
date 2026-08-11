@@ -74,6 +74,12 @@ export const TILE = {
   DEEPSLATE_GOLD_ORE: 62,
   DEEPSLATE_REDSTONE_ORE: 63,
   DEEPSLATE_DIAMOND_ORE: 64,
+  // Phase 24: the ground plants (docs/ATLAS_MAP.md 65-68). Real cutout
+  // tiles in the PNG, rendered as cross-planes by the mesher.
+  SHORT_GRASS: 65,
+  DANDELION: 66,
+  POPPY: 67,
+  DEAD_BUSH: 68,
   // Generated tiles — painted into the free tail of the atlas at load time
   // (see GENERATED_TILES below), never shipped in the PNG. Index 58 used to
   // hold the frame-with-eye art; the Phase 23 atlas overwrote it with

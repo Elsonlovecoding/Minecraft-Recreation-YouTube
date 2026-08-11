@@ -21,7 +21,8 @@ import {
   BLOCK, blockDef, blockIdByName, placementVariant, PLANTABLE, isSolid,
   SLAB_FAMILY_OF, SLAB_ITEM_FAMILIES, DOOR_INFO, DOOR_UPPER_BY_FACING,
   BED_INFO, BED_HEAD_BY_FACING, FACING_DELTA, isBed, isSign, isItemFrame,
-  isDoor, LADDER_BY_FACING, SIGN_IDS, isClimbable,
+  isDoor, LADDER_BY_FACING, SIGN_IDS, isClimbable, isCrossPlant,
+  plantCanSitOn,
 } from '../world/blocks.js';
 import { particles } from '../render/particles.js';
 import { audio, blockSoundGroup } from '../systems/audio.js';
@@ -39,10 +40,11 @@ function placedFeedback(x, y, z, id) {
   );
 }
 
-// A cell a new block may replace: air and fluids only (shared with the
-// bucket actions).
+// A cell a new block may replace: air, fluids and — Phase 24 — the cross
+// plants (vanilla: placing into tall grass replaces it, no drop). Shared
+// with the bucket actions, so poured water also displaces a plant.
 export function isReplaceable(id) {
-  return id === BLOCK.AIR || blockDef(id).fluid;
+  return id === BLOCK.AIR || blockDef(id).fluid || isCrossPlant(id);
 }
 
 // Would a block at cell (x, y, z) overlap the player's AABB? feet is the
@@ -102,8 +104,12 @@ export function createPlacement({
     if (!isReplaceable(world.getBlock(x, y, z))) return false;
     // Torches can't stand in a fluid (vanilla) — the generic rule lets
     // blocks displace fluid cells, but a torch would burn underwater and
-    // silently delete the source.
-    if (id === BLOCK.TORCH && world.getBlock(x, y, z) !== BLOCK.AIR) return false;
+    // silently delete the source. Plants are the same (Phase 24): they go
+    // into plain air only, never displacing water or another plant.
+    if (
+      (id === BLOCK.TORCH || isCrossPlant(id)) &&
+      world.getBlock(x, y, z) !== BLOCK.AIR
+    ) return false;
     // Walk-through shapes (ladders, signs, frames) never block the player,
     // so they may be placed in the player's own cell — everything else may
     // not.
@@ -126,6 +132,11 @@ export function createPlacement({
     }
     if (SIGN_IDS.stand.includes(placed) && !supportedFrom(x, y, z)) return false;
     if (placed === BLOCK.FLOWER_POT && !supportedFrom(x, y, z)) return false;
+    // Phase 24 — plants need their soil: grass or dirt (dead bush also sand).
+    if (
+      isCrossPlant(placed) &&
+      !plantCanSitOn(placed, world.getBlock(x, y - 1, z))
+    ) return false;
 
     // --- two-cell pieces ----------------------------------------------------
     if (isDoor(placed)) {

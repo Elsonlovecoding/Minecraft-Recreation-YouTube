@@ -26,44 +26,28 @@
 //
 // All tunables live in config.js CAVES / UNDERGROUND / ORES.
 
-import { OVERWORLD, CHUNK, CAVES, ORES, UNDERGROUND } from '../config.js';
+import { OVERWORLD, CHUNK, CAVES, UNDERGROUND } from '../config.js';
 import { BLOCK } from './blocks.js';
 import {
   mulberry32, hash2, hash01, smoothstep, lerp, bilerp, SimplexNoise, fbm2,
   Field3D,
 } from './noise.js';
 import { GreatCaverns } from './caverns.js';
+// Phase 24: the ore/gravel vein passes and the STONE_FAMILY table moved to
+// world/ores.js — the cut this file's ARCHITECTURE note mandated when it
+// next grew. One-way dependency (ores.js imports nothing from here).
+import { STONE_FAMILY, applyVeinPasses } from './ores.js';
 
 // ---------------------------------------------------------------------------
 // Salts (independent hash/PRNG streams per feature)
 // ---------------------------------------------------------------------------
 
 const SALT_RAVINE_JITTER = 0x8a71;
-const SALT_GRAVEL = 0x67a1;
 const SALT_LAVA_SPRING = 0x1afa;
 const SALT_LAVA_POOL = 0x1ab0;
 const SALT_WATERFALL = 0x7fa11;
 const SALT_SPRING = 0x593a;
 const SALT_SHORE = 0x54ce;
-// Per-ore PRNG stream salts (stable — never reorder).
-const ORE_SALTS = { coal: 0xc0a1, iron: 0x1207, gold: 0x601d, redstone: 0x8ed5, diamond: 0xd1a3 };
-const ORE_BLOCKS = {
-  coal: BLOCK.COAL_ORE,
-  iron: BLOCK.IRON_ORE,
-  gold: BLOCK.GOLD_ORE,
-  redstone: BLOCK.REDSTONE_ORE,
-  diamond: BLOCK.DIAMOND_ORE,
-};
-// Phase 23: the same ore in deepslate. A vein cell takes this variant when
-// the block it is replacing is deepslate, so a vein straddling the transition
-// band comes out half stone ore and half deepslate ore, exactly like vanilla.
-const DEEPSLATE_ORE_BLOCKS = {
-  coal: BLOCK.DEEPSLATE_COAL_ORE,
-  iron: BLOCK.DEEPSLATE_IRON_ORE,
-  gold: BLOCK.DEEPSLATE_GOLD_ORE,
-  redstone: BLOCK.DEEPSLATE_REDSTONE_ORE,
-  diamond: BLOCK.DEEPSLATE_DIAMOND_ORE,
-};
 
 // Base terrain blocks caves may carve through. Water, bedrock and anything
 // else (decorations come later anyway) are left alone.
@@ -74,14 +58,6 @@ for (const id of [
 ]) CARVABLE[id] = 1;
 
 const isCarvable = (id) => CARVABLE[id] === 1;
-
-// Blocks ore veins and variant blobs may replace.
-const STONE_FAMILY = new Uint8Array(256);
-for (const id of [
-  BLOCK.STONE, BLOCK.GRANITE, BLOCK.DIORITE, BLOCK.ANDESITE, BLOCK.DEEPSLATE,
-]) {
-  STONE_FAMILY[id] = 1;
-}
 
 const STEP = CAVES.LATTICE_STEP;
 
@@ -381,17 +357,8 @@ export class CaveCarver {
     // Gravel/clay banks read the final water placement, so they run after
     // every pass that can put water underground.
     this._placeShoreBanks(chunk, colH);
-    const G = UNDERGROUND.GRAVEL_POCKETS;
-    this._placeVeins(chunk, BLOCK.GRAVEL, SALT_GRAVEL, {
-      MIN_Y: G.MIN_Y, MAX_Y: G.MAX_Y, ATTEMPTS_PER_CHUNK: G.ATTEMPTS_PER_CHUNK,
-      VEIN_MIN: G.SIZE_MIN, VEIN_MAX: G.SIZE_MAX,
-    });
-    for (const name of Object.keys(ORES)) {
-      this._placeVeins(
-        chunk, ORE_BLOCKS[name], ORE_SALTS[name], ORES[name],
-        DEEPSLATE_ORE_BLOCKS[name],
-      );
-    }
+    // Gravel pockets + the SPEC ores (world/ores.js — Phase 24 split).
+    applyVeinPasses(chunk, this.seed);
   }
 
   // Samples one field on the world-aligned lattice covering the chunk:
@@ -463,7 +430,13 @@ export class CaveCarver {
     }
 
     // 2. Small isolated pools. A seeded site walks down its column for the
-    // first cave floor in range and floods a few connected cells of it.
+    // first cave floor in range and digs a small RECESSED pool into it
+    // (Phase 24). The Phase 23 pools flooded ON TOP of the floor with open
+    // rims, and the fluid settle scan then grew every one into a flow apron
+    // up to 9 cells across — the reported "large lava bodies" far above the
+    // lake level. A recessed pool has no air below or beside any lava cell,
+    // so the automaton never touches it: what generates is exactly what the
+    // player finds.
     const rng = mulberry32(hash2(this.seed ^ SALT_LAVA_POOL, chunk.cx, chunk.cz));
     for (let attempt = 0; attempt < L.POOL_ATTEMPTS_PER_CHUNK; attempt++) {
       const lx = Math.floor(rng() * size);
@@ -477,7 +450,7 @@ export class CaveCarver {
       const startY = bottom + Math.floor(span * (top - bottom + 1));
       const y = this._floorBelow(chunk, lx, startY, lz, bottom);
       if (y === null) continue;
-      this._floodPool(chunk, lx, y, lz, BLOCK.LAVA, L.POOL_MAX_CELLS);
+      this._floodContainedPool(chunk, lx, y, lz, BLOCK.LAVA, L.POOL_MAX_CELLS);
     }
 
     // 3. Single-block wall springs: lava weeping out of a cave wall. Interior
@@ -525,11 +498,81 @@ export class CaveCarver {
     );
   }
 
+  // A RECESSED pool: `y` is an air cell over a cave floor, and the pool digs
+  // INTO that floor — fluid replaces up to `max` connected floor blocks at
+  // y-1, so the surface sits sunk into the rock with solid walls on every
+  // side and open air only above (the vanilla cave-pool look). Contained by
+  // construction: a cell only qualifies while its floor block is solid with
+  // solid rock beneath, and an erosion pass then drops any cell whose
+  // sideways neighbour at pool level is open (or unknowable past the chunk
+  // border) — so the settle scan finds no air below or beside any fluid
+  // cell and the automaton never grows the pool. Cells trimmed or eroded
+  // simply STAY rock, which can never break a kept cell's containment.
+  // Returns the number of cells filled.
+  _floodContainedPool(chunk, lx, y, lz, fluid, max) {
+    const size = CHUNK.SIZE;
+    const py = y - 1;
+    const open = (id) => id === BLOCK.AIR || id === BLOCK.LAVA || id === BLOCK.WATER;
+    const eligible = (cx, cz) => {
+      if (cx < 0 || cx >= size || cz < 0 || cz >= size) return false;
+      if (chunk.get(cx, y, cz) !== BLOCK.AIR) return false;      // needs open top
+      const floor = chunk.get(cx, py, cz);
+      if (open(floor) || floor === BLOCK.BEDROCK) return false;  // digs solid rock
+      return !open(chunk.get(cx, py - 1, cz));                   // over solid ground
+    };
+    if (!eligible(lx, lz)) return 0;
+    const keyOf = (cx, cz) => cz * size + cx;
+    const kept = new Set([keyOf(lx, lz)]);
+    const cells = [[lx, lz]];
+    for (let i = 0; i < cells.length && cells.length < max + 4; i++) {
+      const [cx, cz] = cells[i];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx;
+        const nz = cz + dz;
+        if (!kept.has(keyOf(nx, nz)) && eligible(nx, nz)) {
+          kept.add(keyOf(nx, nz));
+          cells.push([nx, nz]);
+        }
+      }
+    }
+    // Erode until every kept cell's sideways neighbours at pool level are
+    // solid rock or fellow pool cells. Border cells erode too — their
+    // outward neighbour lives in a chunk this pass can't read.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [cx, cz] of cells) {
+        if (!kept.has(keyOf(cx, cz))) continue;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx;
+          const nz = cz + dz;
+          if (kept.has(keyOf(nx, nz))) continue;
+          const outside = nx < 0 || nx >= size || nz < 0 || nz >= size;
+          if (outside || open(chunk.get(nx, py, nz))) {
+            kept.delete(keyOf(cx, cz));
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+    let filled = 0;
+    for (const [cx, cz] of cells) {
+      if (filled >= max) break;
+      if (!kept.has(keyOf(cx, cz))) continue;
+      chunk.set(cx, py, cz, fluid);
+      filled++;
+    }
+    return filled;
+  }
+
   // Floods up to `max` connected cells of ONE flat floor level with `fluid`,
   // starting at (lx, y, lz). A breadth-first walk over air cells at that
   // exact y that still have solid ground under them, clipped to this chunk —
   // so a pool is a puddle on a floor, never a column and never a spill into
-  // the neighbouring chunk. Returns the number of cells filled.
+  // the neighbouring chunk. Returns the number of cells filled. (The water
+  // springs still use this — a damp puddle that seeps a little is fine; the
+  // lava pools moved to _floodContainedPool above.)
   _floodPool(chunk, lx, y, lz, fluid, max) {
     const size = CHUNK.SIZE;
     if (chunk.get(lx, y, lz) !== BLOCK.AIR) return 0;
@@ -740,48 +783,4 @@ export class CaveCarver {
     }
   }
 
-  // --- veins (ores, gravel pockets) ----------------------------------------
-
-  // Compact random-walk veins from a per-chunk seeded PRNG. Only this
-  // chunk's cells are written (walks clip at the border), so generation
-  // order can never change the world. Placement replaces the stone family
-  // only — never air, cave interiors, dirt or ore already placed.
-  // `deepId` (Phase 23) is the block to write instead when the cell being
-  // replaced is deepslate, so a vein crossing the transition band comes out
-  // part stone ore and part deepslate ore.
-  _placeVeins(chunk, blockId, salt, cfg, deepId = null) {
-    const size = CHUNK.SIZE;
-    const rng = mulberry32(hash2(this.seed ^ salt, chunk.cx, chunk.cz));
-    const span = cfg.MAX_Y - cfg.MIN_Y;
-    for (let attempt = 0; attempt < cfg.ATTEMPTS_PER_CHUNK; attempt++) {
-      let cx = Math.floor(rng() * size);
-      let cz = Math.floor(rng() * size);
-      // BIAS_BOTTOM: min of three uniforms — density ∝ (1-t)², strongly
-      // concentrated toward MIN_Y ("the right depth" for diamonds).
-      let t = rng();
-      if (cfg.BIAS_BOTTOM) t = Math.min(t, rng(), rng());
-      let cy = cfg.MIN_Y + Math.round(t * span);
-      const target = cfg.VEIN_MIN + Math.floor(rng() * (cfg.VEIN_MAX - cfg.VEIN_MIN + 1));
-      let placed = 0;
-      let guard = target * 6;
-      while (placed < target && guard-- > 0) {
-        if (cx >= 0 && cx < size && cz >= 0 && cz < size &&
-            cy >= cfg.MIN_Y && cy <= cfg.MAX_Y) {
-          const under = chunk.get(cx, cy, cz);
-          if (STONE_FAMILY[under]) {
-            chunk.set(
-              cx, cy, cz,
-              deepId !== null && under === BLOCK.DEEPSLATE ? deepId : blockId,
-            );
-            placed++;
-          }
-        }
-        const axis = Math.floor(rng() * 3);
-        const dir = rng() < 0.5 ? -1 : 1;
-        if (axis === 0) cx += dir;
-        else if (axis === 1) cy += dir;
-        else cz += dir;
-      }
-    }
-  }
 }

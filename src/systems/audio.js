@@ -274,7 +274,8 @@ export function blockSoundGroup(name) {
   if (name.includes('water')) return 'water';
   if (name.includes('lava')) return 'lava';
   if (name.includes('grass') || name.includes('leaves') || name.includes('sapling') ||
-      name.includes('wart')) return 'grass';
+      name.includes('wart') || name.includes('dandelion') || name.includes('poppy') ||
+      name.includes('bush')) return 'grass'; // Phase 24: the cross plants
   if (name.includes('wool') || name === 'bed') return 'wool';
   if (name.includes('gravel')) return 'gravel';
   // Deepslate (Phase 23) before the generic stone fallback: it is denser and

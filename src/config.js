@@ -370,12 +370,20 @@ export const CAVES = {
   //     rare single-block wall springs. Both get rarer with height.
   LAVA: {
     LAKE_MAX_Y: -54,         // vanilla-style lava-flood level
-    POOL_ATTEMPTS_PER_CHUNK: 2, // candidate pool sites per chunk...
-    POOL_CHANCE: 0.30,       // ...each this likely to actually be one
+    // Phase 24: pools above the lakes only generate as CLOSED BASINS now
+    // (caves.js _floodContainedPool) — the Phase 23 pools passed a static
+    // census but the fluid settle scan grew every open-rimmed one into a
+    // flow apron up to 9 cells across, which is what "large lava bodies at
+    // Y-13" were. Containment rejects most candidate floors, so the attempt
+    // count rises to keep small pools existing at all.
+    POOL_ATTEMPTS_PER_CHUNK: 3, // candidate pool sites per chunk...
+    POOL_CHANCE: 0.35,       // ...each this likely to actually be one
     POOL_MAX_CELLS: 8,       // "small isolated pools of a few blocks"
     POOL_MAX_Y: -12,         // no pools at all above this — the shallow caves
                              // stay dry apart from the odd wall spring
-    SPRING_CHANCE: 0.0004,   // per carved wall-adjacent cell above the lakes
+    SPRING_CHANCE: 0.0002,   // per carved wall-adjacent cell above the lakes
+                             // (Phase 24 halved it — every spring's fall
+                             // spreads a small flow apron where it lands)
     SPRING_MAX_Y: 8,         // ...and none above this
   },
 
@@ -515,14 +523,76 @@ export const TERRAIN = {
 
   // When the top two biome weights are within this range the surface block
   // is hash-dithered between them, so borders feather instead of hard-edging.
-  BIOME_DITHER_RANGE: 0.2,
+  // Phase 24 widened it 0.2 -> 0.35: the transition zone spans more columns.
+  BIOME_DITHER_RANGE: 0.35,
+
+  // Phase 24 — domain warp on the biome fields: the climate and mountain
+  // region noises are sampled at coordinates pushed around by two
+  // low-frequency fields, so every biome boundary wanders irregularly
+  // instead of following the smooth contours of the raw noise.
+  BIOME_WARP: {
+    SCALE: 1 / 210,            // warp field frequency
+    OCTAVES: 2,
+    AMPLITUDE: 34,             // blocks of push at full field strength
+  },
+
+  // Phase 24 — rivers. The zero-contours of one low-frequency field supply
+  // long continuous winding paths (the ravine-line mechanism at landscape
+  // scale). Where |field| < WIDTH the terrain is pressed down below sea
+  // level with a smooth bank profile, and the normal sea-level fill puts
+  // water in the channel — so rivers automatically join any lake or ocean
+  // their contour crosses, because a contour of a continuous field can only
+  // end by looping or by running into terrain that is already underwater.
+  RIVERS: {
+    LINE_SCALE: 1 / 620,       // path frequency — bends over hundreds of blocks
+    LINE_OCTAVES: 3,           // extra octaves wiggle the banks locally
+    WIDTH: 0.028,              // |field| half-width of the channel
+    WIDTH_VARIATION: 0.45,     // ±fraction of WIDTH from a second field, so
+                               // rivers swell and narrow along their run
+    WIDTH_VAR_SCALE: 1 / 150,
+    DEPTH: 4,                  // channel floor below sea level at the centre
+    BANK_HEIGHT: 1,            // bank lip height above sea at the channel edge
+    SHORE_BLEND: 0.35,         // outer fraction of the half-width over which
+                               // the banks ease back into the terrain
+  },
 
   SURFACE: {
     DIRT_DEPTH: 3,             // dirt under grass
     SAND_DEPTH: 4,             // sand at the desert surface
     SANDSTONE_DEPTH: 3,        // sandstone under desert sand
-    BEACH_MAX_ABOVE_SEA: 1,    // up to this height above sea, shores turn to sand
-    MOUNTAIN_STONE_MIN_HEIGHT: 92, // mountain surface is bare stone above this
+
+    // Phase 24 — beaches are no longer "any column at sea level". Sand needs
+    // actual water nearby: a column this close to sea level turns to sand
+    // only when a column within REACH is underwater. Everything else keeps
+    // its biome surface, so a plain that happens to sit at y 62 stays grass.
+    BEACH: {
+      MAX_ABOVE_SEA: 2,        // sand up to this height above sea level...
+      REACH: 4,                // ...within this many blocks of open water
+    },
+    // Underwater floors: sand in the shallows, dirt with gravel patches
+    // deeper down (riverbeds sit in the shallow band, so they get the
+    // sand/gravel mix the brief asks for).
+    UNDERWATER_SAND_DEPTH: 4,  // floor within this depth of sea level is sandy
+    // Gravel patches on beaches and riverbeds: a low-frequency field picks
+    // patch regions, a per-column hash roughens their edges.
+    GRAVEL: {
+      SCALE: 1 / 23,           // patch size — a few blocks across
+      THRESHOLD: 0.34,         // field value where a patch begins
+      EDGE_JITTER: 0.25,       // hash dither across the patch edge
+    },
+
+    // Phase 24 — the mountain surface rule. Bare stone only above a noisy
+    // height line (a "stone line" like vanilla's snow line — never one fixed
+    // height) or on faces too steep for grass to sit. Everything below and
+    // gentler is grassed like the rest of the world.
+    STONE_LINE: {
+      HEIGHT: 108,             // mean height where slopes turn to bare stone
+      JITTER: 10,              // ± blocks of noise on that line
+      SCALE: 1 / 70,           // jitter field frequency
+    },
+    STEEP_DROP: 3,             // a column this many blocks above its lowest
+                               // 4-neighbour is a cliff face — bare stone at
+                               // any height (grass could not sit on it)
   },
 
   TREES: {
@@ -533,12 +603,55 @@ export const TERRAIN = {
                                // sky rarely visible through the middle)
     CORNER_CHANCE: 0.5,        // chance each 5x5 layer corner keeps its leaf
                                // block (vanilla clips corners randomly)
+    // Phase 24 — density and height vary WITHIN a biome. The biome density
+    // is multiplied by a low-frequency field mapped to [MIN, MAX], so forest
+    // has glades and thickets instead of uniform spacing, and a second field
+    // biases trunk height so groves of taller trees appear together.
+    DENSITY_FIELD: {
+      SCALE: 1 / 130,          // clearings/thickets a couple hundred blocks wide
+      MIN: 0.15,               // density multiplier at the field's low end...
+      MAX: 1.85,               // ...and its high end (mean stays ~1)
+    },
+    HEIGHT_FIELD: {
+      SCALE: 1 / 90,
+      BIAS: 2.2,               // + blocks of trunk at the field's high end
+    },
   },
 
   CACTUS: {
     DENSITY: 0.015,            // per desert sand column
     MIN_HEIGHT: 1,
     MAX_HEIGHT: 3,
+  },
+
+  // Phase 24 — ground vegetation: cross-plane plants scattered on the
+  // surface. Short grass comes in noise-driven patches of varying density;
+  // flowers are rarer and cluster (a threshold field gates WHERE they can
+  // appear, a hash picks the columns inside it); dead bushes speckle the
+  // desert. Densities are per eligible column.
+  PLANTS: {
+    GRASS_FIELD_SCALE: 1 / 45, // patch size of the grass density field
+    // Peak per-column short-grass chance per biome (the field scales it 0..1)
+    GRASS_DENSITY: { plains: 0.60, forest: 0.45, mountains: 0.18, desert: 0 },
+    FLOWER_FIELD_SCALE: 1 / 65,
+    FLOWER_FIELD_MIN: 0.30,    // field value where flower clusters begin
+    FLOWER_CHANCE: 0.075,      // per-column chance inside a cluster
+    DEAD_BUSH_CHANCE: 0.012,   // per desert sand column
+    SEED_DROP_CHANCE: 0.125,   // breaking short grass drops seeds this often
+  },
+
+  // Phase 24 — occasional small surface lava pools in mountains and deserts.
+  // One hashed candidate per region tile; the pool digs a closed basin into
+  // gently-sloped ground (the rim stays above the lava, so the fluid settle
+  // pass never spreads it) and fills the floor with lava sources.
+  SURFACE_LAVA: {
+    REGION_SIZE: 112,          // one candidate per region tile this wide
+    CHANCE: 0.22,              // ...that actually hosts a pool
+    RADIUS_MIN: 2,             // pool radius range in blocks
+    RADIUS_MAX: 3,
+    MAX_RELIEF: 3,             // skip ground that varies more than this over
+                               // the footprint — pools want a flat shelf
+    MIN_HEIGHT_ABOVE_SEA: 4,   // never near beaches or river banks
   },
 };
 
@@ -985,6 +1098,13 @@ export const SHAPES = {
   WART: {
     PLANE_INSET: 4 / 16,          // planes sit at 4/16 and 12/16 of the cell
     STAGE_HEIGHTS: [6 / 16, 10 / 16, 1], // quad height per growth stage 0..2
+  },
+  // Cross-plane plants (Phase 24): two DoubleSide quads in an X. The quad
+  // width is fixed at 1 (endpoints sqrt(2)/4 in from the corners — vanilla's
+  // rescale, so the art never stretches); OFFSET is the max per-axis nudge
+  // off the cell centre from the per-position hash.
+  PLANT: {
+    OFFSET: 0.18,
   },
   // Brewing stand box model (Phase 19 — replaces the wrong full-cube
   // rendering): a stone base plate, a thin central rod sampling the tile's
@@ -1790,31 +1910,85 @@ export const SKY = {
 // (0.5-0.575), night 7 minutes (0.575-0.925), sunrise 1.5 minutes
 // (0.925-1.0). The old spread spent ~2 minutes total on each transition and
 // only ~5.6 on night.
+// Phase 24 added two channels: STARS (starfield alpha, fading in through
+// dusk and out through dawn) and TINT (the skylight tint uniform — white at
+// midday, warm at dawn/dusk, cool at night — which is what keeps the LIGHT
+// on the terrain in agreement with the sky it stands under).
 export const DAY_NIGHT = {
   KEYFRAMES: [
     { T: 0.000, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
-      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
+      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
+      STARS: 0, TINT: 0xffffff },
     { T: 0.500, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
-      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0 },
+      BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
+      STARS: 0, TINT: 0xffffff },
     { T: 0.5375, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
-      BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
+      BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
+      STARS: 0.25, TINT: 0xffd9b0 },
     { T: 0.575, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
+      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
+      STARS: 1, TINT: 0x8fa8e8 },
     { T: 0.925, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0 },
+      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
+      STARS: 1, TINT: 0x8fa8e8 },
     { T: 0.9625, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
-      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85 },
+      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
+      STARS: 0.25, TINT: 0xffd9b0 },
   ],
   GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
 };
 
-// The visible sun and moon: square quads riding the sky dome.
+// The visible sun and moon riding the sky dome. Phase 24: the sun is a
+// bright square core inside a soft atmospheric glow (one generated texture,
+// additive so the glow melts into the sky — no hard edge), and the moon
+// shows the eight vanilla phases, one per in-game day, from a set of
+// generated square-moon textures.
 export const CELESTIAL = {
   DISTANCE: 820,                  // from the camera; inside the sky dome radius
-  SUN_SIZE: 150,
+  SUN_SIZE: 150,                  // the square core's edge, in dome units
+  SUN_GLOW_SCALE: 2.6,            // quad size as a multiple of the core —
+                                  // the glow needs room to fade to nothing
+  SUN_CORE_COLOR: 0xfffbe8,       // the square itself
+  SUN_GLOW_COLOR: 0xffd9a0,       // the atmospheric halo around it
   MOON_SIZE: 95,
-  SUN_COLOR: 0xfff7d0,
-  MOON_COLOR: 0xdfe4f2,
+  MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
+  MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
+  MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
+  SUN_COLOR: 0xfff7d0,            // legacy flat-quad tints (kept for the
+  MOON_COLOR: 0xdfe4f2,           // texture painters' base hues)
+};
+
+// Phase 24 — clouds: vanilla's flat white blocky slab layer. A hashed
+// blob pattern on a CELL_SIZE grid, meshed once as merged quads (a 2x2
+// tiling of one TILE_CELLS-period pattern, so the mesh can re-anchor in
+// period steps as the player moves and the pattern never visibly jumps),
+// drifting steadily along -x like vanilla's. Slightly transparent, never
+// fogged (the layer sits far beyond FOG_FAR — fog would erase it).
+export const CLOUDS = {
+  HEIGHT: 192,                    // the vanilla cloud deck sits at y=192
+  CELL_SIZE: 12,                  // blocks per cloud cell (vanilla's texel)
+  TILE_CELLS: 96,                 // pattern period in cells (1152 blocks)
+  COVER: 0.36,                    // fraction of cells that are cloud
+  SPEED: 0.55,                    // drift in blocks per second, along -x
+  OPACITY: 0.72,
+  NIGHT_BRIGHTNESS: 0.16,         // colour scale at deep night (1.0 at noon)
+  HORIZON_TINT: 0.18,             // fraction of the horizon colour mixed in
+                                  // (what makes dawn clouds blush)
+  SEED: 0xc10d5,                  // pattern hash seed (not world-seeded —
+                                  // clouds are weather, not terrain)
+};
+
+// Phase 24 — the night starfield: small fixed-size points on the celestial
+// sphere, wheeling with the sun's orbit, alpha driven by the KEYFRAMES'
+// STARS channel so they fade in through dusk and out through dawn.
+export const STARS = {
+  COUNT: 420,
+  SIZE: 1.8,                      // screen pixels (no distance attenuation)
+  RADIUS: 850,                    // just inside the sky dome
+  MIN_Y: -0.12,                   // lowest spawn height on the unit sphere —
+                                  // a few dip below the horizon so the wheel
+                                  // never shows a hard floor
+  SEED: 0x57a125,
 };
 
 // The view while the eye is submerged in lava (Phase 10): a heavy, nearly

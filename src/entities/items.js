@@ -42,6 +42,13 @@ export const ATLAS_SPRITE_ITEMS = {
   // Phase 21: a ladder's rung lattice is the closest thing the atlas has to
   // ladder art, and it reads correctly as a flat item sprite.
   ladder: TILE.IRON_BARS,
+  // Phase 24: the cross plants — X-planes in the world, flat sprites as
+  // items (this map wins over the mini-cube path, so their registry faces
+  // stay free for break particles).
+  short_grass: TILE.SHORT_GRASS,
+  dandelion: TILE.DANDELION,
+  poppy: TILE.POPPY,
+  dead_bush: TILE.DEAD_BUSH,
 };
 
 const atlasSpriteCanvases = new Map(); // item name -> 16x16 canvas
