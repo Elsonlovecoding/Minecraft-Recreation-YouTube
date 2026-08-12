@@ -35,10 +35,28 @@ src/
                          every family lookup. ONE box list feeds both the
                          mesher and the collision sweep — what you see is
                          what you walk into
-    terrain.js           noise, heightmap, biomes, trees
+    terrain.js           heightmap, biomes (domain-warped since Phase 24),
+                         rivers, surface rules, trees, cacti, ground plants,
+                         surface lava pools — the overworld generator
+    terrain_noise.js     the heightmap's OWN seeded 2D noise machinery
+                         (hashes, Simplex2D, fbm, smoothstep — Phase 24
+                         split out of terrain.js per the size cap, moved
+                         verbatim; deliberately independent of noise.js so
+                         the two seed streams never couple)
+    plants.js            the Phase 24 cross-plane plant registrations
+                         (short grass, dandelion, poppy, dead bush) and
+                         their soil rules — the shapes.js pattern: blocks.js
+                         hands it `register` and BLOCK, so the pair is
+                         cycle-free. isCrossPlant/plantCanSitOn are the
+                         predicates placement, main.js's pop listener and
+                         the mesher tables read
     noise.js             seeded simplex/fbm/Field3D machinery for the
                          carver (Phase 15 split out of caves.js per the
                          size cap — moved verbatim, byte-identical output)
+    ores.js              the ore + gravel-pocket vein passes and the
+                         STONE_FAMILY table (Phase 24 split out of caves.js
+                         — the cut its cap note mandated; moved verbatim,
+                         byte-identical PRNG streams)
     caves.js             cave carving (tunnels + caverns from noise),
                          ravines, surface entrances, ore placement, lava
                          placement, underground water springs/pools and the
@@ -90,7 +108,13 @@ src/
   render/
     renderer.js          Three.js setup, tone mapping, shadows, post
     atlas.js             texture atlas loading and UV lookup
-    lighting.js          light propagation, AO, day/night
+    lighting.js          light propagation, AO, day/night (the cycle drives
+                         the Phase 24 sky furniture below)
+    sky_fx.js            the Phase 24 sky furniture: the blocky cloud deck
+                         (one merged quad mesh, pattern-anchored re-tiling),
+                         the starfield, and the generated sun (square core
+                         in a soft additive glow) and eight-phase moon
+                         textures — split from lighting.js per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
                          — textured cubes cropped from a block's own atlas
@@ -306,7 +330,21 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 23 added two files rather than growing any
+in this document. Phase 24 grew three files past the cap and cut two of them
+back the same session: `world/terrain.js` (the rivers/surface-rules/vegetation
+pass took it 546 → 868) gave up its seeded 2D noise machinery to
+`world/terrain_noise.js` (124, moved verbatim — terrain is 751 now), and
+`world/caves.js` (863 after the contained-pool rebuild) finally made the
+ore/vein cut its own note has mandated since Phase 23 — `world/ores.js` (100,
+byte-identical PRNG streams; caves is 786 again, still with no room to grow:
+**its next cut is the underground-water/shore-bank passes**). Phase 24 also
+added `world/plants.js` (66) and `render/sky_fx.js` (287) as new files rather
+than growing blocks.js/lighting.js past their states. Two files now sit just
+over the cap and carry the next mandated cuts: `world/emitters.js` (829 after
+the cross-plane emitter — **cut the Phase 19 small-box emitters:
+brewing stand, bars, end frame, end portal**) and `world/blocks.js` (915 —
+**the lookups tail below buildShapeTables is the natural cut**), joining
+`entities/dragon.js` (878, rig cut still outstanding). Phase 23 added two files rather than growing any
 (`world/caverns.js` 297 for the great-cavern pass, `world/fluid_families.js`
 94 for blocks.js's long-mandated fluid cut) and took `world/blocks.js` back
 UNDER the cap for the first time since Phase 21 — it was 908, the deepslate

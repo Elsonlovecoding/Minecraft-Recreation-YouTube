@@ -18,6 +18,10 @@ import {
   SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
+// Phase 24: clouds, stars and the generated sun/moon art live in their own
+// module (render/sky_fx.js) per the size cap — this file keeps the CYCLE
+// that drives them.
+import { createStars, createSunTexture, createMoonTextures } from './sky_fx.js';
 
 // ---------------------------------------------------------------------------
 // Sky dome
@@ -446,25 +450,52 @@ export function computeLightWindow(nbrs) {
 // Day/night cycle
 // ---------------------------------------------------------------------------
 
-// The square sun and moon, children of the sky dome so they follow the
-// camera automatically. Drawn after the dome (renderOrder), depth-tested so
-// terrain still occludes them, and never fogged.
+// The sun and moon, children of the sky dome so they follow the camera
+// automatically. Drawn after the dome (renderOrder), depth-tested so
+// terrain still occludes them, and never fogged. Phase 24: the sun is a
+// generated texture — a square core in a soft additive glow, no hard edge —
+// and the moon carries the eight-phase textures, swapped by setMoonPhase.
 function createCelestials(sky) {
-  const make = (size, color, order) => {
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(size, size),
-      new THREE.MeshBasicMaterial({
-        color, fog: false, toneMapped: false, depthWrite: false,
-      }),
-    );
-    mesh.renderOrder = order;
+  const make = (size, material) => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material);
+    mesh.renderOrder = -1;
     mesh.frustumCulled = false;
     sky.add(mesh);
     return mesh;
   };
+  const sun = make(
+    CELESTIAL.SUN_SIZE * CELESTIAL.SUN_GLOW_SCALE,
+    new THREE.MeshBasicMaterial({
+      map: createSunTexture(),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      toneMapped: false,
+      depthWrite: false,
+    }),
+  );
+  const moonTextures = createMoonTextures();
+  const moon = make(
+    CELESTIAL.MOON_SIZE,
+    new THREE.MeshBasicMaterial({
+      map: moonTextures[0],
+      transparent: true,
+      fog: false,
+      toneMapped: false,
+      depthWrite: false,
+    }),
+  );
+  let moonPhase = 0;
   return {
-    sun: make(CELESTIAL.SUN_SIZE, CELESTIAL.SUN_COLOR, -1),
-    moon: make(CELESTIAL.MOON_SIZE, CELESTIAL.MOON_COLOR, -1),
+    sun,
+    moon,
+    setMoonPhase(phase) {
+      const p = ((phase % moonTextures.length) + moonTextures.length) % moonTextures.length;
+      if (p === moonPhase) return;
+      moonPhase = p;
+      moon.material.map = moonTextures[p];
+      moon.material.needsUpdate = true;
+    },
   };
 }
 
@@ -472,7 +503,7 @@ function createCelestials(sky) {
 // colour), baked-light uniforms, sun/moon positions, and the directional
 // light. Call update(delta, focus) once per frame; focus is the camera
 // position. t convention: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight.
-export function createDayNightCycle({ sky, fog, sun, ambient }) {
+export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
   const frames = DAY_NIGHT.KEYFRAMES.map((k) => ({
     t: k.T,
     zenith: new THREE.Color(k.ZENITH),
@@ -482,23 +513,27 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
     sunLevel: k.SUN_LEVEL,
     skyDarken: k.SKY_DARKEN,
     glow: k.GLOW,
+    stars: k.STARS ?? 0,
+    tint: new THREE.Color(k.TINT ?? 0xffffff),
   }));
-  const maxDarken = Math.max(1, ...frames.map((f) => f.skyDarken));
   const celestials = createCelestials(sky);
+  const stars = createStars(sky);
 
-  const white = new THREE.Color(1, 1, 1);
-  const nightTint = new THREE.Color(LIGHTING.NIGHT_SKY_TINT);
   const horizon = new THREE.Color();
   const sunDir = new THREE.Vector3();
   const lightDir = new THREE.Vector3();
 
   let time = TIME.START_TIME * TIME.DAY_LENGTH_SECONDS;
+  let day = 0; // Phase 24: whole days elapsed — the moon-phase clock
   let lastSkyDarken = 0;
   let dimSky = null; // Phase 15: fixed-sky override while in another dimension
 
   return {
     get timeOfDay() {
       return time / TIME.DAY_LENGTH_SECONDS;
+    },
+    get dayIndex() {
+      return day;
     },
     // Current skylight darkening (0 day .. 11 deep night) — the hostile
     // spawner combines it with baked sky light for the effective level.
@@ -512,8 +547,14 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       return dimSky?.AMBIENT_LIGHT ?? 0;
     },
     // Jump to a day fraction (dev scaffolding: window.__dayNight.setTimeOfDay(0.5))
+    // A real jump BACKWARD wraps into the next day (sleeping through a night
+    // lands in the next morning), so the moon phase advances like vanilla's.
+    // A jump of under 2% of a day doesn't count — re-pinning the clock to
+    // roughly "now" must not spin the moon.
     setTimeOfDay(t) {
-      time = (((t % 1) + 1) % 1) * TIME.DAY_LENGTH_SECONDS;
+      const next = (((t % 1) + 1) % 1) * TIME.DAY_LENGTH_SECONDS;
+      if (next < time - 0.02 * TIME.DAY_LENGTH_SECONDS) day++;
+      time = next;
     },
     // Phase 15 (dimensions): a fixed-sky dimension profile — e.g. config
     // NETHER_SKY: { FOG_COLOR, FOG_NEAR, FOG_FAR, SKY_DARKEN, SKY_TINT } —
@@ -527,13 +568,19 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       dimSky = profile ?? null;
       celestials.sun.visible = !dimSky;
       celestials.moon.visible = !dimSky;
+      clouds?.setVisible(!dimSky);      // no cloud deck under a nether roof
+      if (dimSky) stars.setAlpha(0);    // ...and no stars either
       if (!dimSky) {
         fog.near = SKY.FOG_NEAR;
         fog.far = SKY.FOG_FAR;
       }
     },
     update(delta, focus) {
-      time = (time + delta) % TIME.DAY_LENGTH_SECONDS;
+      time += delta;
+      if (time >= TIME.DAY_LENGTH_SECONDS) {
+        time -= TIME.DAY_LENGTH_SECONDS;
+        day++; // a new day — the moon turns a phase
+      }
       const t = time / TIME.DAY_LENGTH_SECONDS;
 
       // Bracketing keyframes (wrapping past the last one back to the first).
@@ -551,6 +598,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       const sunLevel = a.sunLevel + (b.sunLevel - a.sunLevel) * f;
       const skyDarken = a.skyDarken + (b.skyDarken - a.skyDarken) * f;
       const glow = a.glow + (b.glow - a.glow) * f;
+      const starAlpha = a.stars + (b.stars - a.stars) * f;
       horizon.lerpColors(a.horizon, b.horizon, f);
 
       // Sun orbit: rises east (+x) at t=0, overhead at noon, sets west.
@@ -571,12 +619,14 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       // every point of the cycle.
       fog.color.copy(horizon);
 
-      // Baked-light uniforms: skylight dims (and cools) toward night.
+      // Baked-light uniforms. The skylight TINT rides its own keyframe
+      // channel now (Phase 24): white at midday, warm through dawn and dusk,
+      // cool at night — the light on the terrain agrees with the sky it
+      // stands under at every point of the cycle.
       lastSkyDarken = skyDarken;
       CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = skyDarken;
       CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = 0;
-      CHUNK_LIGHT_UNIFORMS.uSkyTint.value
-        .lerpColors(white, nightTint, skyDarken / maxDarken);
+      CHUNK_LIGHT_UNIFORMS.uSkyTint.value.lerpColors(a.tint, b.tint, f);
 
       // Directional light rides the sun by day, the moon by night.
       lightDir.copy(sunDir);
@@ -590,6 +640,17 @@ export function createDayNightCycle({ sky, fog, sun, ambient }) {
       celestials.sun.lookAt(focus);
       celestials.moon.position.copy(sunDir).multiplyScalar(-CELESTIAL.DISTANCE);
       celestials.moon.lookAt(focus);
+
+      // Phase 24: the star wheel turns with the same orbit and fades with
+      // its keyframe channel; the moon wears the day's phase; the cloud
+      // deck drifts and takes the sky's light.
+      stars.setAngle(ang);
+      stars.setAlpha(dimSky ? 0 : starAlpha);
+      celestials.setMoonPhase(day % CELESTIAL.MOON_PHASES);
+      if (!dimSky) {
+        clouds?.update(delta, focus);
+        clouds?.setLight(sunLevel, horizon);
+      }
 
       // Dimension override (Phase 15): everything above still ran — the
       // clock advanced and the overworld palette stands ready for the

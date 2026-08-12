@@ -12,14 +12,15 @@ import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
   CHUNK_LIGHT_UNIFORMS,
 } from './render/lighting.js';
+import { createClouds } from './render/sky_fx.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
 import { World } from './world/world.js';
 import {
-  BLOCK, isFurnace, isTorch, torchSupportCell, isSolid,
+  BLOCK, isFurnace, isTorch, torchSupportCell, isSolid, blockDef,
   GATE_TOGGLE, DOOR_TOGGLE, DOOR_INFO, TRAPDOOR_TOGGLE, BED_INFO,
-  FACING_DELTA, isSign, isItemFrame, isBed,
+  FACING_DELTA, isSign, isItemFrame, isBed, isCrossPlant, plantCanSitOn,
 } from './world/blocks.js';
 import { createChunkMaterials } from './world/chunks.js';
 import { createFluids } from './world/fluids.js';
@@ -66,10 +67,17 @@ async function init() {
   scene.add(sun.target); // the target must be in the scene for updateSun
   const ambient = createAmbientLight();
   scene.add(ambient);
+  // Phase 24: the vanilla cloud deck — world-anchored (fixed height, drifts
+  // in world space), so it lives in the scene root, not on the sky dome.
+  // The day/night cycle drives its drift and light and hides it in the
+  // fixed-sky dimensions.
+  const clouds = createClouds();
+  scene.add(clouds.mesh);
 
   // Phase 4: the ~20-minute day/night cycle drives the sky palette, fog,
-  // sun/moon, and the baked-light uniforms shared by all chunk materials.
-  const dayNight = createDayNightCycle({ sky, fog: scene.fog, sun, ambient });
+  // sun/moon — and, Phase 24, the clouds, stars and moon phase — plus the
+  // baked-light uniforms shared by all chunk materials.
+  const dayNight = createDayNightCycle({ sky, fog: scene.fog, sun, ambient, clouds });
 
   const atlasTexture = await loadAtlas();
 
@@ -200,6 +208,16 @@ async function init() {
         });
       }
     }
+  });
+  // Phase 24: cross plants pop when their soil goes (the wart.js rule — the
+  // changed cell may be the soil of a plant directly above it). Drops ride
+  // the registry table, so popped short grass still rolls its seeds.
+  world.addBlockListener((x, y, z, id) => {
+    const above = world.getBlock(x, y + 1, z);
+    if (!isCrossPlant(above) || plantCanSitOn(above, id)) return;
+    const def = blockDef(above);
+    world.setBlock(x, y + 1, z, BLOCK.AIR);
+    items.spawnDrops(def.drops, x, y + 1, z);
   });
   let screens;
   // Phase 11 death flow: any open screen closes first (grid and cursor

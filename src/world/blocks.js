@@ -52,6 +52,11 @@ import { buildShapeTables } from './shape_tables.js';
 // shape as shapes.js: it imports nothing from here, this file hands it the
 // id table, so the pair is cycle-free.
 import { buildFluidFamilies } from './fluid_families.js';
+// Phase 24: the cross-plane ground plants (short grass, flowers, dead bush)
+// — the shapes.js pattern again: this file hands it `register` and BLOCK.
+import { registerPlants, isCrossPlant, plantCanSitOn, CROSS_PLANT_TILE } from './plants.js';
+
+export { isCrossPlant, plantCanSitOn, CROSS_PLANT_TILE };
 
 // Numeric block ids. Chunk data is a Uint8Array of these, so keep ids < 256.
 // Append new blocks at the end — never renumber existing ids.
@@ -169,6 +174,12 @@ export const BLOCK = {
   DEEPSLATE_DIAMOND_ORE: 169,
   // Phase 23: clay, in patches on cave floors near underground water.
   CLAY: 170,
+  // Phase 24: ground vegetation — cross-plane plants (two DoubleSide quads
+  // in an X, alpha-cutout, no collision, no light attenuation). Atlas 65-68.
+  SHORT_GRASS: 171,
+  DANDELION: 172,
+  POPPY: 173,
+  DEAD_BUSH: 174,
 };
 
 export const BLOCKS = [];
@@ -620,6 +631,9 @@ registerWaterFlow(BLOCK.WATER_FALL, 'water_fall');
 // Phase 21 building blocks (world/shapes.js) — registered here so their ids
 // keep their place in the one registration order.
 registerBuildingBlocks(register, BLOCK);
+
+// Phase 24 ground plants (world/plants.js) — same pattern.
+registerPlants(register, BLOCK);
 
 Object.freeze(BLOCKS);
 Object.freeze(BLOCK);

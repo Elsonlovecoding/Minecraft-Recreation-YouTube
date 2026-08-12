@@ -21,7 +21,8 @@ import {
   BLOCK, blockDef, blockIdByName, placementVariant, PLANTABLE, isSolid,
   SLAB_FAMILY_OF, SLAB_ITEM_FAMILIES, DOOR_INFO, DOOR_UPPER_BY_FACING,
   BED_INFO, BED_HEAD_BY_FACING, FACING_DELTA, isBed, isSign, isItemFrame,
-  isDoor, LADDER_BY_FACING, SIGN_IDS, isClimbable,
+  isDoor, LADDER_BY_FACING, SIGN_IDS, isClimbable, isCrossPlant,
+  plantCanSitOn,
 } from '../world/blocks.js';
 import { particles } from '../render/particles.js';
 import { audio, blockSoundGroup } from '../systems/audio.js';
@@ -39,10 +40,11 @@ function placedFeedback(x, y, z, id) {
   );
 }
 
-// A cell a new block may replace: air and fluids only (shared with the
-// bucket actions).
+// A cell a new block may replace: air, fluids and — Phase 24 — the cross
+// plants (vanilla: placing into tall grass replaces it, no drop). Shared
+// with the bucket actions, so poured water also displaces a plant.
 export function isReplaceable(id) {
-  return id === BLOCK.AIR || blockDef(id).fluid;
+  return id === BLOCK.AIR || blockDef(id).fluid || isCrossPlant(id);
 }
 
 // Would a block at cell (x, y, z) overlap the player's AABB? feet is the
@@ -71,8 +73,22 @@ export function createPlacement({
   const supportedFrom = (x, y, z) => isSolid(world.getBlock(x, y - 1, z));
 
   function tryPlace(hand) {
-    const target = getTarget();
+    let target = getTarget();
     if (!target) return false;
+    // Phase 24: aiming AT a cross plant places INTO its cell — vanilla's
+    // replaceable-block rule. The effective click becomes the soil under
+    // the plant with its top face, so the support rules test the real
+    // ground and the destination lands on the plant's own cell (which
+    // isReplaceable then lets the new block displace). Without this, the
+    // raycast stops on the plant (hardness 0 = targetable) and a block
+    // aimed at a grass tuft would float one cell ABOVE it.
+    if (isCrossPlant(target.id)) {
+      target = {
+        x: target.x, y: target.y - 1, z: target.z,
+        id: world.getBlock(target.x, target.y - 1, target.z),
+        face: [0, 1, 0],
+      };
+    }
     const [fx, fy, fz] = target.face;
     if (fx === 0 && fy === 0 && fz === 0) return false; // ray started inside it
     const name = hand.name;
@@ -102,8 +118,14 @@ export function createPlacement({
     if (!isReplaceable(world.getBlock(x, y, z))) return false;
     // Torches can't stand in a fluid (vanilla) — the generic rule lets
     // blocks displace fluid cells, but a torch would burn underwater and
-    // silently delete the source.
-    if (id === BLOCK.TORCH && world.getBlock(x, y, z) !== BLOCK.AIR) return false;
+    // silently delete the source. Plants are the same (Phase 24): both may
+    // displace a cross plant (the replaceable rule above lands them on its
+    // cell), but never a fluid.
+    const dst = world.getBlock(x, y, z);
+    if (
+      (id === BLOCK.TORCH || isCrossPlant(id)) &&
+      dst !== BLOCK.AIR && !isCrossPlant(dst)
+    ) return false;
     // Walk-through shapes (ladders, signs, frames) never block the player,
     // so they may be placed in the player's own cell — everything else may
     // not.
@@ -126,6 +148,11 @@ export function createPlacement({
     }
     if (SIGN_IDS.stand.includes(placed) && !supportedFrom(x, y, z)) return false;
     if (placed === BLOCK.FLOWER_POT && !supportedFrom(x, y, z)) return false;
+    // Phase 24 — plants need their soil: grass or dirt (dead bush also sand).
+    if (
+      isCrossPlant(placed) &&
+      !plantCanSitOn(placed, world.getBlock(x, y - 1, z))
+    ) return false;
 
     // --- two-cell pieces ----------------------------------------------------
     if (isDoor(placed)) {

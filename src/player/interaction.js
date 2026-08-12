@@ -23,7 +23,7 @@
 
 import * as THREE from 'three';
 import {
-  PLAYER, INTERACTION, ITEMS, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
+  PLAYER, INTERACTION, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
   STATS, MOBS, SHIELD, AUDIO,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, PLANTABLE } from '../world/blocks.js';
@@ -420,26 +420,12 @@ export function createInteraction({
     mineSoundTimer = 0; // the next dig ticks on its first frame
   }
 
+  // Phase 24: the drop-table roll lives on the item manager (items.spawnDrops
+  // — chance / [min,max] counts / fallback semantics per world/blocks.js),
+  // shared with world/wart.js and main.js's plant-pop listener so the three
+  // sites can never drift apart again.
   function spawnDrops(def, x, y, z, drops = def.drops) {
-    // chance entries roll independently; `fallback: true` entries drop only
-    // when no chance entry succeeded (registry doc in world/blocks.js —
-    // vanilla-style exclusive drops like gravel's flint-or-gravel).
-    let chanceDropped = false;
-    for (const drop of drops) {
-      if (drop.fallback && chanceDropped) continue;
-      if (drop.chance !== undefined) {
-        if (Math.random() >= drop.chance) continue;
-        chanceDropped = true;
-      }
-      const count = Array.isArray(drop.count)
-        ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
-        : drop.count;
-      if (count > 0) {
-        items.spawn(drop.item, count, {
-          x: x + 0.5, y: y + ITEMS.DROP_SPAWN_Y_OFFSET, z: z + 0.5,
-        });
-      }
-    }
+    items.spawnDrops(drops, x, y, z);
   }
 
   function finishBreak() {

@@ -15,7 +15,138 @@ into the End, destroy the crystals, kill the Ender Dragon, and step through
 the activated exit portal to the victory screen. The SPEC's success test is
 met end to end.
 
-Phase last completed: **Phase 23 — POLISH: deepslate and the underground.**
+Phase last completed: **Phase 24 — POLISH: terrain, sky and ground vegetation.**
+
+The overworld reads like Minecraft now: rivers wind to the sea, mountains
+are grassy with bare stone only up high and on cliffs, clouds drift over a
+sky that moves through a real day, and the ground is alive with grass and
+flowers.
+
+RIVERS (`world/terrain.js`, `TERRAIN.RIVERS`) — the zero-contours of one
+low-frequency field press the heightmap down below sea level with a
+parabolic bed and eased banks, and the normal sea fill makes them water.
+Contours of a continuous field cannot simply stop — they loop or run into
+terrain that is already underwater — which is what makes every river
+CONTINUOUS and CONNECTED to lakes and oceans by construction, not by luck.
+Verified by rendering a 768x768 surface map from the real generator: every
+river in view winds, forks around an oxbow, and ends in open water.
+
+SURFACE RULES (`world/terrain.js` surfaceLayersFor, rewritten) — sand now
+requires actual water: a near-sea column turns beach only when a column
+within `SURFACE.BEACH.REACH` is underwater, so a plain that happens to sit
+at y 62 stays grass (the old rule turned it into a sand flat). Deserts are
+unchanged. Mountain surfaces stopped switching to stone at one fixed
+height: bare stone appears only above a noise-jittered STONE LINE
+(`SURFACE.STONE_LINE`) or on faces steeper than `STEEP_DROP` — measured
+over 320x320: mountain-biome surface is 57% grass / 26% stone, where the
+old rule left whole ranges bald. Gravel patches (`SURFACE.GRAVEL`) break up
+beaches and riverbeds; underwater floors are sandy in the shallows and
+dirt/gravel below.
+
+BIOME EDGES — the climate and mountain-region fields are sampled at
+DOMAIN-WARPED coordinates (`TERRAIN.BIOME_WARP`, ±34 blocks of push), so
+boundaries wander irregularly, and the surface dither band widened 0.2 →
+0.35. Tree spacing stopped being uniform: a density field
+(`TREES.DENSITY_FIELD`, 0.15x-1.85x) gives forests glades and thickets,
+and a height field biases trunks so groves of tall trees stand together.
+Occasional SURFACE LAVA POOLS (`TERRAIN.SURFACE_LAVA`) dig closed basins
+into flat mountain/desert ground — rim above the lava by construction, so
+the fluid settle pass cannot spread them (verified: 8/8 sampled pools have
+zero leak adjacencies).
+
+SKY (`render/sky_fx.js` — new; `render/lighting.js` drives it) — CLOUDS:
+the vanilla flat blocky deck at y=192, one merged mesh of greedy-run quads
+over a hashed blob pattern (period 1152 blocks, 2x2-tiled so it re-anchors
+around the camera in whole periods — never a visible jump), drifting
+steadily along -x, slightly transparent, darkening with the sky and
+blushing at dawn (colour maths in sRGB — the first night screenshot caught
+the linear-space version rendering a 0.28 grey as a 0.57 sheet). The SUN
+is a square core inside a soft additive glow (one generated texture — no
+hard edge); the MOON shows the eight vanilla phases from generated
+square-moon textures, one phase per in-game day (the cycle now counts
+days; sleeping through a night advances the phase). STARS fade in through
+dusk and out through dawn on their own keyframe channel and wheel with the
+sun's orbit. A new per-keyframe TINT channel drives the skylight uniform —
+white at noon, warm at dawn/dusk, cool at night — so the light ON the
+terrain agrees with the sky it stands under; fog stays horizon-matched as
+before. All verified by screenshot through the full cycle.
+
+GROUND VEGETATION (`world/plants.js` — new, the shapes.js registration
+pattern; atlas 65-68) — short grass, dandelions, poppies and dead bushes
+as CROSS-PLANE blocks: a new mesher path (`emitCross`, world/emitters.js)
+renders two DoubleSide quads in an X in the alpha-cutout pass, endpoints
+sqrt(2)/4 in from the corners so the art never stretches, nudged
+off-centre per position. Never face-culled (nothing is flush), never
+culls neighbours (transparent), opacity 0 (light passes through — the
+skylight heightmap ignores them), no collision (`solid: false` empties
+the box list), lit flat by their own cell like the wart. Generation:
+grass in noise-field patches scaled per biome, flowers rarer and
+CLUSTERED (a threshold field gates where, a coarse hash picks
+dandelion-vs-poppy per patch so meadows lean yellow or red), dead bushes
+speckling desert sand. Rules: instant break, no tool wear; short grass
+drops seeds 1/8 (the shipped wheat_seeds art — flowers and bushes drop
+nothing, per the brief); popped when their soil goes (a wart.js-style
+listener, drops still roll); placeable on grass/dirt (dead bush also
+sand); REPLACEABLE — placing a block or pouring a bucket into a plant
+cell displaces it like vanilla. Mob spawning/pathfinding unaffected
+(both test `solid`). Meshing cost measured UNCHANGED: 13.9 vs 13.7
+ms/chunk baseline over the same 49 chunks; generation 4.5 ms/chunk.
+
+THE TWO REPORTED BUGS —
+(1) "deepslate does not generate": the code was measured CORRECT, live.
+In the running browser game, every cell in y[-30,-10] over 41x41 columns
+at spawn is deepslate or a deepslate ore (9188 cells, zero stone, zero
+regular ores), and the node harness shows 100.00% deepslate purity below
+y=-9 across three seeds. The report's screenshot could not have come from
+this code — a stale cached deployment (the atlas and modules cache hard)
+is the only consistent explanation. See the Known broken note.
+(2) "large lava bodies at Y-13": REAL, and Phase 23's fix genuinely
+missed it — its census measured GENERATED cells, but the fluid settle
+scan then grew every open-rimmed 8-cell pool into a flow apron up to 9
+cells across (the same measured-the-wrong-quantity trap as Phase 10,
+recorded again). Pools above the lakes are now RECESSED basins dug INTO
+the cave floor (`_floodContainedPool`, world/caves.js): solid rock on
+every side, open only above, erosion-verified per pool, so the automaton
+never touches them. Measured over 256x256: 148 contained pool cells + 8
+single-block wall springs above y=-54, ZERO cells with air below or
+beside — what generates is exactly what the player finds. Spring chance
+also halved.
+
+Also: the ARCHITECTURE cap work — `world/ores.js` (the vein passes,
+caves.js's long-mandated cut, byte-identical streams) and
+`world/terrain_noise.js` (terrain's seeded 2D noise, moved verbatim) split
+out the same session that grew their parents; `world/plants.js` and
+`render/sky_fx.js` landed as new files. `world/emitters.js` (829) and
+`world/blocks.js` (915) now carry the next mandated cuts (see
+ARCHITECTURE.md).
+
+THE REVIEW ROUND — a full-diff review before shipping surfaced eight real
+issues, all fixed and re-verified the same session:
+- AIMING AT A PLANT now places INTO its cell (vanilla's replaceable rule).
+  The raycast stops on the tuft (hardness 0 = targetable), so the naive
+  face-offset floated blocks one cell ABOVE the grass; placement and the
+  bucket path both synthesize the click down to the soil now. Verified
+  through the real right-click path in the browser: dirt aimed at a tuft
+  lands in the tuft's cell, nothing floats.
+- The STARFIELD covers the full sphere (COUNT 420→800). The first cut
+  seeded only the upper band, and since the wheel turns 360° per day the
+  empty cap swept across the visible sky — half-starless at midnight.
+- Surface lava pools PLUG their rim ring at pool level where a cave or
+  ravine pierced it — the one remaining way the settle scan could pour a
+  pool into a cave.
+- Flowers are OBTAINABLE via shears (hand-breaking still drops nothing,
+  per the brief); their items and placement rules were dead code.
+- ONE drops roller: `items.spawnDrops` (chance / [min,max] / fallback) —
+  interaction.js, wart.js and the plant-pop listener all call it; there
+  were three diverging copies.
+- Dead config removed (PLANTS.SEED_DROP_CHANCE — the chance lives in the
+  drop table; CELESTIAL.SUN_COLOR/MOON_COLOR), the night keyframes
+  reference LIGHTING.NIGHT_SKY_TINT instead of repeating its hex, and
+  placePlants gates flowers on the cheap hash before the fbm field.
+
+---
+
+Previous phase: **Phase 23 — POLISH: deepslate and the underground.**
 
 The deep world now looks and mines like the deep world, and the caves
 finally have rooms in them.
@@ -314,6 +445,42 @@ normal flood fill), and the mandated ui/screens.js split
 
 ## Working
 
+- **Phase 24 rivers** — `TERRAIN.RIVERS` in `world/terrain.js`
+  heightFromWeights: |field| < width presses the height toward a bed below
+  sea level (parabolic profile, eased banks, width varied by a second
+  field), min() only — never raised — so channels join any water they
+  cross. Ocean-shield already keeps caves from draining them.
+- **Phase 24 surface rules** — `surfaceLayersFor(x, z, biome, height)`:
+  underwater floors (shallow sand / deep dirt, gravel-patched), beach only
+  within `SURFACE.BEACH.REACH` of real water, desert unchanged, mountain
+  stone by `SURFACE.STONE_LINE` + `STEEP_DROP` (slope from the 4-neighbour
+  heights through the `_hCache` memo), grass otherwise.
+- **Phase 24 biome warp + tree fields** — `TERRAIN.BIOME_WARP` domain-warps
+  the climate/region sampling; `TREES.DENSITY_FIELD`/`HEIGHT_FIELD` vary
+  spacing and trunk height inside a biome.
+- **Phase 24 surface lava pools** — `TERRAIN.SURFACE_LAVA`: one hashed
+  candidate per 112-block region tile, mountains/desert only, flat ground,
+  closed-basin by construction (level = lowest footprint column - 1, rim
+  relief-checked); trees/cacti/plants skip footprints via `_surfacePoolAt`.
+- **Phase 24 contained cave lava** — `_floodContainedPool`
+  (`world/caves.js`): pools above `LAKE_MAX_Y` dig INTO flat cave floors,
+  erosion-guaranteed to have no air below or beside any cell, so the fluid
+  settle scan never grows them. Measured: 148 contained cells + 8 springs
+  per 256x256 above y=-54, zero leaks.
+- **Phase 24 cross-plane plants** — `world/plants.js` (registrations, soil
+  rules) + `emitCross` (`world/emitters.js`, dispatched via `CROSS_TILE`
+  before the generic cube path) + `placePlants` (`world/terrain.js`).
+  Instant break, seeds 1/8 from short grass, popped by the main.js soil
+  listener, placeable on grass/dirt (bush also sand), replaceable by
+  placement and buckets, sprite items via `ATLAS_SPRITE_ITEMS`, grass
+  sound group. Meshing measured at baseline cost.
+- **Phase 24 sky** — `render/sky_fx.js`: `createClouds` (merged blocky
+  deck, period re-anchoring, drift, sRGB-correct day/night light),
+  `createStars` (keyframed alpha, orbit-wheeled), `createSunTexture`
+  (square core + additive glow), `createMoonTextures` (8 phases).
+  `createDayNightCycle` gained a day counter (`dayIndex`), the STARS and
+  TINT keyframe channels, and drives all of it; both hide under the
+  fixed-sky dimensions. Fog stays horizon-matched.
 - **Phase 23 deepslate** — `world/terrain.js` `deepslateChance` +
   `UNDERGROUND.DEEPSLATE`, blocks 163-169, atlas 58-64. Below `TOP_Y` (0) the
   column fill's stone becomes deepslate, blended over the band to `FULL_Y`
@@ -3802,10 +3969,22 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._ All three Phase 22 follow-up reports are closed (the
-sprint/footstep sound, audio not pausing with the game, the too-small potion
-indicator), as are the four Phase 23 underground items — see the Phase 23
-status entry and the measurements in the Notes below.
+_Nothing known broken._ The two Phase 23 follow-up reports are closed — see
+the Phase 24 status entry: the lava one was real (the settle scan grew the
+generated pools; pools are contained basins now, measured), and the
+deepslate one could not be reproduced against this code by ANY measurement,
+including in the live browser game. On that one, worth stating plainly:
+
+- **The deepslate report describes a world this code cannot generate.** At
+  y=-13.6 this generator has produced 100.00% deepslate (with deepslate
+  ores) in every measurement: three seeds in the node harness, and the
+  actual running game in Chromium (9188/9188 non-air cells deepslate-family
+  in y[-30,-10] at spawn). The strongest hypothesis is a STALE BUILD on the
+  player's side — browsers cache ES modules and the atlas PNG hard, and a
+  GitHub Pages deploy can lag a merge. If it recurs: hard-refresh
+  (Ctrl+Shift+R), and check `TIME`/`CHUNKS` in the debug HUD plus
+  `window.__BLOCK.DEEPSLATE` in the console — it is `163` on current code
+  and `undefined` on anything older than Phase 23.
 
 The one thing worth flagging for the next session is not a break but a
 CAVEAT on what "verified" means here: the cavern, ore, lava and water numbers
@@ -3854,6 +4033,42 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
+- **Phase 24 APIs.** `world/plants.js`: `isCrossPlant(id)` /
+  `plantCanSitOn(plantId, soilId)` are the predicates every plant rule
+  reads; add a plant by registering it there and adding its tile to
+  `CROSS_PLANT_TILE` — the mesher (`CROSS_TILE`), items
+  (`ATLAS_SPRITE_ITEMS`, add manually), and placement all key off those.
+  `__dayNight.dayIndex` is the moon clock; `setTimeOfDay` counts a backward
+  jump > 2% of a day as a day wrap (sleeping advances the phase; re-pinning
+  the clock in a test does not). Clouds live in the scene root
+  (`clouds.mesh`) and are driven — drift, light, visibility — entirely from
+  `createDayNightCycle`.
+- **The cloud/star materials must stay sRGB-aware.** Three stores material
+  colours LINEAR and converts on output; a brightness computed in linear
+  reads ~2x too bright on screen (the first night screenshot showed a
+  mid-grey cloud sheet over a deep-navy sky — `setLight` now converts both
+  ways). Same trap as the Phase 22 particle colours; third time it bites,
+  put a helper somewhere shared.
+- **Measuring the fluid AFTERMATH, not just generation.** The lava lesson,
+  twice now: a generation census cannot see what `world/fluids.js` does on
+  settle. The scratch harness pattern that finally caught it: generate a
+  region, then for every fluid cell ask "does it have AIR below or beside"
+  — any yes is a cell the automaton WILL grow. Zero is the only passing
+  score for something meant to be static.
+- **Rendering a surface map beats screenshots for terrain tuning.** The
+  rivers/beaches/stone-line were all tuned from a 768x768 top-view PNG
+  rendered straight from the generator in node (colour per top block +
+  hillshade) — one look showed river connectivity, beach reach and biome
+  blending at once. The GPU-less browser can't give you that view.
+- **Browser-harness notes.** `__player.toggleFly()` works headless (the F4
+  path needs pointer lock, the method doesn't); `body.position` is a plain
+  {x,y,z} — assign fields, don't `.set()`; hide `#lock-hint` before
+  screenshots. Sky shots want the camera parked at y≈140 in fly mode.
+- The 60fps target is still unmeasured in this environment (SwiftShader,
+  no GPU — the Phase 23 caveat stands). What IS measured: generation 4.5
+  ms/chunk, meshing 13.9 vs 13.7 ms/chunk baseline in node — the plant
+  quads are noise. If a real-GPU session ever profiles the game, clouds
+  are one draw call and the starfield one Points draw.
 - **Great caverns are placed, not sampled — do not "tune" them back into a
   noise field.** `world/caverns.js` exists because three phases proved the
   noise-threshold approach cannot make a room: at a threshold high enough to
@@ -4358,3 +4573,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 21 | **Polish: the building set.** Gold tools + hoes in five tiers, the shield (raise to negate frontal melee/arrows/blasts), craftable shears (sheep AND leaf blocks). Stairs and slabs in five materials, fences, fence gates, cobblestone walls, ladders, doors, trapdoors, beds, signs, bookshelves, item frames, flower pots — every one a REAL SHAPE from ONE box table (`world/shapes.js` + `world/shape_tables.js`) that feeds both the mesher's new generic `emitShape` and the collision sweeps, so fences really are 1.5 tall and slabs really are half height. Ladders climb at the vanilla 2.35 b/s; doors/gates/trapdoors toggle; beds set spawn and skip the night; signs take four lines of text on placement. Charcoal from any log (fuel + torches), stone bricks, sandstone, the four block forms both ways, books from leather. The six reported bugs: water bucket placement hardened + regression-tested, the End fight's per-frame cost cut to ~0.1ms (preallocated hitboxes behind a ray reject, one shared crystal material, cached blast targets, chunk-local pillar tests), the purple boss bar, the dragon now GRIPPING the fountain with its head craned down, the island 102-118 across with vanilla 14-40 pillars (HEAL.RANGE 40->30), and WATER FLOW on the lava automaton with both fluids rendering at partial height on their own scrolling texture. Five ARCHITECTURE cuts: systems/arrows.js (mandated since Phase 17), player/placement.js, player/body.js, world/shapes.js + world/shape_tables.js. 88 automated checks green, zero console errors, screenshot-verified. | dragon.js (878) and blocks.js (908) over the cap with their cuts mandated; rivers; sounds; no upside-down/corner stairs, no door hinges, no sign font |
 | 22 | **Polish: particles and sound.** `render/particles.js` — ONE pooled, capped, allocation-free particle simulation in TWO instanced draw calls (textured cubes cropped from a block's own atlas tile; flat coloured cubes), struct-of-arrays state, spawn-time light tint and distance cull, gated block collision, sRGB-decoded colours: block break/place, footstep scuffs and landing bursts tinted to the block underfoot, water splash + bubble trail, lava embers and pops, expanding explosion smoke/debris/flash, red damage hits, death puffs, pickup sparkles, end-portal swirls, enderman blink columns, torch and glowstone flicker. `systems/audio.js` — the WHOLE game's sound synthesised with the Web Audio API (no files): one context, layered 2-4 voice sounds, a bus compressor, distance falloff + stereo pan, a voice budget, per-material footstep/break/place/mining timbres, hurt/death, swing/hit, bow draw/release/impact, hiss/boom/shriek/crackle/warp, splash/bubble/lava pop, pickup, the victory chime, looping water/lava/portal ambience and underground cave tones; combat.js and portals.js gave up their private WebAudio for it. `systems/ambience.js` — footsteps/landing/splash/bubbles plus vanilla's randomDisplayTick. Measured 0.16ms/frame at 1900 particles, 0.25ms/frame for particles + ambience together in a busy scene, 0.30ms in the creeper-beside-lava worst case. The six reported bugs: the MAGENTA boss bar shown by ARRIVING in the End (not by the fight's first tick), water buckets placing through a fluid-aware ray (aiming at water used to no-op) with flow re-verified 7 cells/step-lower/fills/falls, golden apples granting Absorption II — 4 yellow hearts for 2:00 — plus 5s of Regeneration II, with a HUD row above the health hearts that empties first, and the potion-effect indicator shrunk to vanilla's small top-right icon + countdown, held non-tool items un-mirrored (blocks measured identical to the mesher and left alone), ender pearls as a real thrown projectile that teleports for 2.5 hearts, and thrown eyes of ender drawing through terrain. 50 automated browser checks green, zero console errors, screenshot-verified. | Rivers (the last unbuilt SPEC feature); dragon.js (878) and blocks.js (908) still over the cap with their mandated cuts; particles are cubes not billboards and are lit once at spawn; no music; no XP so "level-up" rides the victory |
 | 23 | **Polish: deepslate and the underground.** Deepslate below y=0 (`world/terrain.js`), blended over the band to y=-8 by a per-block hash roll so the transition is speckled rather than a plane — hardness 3.0 (2x stone), dropping cobbled deepslate, with all five ores taking their deepslate variant in it (blocks 163-169, atlas 58-64) and cobbled deepslate accepted as a stone crafting material (furnace, brewing stand, the five stone tools). **GREAT CAVERNS** (`world/caverns.js` — new): the fourth attempt at big caves and the first that works, because it stops sampling noise and PLACES them — 224-block regions, 72% each, hashed centre/radii/height, a superellipsoid body (y exponent 3.2 = a room, not a lens) warped by a 3D field, a mid-level shelf slab for the ledges and drops, and two climbing connector bores into the tunnel network. Verified: 5 chambers per 512x512 (one per ~229 blocks), 32-56 across and 20-40 tall, 5/5 reachable by flood fill from open sky, 38x51x36 of open space measured in the running game. Lava above -54 rebuilt as placed pools (a few seeded sites per chunk flooding ≤8 floor cells below y=-12, plus rare wall springs) after the Phase 10 mask flooded whole cave floors: 464 → 27 cells per 100x100 columns. Underground water springs and puddles, waterfalls down cavern walls, gravel/clay banks beside them (clay's tile generated at boot, like the item art; the frame-with-eye tile moved to 69 since the new atlas overwrote 58). Ore distribution re-measured PER SOLID BLOCK inside each SPEC band — coal 3.49 / iron 3.15 / redstone 1.79 / gold 1.14 / diamond 0.67 per 1000 — and diamond is 1 per 572 at y-59..-50, about 6 exposed in 10 minutes of strip mining even at deepslate's doubled hardness. The three reported bugs: footsteps rebuilt as pure noise with halved decays and no sprint volume boost (the 150→90 Hz sine glide under every step WAS the "strange, unnatural" sprint noise), a `lowpass` on `tone()` taming every sawtooth/square voice, a dedicated landing sound; `audio.setPaused()` suspending the whole AudioContext on pause (verified running→suspended→running, sounds refused while paused); the potion indicator doubled to 48px with a 20px countdown. Two ARCHITECTURE cuts, one of them the long-mandated `world/fluid_families.js` out of blocks.js (901 now — under the cap for the first time since Phase 21). 69-module import smoke + 33 registry/crafting/fluid checks + the generation survey + a Chromium end-to-end run, zero console errors. | Rivers (the last unbuilt SPEC feature); `entities/dragon.js` (878) is now the only file over the cap, its rig cut still mandated; `world/caves.js` at 786 has no room left (ore/vein passes are its next cut); framerate UNMEASURED this phase (no GPU in the sandbox — generation cost was measured directly and is unchanged); the atlas's four new plant tiles (65-68) are unused, no ground plants were added |
+| 24 | **Polish: terrain, sky and ground vegetation.** RIVERS (the last unbuilt SPEC feature): zero-contours of a low-frequency field press the heightmap below sea level (parabolic bed, eased banks, width varied along the run) so every channel is continuous and joins open water by construction — verified on a 768x768 surface map rendered from the real generator. Surface rules rewritten: beach sand only within reach of actual water, underwater floors sandy-then-dirt with gravel patches (riverbeds and beaches both), mountain bare stone only above a noise-jittered stone line or on ≥3-block cliff faces (measured 57% grass / 26% stone on mountain surfaces), domain-warped biome sampling (±34 blocks) + a wider dither band for irregular edges, tree density/height FIELDS for glades, thickets and groves, and occasional closed-basin surface lava pools in mountains/deserts. SKY: the vanilla blocky cloud deck at y=192 (one merged mesh, hashed blob pattern, period re-anchoring, steady -x drift, sRGB-correct day/night light), the sun rebuilt as a square core in a soft additive glow, the moon given the eight phases from generated textures (the cycle counts days now; sleeping advances the phase), a starfield wheeling on the sun's orbit fading through dusk/dawn on its own keyframe channel, and a keyframed skylight TINT (white noon / warm dawn-dusk / cool night) so terrain light agrees with the sky; fog stays horizon-matched. GROUND VEGETATION (atlas 65-68, finally used): short grass, dandelions, poppies, dead bushes as CROSS-PLANE blocks — a new mesher path (two DoubleSide X-quads, cutout pass, width-true diagonals, per-position nudge), no collision, no light attenuation, never culled; grass in per-biome noise patches, flowers rarer and clustered by colour, bushes on desert sand; instant break (seeds 1/8 from grass only), popped when their soil goes, placeable on grass/dirt, replaceable by blocks and buckets, flat sprite items. The TWO reported bugs: shallow lava was REAL — Phase 23 measured generated cells but the settle scan grew every open-rimmed pool into an apron; pools are now recessed erosion-verified basins (148 contained cells + 8 springs per 256x256, ZERO leak adjacencies). Deepslate was measured correct everywhere including the live browser game (9188/9188 deepslate-family cells at spawn depth; 100.00% purity below y=-9 across three seeds) — the report matches a stale cached build, with a console check recorded in Known broken. Splits: world/ores.js (caves.js's mandated vein cut, byte-identical streams), world/terrain_noise.js, world/plants.js, render/sky_fx.js. Generation 4.5 ms/chunk, meshing 13.9 vs 13.7 baseline, boots in Chromium with zero console errors, screenshot-verified through the full day cycle. | emitters.js (829) and blocks.js (915) over the cap with cuts mandated (small-box emitters; the lookups tail); dragon.js rig cut still outstanding; framerate unmeasured again (no GPU — generation/meshing measured directly instead); flowing water stops at plant cells instead of washing them away; the crack overlay and target outline are full-cube on plants (torch precedent); clouds are flat quads, not the fancy 4-thick boxes |

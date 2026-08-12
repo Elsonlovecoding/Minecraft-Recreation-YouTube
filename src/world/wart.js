@@ -21,18 +21,10 @@ export function createWart({ world, items }) {
     WART.GROW_MIN_SECONDS +
     Math.random() * (WART.GROW_MAX_SECONDS - WART.GROW_MIN_SECONDS);
 
-  // Registry drop roll for a popped wart (the same chance/count semantics
-  // mining uses; wart tables are plain count entries).
+  // Registry drop roll for a popped wart — the shared roller on the item
+  // manager (Phase 24), same semantics mining uses.
   function dropWart(def, x, y, z) {
-    for (const drop of def.drops) {
-      if (drop.chance !== undefined && Math.random() >= drop.chance) continue;
-      const count = Array.isArray(drop.count)
-        ? drop.count[0] + Math.floor(Math.random() * (drop.count[1] - drop.count[0] + 1))
-        : drop.count;
-      if (count > 0) {
-        items.spawn(drop.item, count, { x: x + 0.5, y: y + 0.25, z: z + 0.5 });
-      }
-    }
+    items.spawnDrops(def.drops, x, y, z);
   }
 
   // Block listener: growing stages register a timer, anything else clears
