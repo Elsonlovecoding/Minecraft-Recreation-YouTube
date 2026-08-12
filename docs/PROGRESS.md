@@ -68,6 +68,19 @@ All landed and measured; the game remains complete and shippable.
   Nearest-filtered, so the magnified gradient stair-stepped. The sun is a
   ROUND disc now (256px, linear-filtered) whose glow is windowed to reach
   exactly zero before the rim. The moon keeps its vanilla pixel square.
+- **Render distance 20 -> 30 chunks (480 blocks) (third follow-up
+  request).** Fog out to 180/520. Measured: 2821 meshed chunks, 6665
+  draws, 14.2M triangles, 1224 MB geometry + 780 MB chunk data — a ~2 GB
+  resident footprint that wants a discrete GPU and 16 GB of system memory;
+  the r=8/12/20/30 cost table sits beside the number in config.js. The
+  cloud deck's re-anchor guarantee (coverage to at least 576 blocks out)
+  still clears the 480-block view. The e2e harness's forced ring-fill was
+  capped at a fixed 12 chunks — spawn attempts land 24-96 blocks out, so
+  that covers every attempt with lit chunks without asking the GPU-less
+  sandbox browser for gigabytes.
+- **A readable day clock (third follow-up request).** The debug HUD's
+  TIME line shows minutes into the day now — "TIME 12:41 / 20:00 (night)"
+  — instead of the raw day fraction; 10:00 is sunset.
 - **A half-and-half day (second follow-up request).** The 20-minute cycle
   now splits exactly 10 minutes of day and 10 of night: the sun is above
   the horizon for t 0-0.5 (as it always was, by the orbit maths) and the

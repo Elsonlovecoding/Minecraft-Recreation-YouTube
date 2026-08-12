@@ -205,25 +205,27 @@ export const CHUNK = {
   HEIGHT: 384,            // overworld world height (MAX_Y - MIN_Y)
 };
 
-// RENDER DISTANCE. Phase 25 went 8 -> 12; the follow-up went 12 -> 20 (320
-// blocks) by request — "render further, at least 20+ chunks". This is THE
-// knob to turn for performance: everything below scales with its square.
+// RENDER DISTANCE. Phase 25 went 8 -> 12; the follow-ups went 12 -> 20 and
+// then 20 -> 30 (480 blocks) by request. This is THE knob to turn for
+// performance: everything below scales with its square.
 //
 // Measured off the real generator+mesher (node) so the trade is a number
 // rather than a hope:
 //        r=8   197 meshed chunks    453 draws   0.91M tris    79 MB geometry +  71 MB chunk data
 //        r=12  441 meshed chunks    973 draws   2.03M tris   174 MB geometry + 143 MB chunk data
 //        r=20  1257 meshed chunks  2968 draws   6.44M tris   554 MB geometry + 364 MB chunk data
-// A 70° lens sees roughly a quarter of the ring at a time, so r=20 draws on
-// the order of 750 calls and 1.6M triangles per frame — fine for a discrete
-// GPU and workable on recent integrated graphics; the real cost is the
-// ~920 MB resident footprint, which needs a machine with memory to spare.
-// Drop to 12 (a vanilla-default ~320 MB) or 8 on a weaker machine. Filling
-// the ring costs ~19 s of CPU (measured: 1849 chunks generated at 5.2 ms,
-// 1257 meshed at 7.3 ms), which the 8 ms-per-frame streaming budget spreads
-// over ~40 s of play at 60fps, nearest-first.
+//        r=30  2821 meshed chunks  6665 draws  14.23M tris  1224 MB geometry + 780 MB chunk data
+// A 70° lens sees roughly a quarter of the ring at a time, so r=30 draws on
+// the order of 1700 calls and 3.6M triangles per frame — that wants a real
+// discrete GPU, and the ~2 GB resident footprint wants 16 GB of system
+// memory with a 64-bit browser. This is an enthusiast setting by explicit
+// request; drop to 20 (~920 MB), 12 (a vanilla-default ~320 MB) or 8 on
+// lesser machines. Filling the ring costs ~38 s of CPU (measured: 3969
+// chunks generated at 5.1 ms, 2821 meshed at 6.4 ms), which the
+// 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
+// nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 20,    // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 30,    // chunks loaded/rendered around the player
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -2019,11 +2021,12 @@ export const SKY = {
   MID_STOP: 0.35,                 // where the mid stop sits in dome height 0..1
   // Fog is matched to the horizon colour so terrain fades into the sky.
   // Pushed out with each render-distance raise (40/140 for 128 blocks,
-  // 72/208 for 192, 120/346 for 320) — the same fraction of the view stays
-  // clear, so the far chunk edge still dissolves into sky instead of popping.
+  // 72/208 for 192, 120/346 for 320, 180/520 for 480) — the same fraction
+  // of the view stays clear, so the far chunk edge still dissolves into sky
+  // instead of popping.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 120,
-  FOG_FAR: 346,
+  FOG_NEAR: 180,
+  FOG_FAR: 520,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over

@@ -1,7 +1,7 @@
 // ui/debug.js — debug overlay: fps, coords, chunk count (chunks later).
 // Also Phase 2 console diagnostics for terrain data (profile, columns, census).
 
-import { DEBUG, OVERWORLD, CHUNK } from '../config.js';
+import { DEBUG, OVERWORLD, CHUNK, TIME } from '../config.js';
 import { BLOCK, blockDef } from '../world/blocks.js';
 
 let overlay = null;
@@ -46,7 +46,17 @@ export function updateDebug(delta, camera, stats = null, timeOfDay = null) {
     `FPS ${Math.round(smoothedFps)}\n` +
     `XYZ ${p.x.toFixed(1)} / ${p.y.toFixed(1)} / ${p.z.toFixed(1)}` +
     (stats ? `\nCHUNKS ${stats.meshed} meshed / ${stats.loaded} loaded` : '') +
-    (timeOfDay !== null ? `\nTIME ${timeOfDay.toFixed(3)} (${timeLabel(timeOfDay)})` : '');
+    (timeOfDay !== null ? `\nTIME ${dayClock(timeOfDay)} (${timeLabel(timeOfDay)})` : '');
+}
+
+// The day clock as minutes:seconds into the 20-minute day — "TIME 12:41 /
+// 20:00" is readable at a glance where the raw day fraction was not (the
+// follow-up report). Day starts at sunrise (t=0), so 10:00 is sunset.
+function dayClock(t) {
+  const total = Math.round(TIME.DAY_LENGTH_SECONDS);
+  const secs = Math.floor(t * total);
+  const mmss = (v) => `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
+  return `${mmss(secs)} / ${mmss(total)}`;
 }
 
 // Matches the DAY_NIGHT keyframe timing (the half-and-half retime): day
