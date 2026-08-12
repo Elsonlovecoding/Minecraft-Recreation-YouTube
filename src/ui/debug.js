@@ -49,12 +49,12 @@ export function updateDebug(delta, camera, stats = null, timeOfDay = null) {
     (timeOfDay !== null ? `\nTIME ${timeOfDay.toFixed(3)} (${timeLabel(timeOfDay)})` : '');
 }
 
-// Matches the Phase 14 DAY_NIGHT keyframe timing: day 0-0.5, sunset
-// 0.5-0.575, night 0.575-0.925, sunrise 0.925-1.0.
+// Matches the DAY_NIGHT keyframe timing (the half-and-half retime): day
+// 0-0.5, sunset 0.5-0.525, night 0.525-0.975, sunrise 0.975-1.0.
 function timeLabel(t) {
-  if (t >= 0.925) return 'sunrise';
+  if (t >= 0.975) return 'sunrise';
   if (t < 0.5) return 'day';
-  if (t < 0.575) return 'sunset';
+  if (t < 0.525) return 'sunset';
   return 'night';
 }
 

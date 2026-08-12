@@ -1969,11 +1969,11 @@ export const INTERACTION = {
 // ---------------------------------------------------------------------------
 
 export const TIME = {
-  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes
-                                  // (Phase 14 — real Minecraft timing; the
-                                  // phase splits live in DAY_NIGHT.KEYFRAMES:
-                                  // day 10 min, sunset 1.5, night 7,
-                                  // sunrise 1.5)
+  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes,
+                                  // split half and half by request — 10
+                                  // minutes of day, 10 of night, with quick
+                                  // 30-second dusk/dawn washes at the
+                                  // night's edges (DAY_NIGHT.KEYFRAMES)
   START_TIME: 0.04,               // day fraction at boot (just after sunrise);
                                   // t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
 };
@@ -2033,12 +2033,13 @@ export const SKY = {
 //   SUN_LEVEL   scales the directional sun + hemisphere ambient (entities)
 //   SKY_DARKEN  levels subtracted from baked skylight (0 day .. 11 deep night)
 //   GLOW        strength of the warm horizon glow around the sun's position
-// Phase 14 retiming — the real Minecraft phase lengths over the 20-minute
-// cycle: daytime exactly 10 minutes (t 0.0-0.5, the sun above the horizon:
-// it rises at t=0 and sets at t=0.5 by the orbit maths), sunset 1.5 minutes
-// (0.5-0.575), night 7 minutes (0.575-0.925), sunrise 1.5 minutes
-// (0.925-1.0). The old spread spent ~2 minutes total on each transition and
-// only ~5.6 on night.
+// Retimed by request to a TRUE half-and-half day: over the 20-minute cycle
+// the sun is above the horizon for exactly 10 minutes (t 0.0-0.5 — it rises
+// at t=0 and sets at t=0.5 by the orbit maths) and below it for exactly 10
+// (t 0.5-1.0). The dusk and dawn ramps are quick 30-second washes sitting
+// just inside the night's edges (0.5-0.525 and 0.975-1.0), so full darkness
+// holds for 9 of the night's 10 minutes. (The previous timing was vanilla's:
+// 1.5-minute transitions and only 7 minutes of full night.)
 // Phase 24 added two channels: STARS (starfield alpha, fading in through
 // dusk and out through dawn) and TINT (the skylight tint uniform — white at
 // midday, warm at dawn/dusk, cool at night — which is what keeps the LIGHT
@@ -2051,16 +2052,16 @@ export const DAY_NIGHT = {
     { T: 0.500, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
       STARS: 0, TINT: 0xffffff },
-    { T: 0.5375, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
+    { T: 0.5125, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0 },
-    { T: 0.575, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.525, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
-    { T: 0.925, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.975, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
-    { T: 0.9625, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
+    { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0 },
   ],

@@ -68,6 +68,15 @@ All landed and measured; the game remains complete and shippable.
   Nearest-filtered, so the magnified gradient stair-stepped. The sun is a
   ROUND disc now (256px, linear-filtered) whose glow is windowed to reach
   exactly zero before the rim. The moon keeps its vanilla pixel square.
+- **A half-and-half day (second follow-up request).** The 20-minute cycle
+  now splits exactly 10 minutes of day and 10 of night: the sun is above
+  the horizon for t 0-0.5 (as it always was, by the orbit maths) and the
+  dusk/dawn ramps shrank from vanilla's 1.5 minutes each to 30-second
+  washes sitting just inside the night's edges (keyframes 0.5-0.525 and
+  0.975-1.0), so full darkness holds 9 of the night's 10 minutes (was 7).
+  Measured in the running game by sweeping the whole day in one-second
+  steps: day 10.0 min, night 10.0 min, full dark 9.0 min, dusk 30 s,
+  dawn 29 s. The debug HUD's phase label follows the new boundaries.
 - **A plains spawn.** TERRAIN.SEED 2163 -> 3200, scanned for the most even
   spawn area that starts the player ON plains: within 260 blocks the land is
   plains 25% / forest 26% / desert 27% / mountains 22%, 13% water, spawn on
