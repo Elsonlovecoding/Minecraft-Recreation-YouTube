@@ -205,28 +205,25 @@ export const CHUNK = {
   HEIGHT: 384,            // overworld world height (MAX_Y - MIN_Y)
 };
 
-// RENDER DISTANCE. Phase 25 raised it 8 -> 12 chunks (128 -> 192 blocks) —
-// vanilla's own default — because at 8 the world stopped a couple of hills
-// away and nothing read at landscape scale. This is THE knob to turn for
-// performance: everything below scales with its square.
+// RENDER DISTANCE. Phase 25 went 8 -> 12; the follow-up went 12 -> 20 (320
+// blocks) by request — "render further, at least 20+ chunks". This is THE
+// knob to turn for performance: everything below scales with its square.
 //
-// Measured off the real generator+mesher (node, seed 1337) so the trade is a
-// number rather than a hope:
-//        r=8   197 meshed chunks   453 draw calls   0.91M tris    79 MB geometry +  71 MB chunk data
-//        r=12  441 meshed chunks   973 draw calls   2.03M tris   174 MB geometry + 143 MB chunk data
-// A 70° lens sees roughly a quarter of the ring at a time, so r=12 draws on
-// the order of 250 calls and 0.5M triangles per frame — comfortably inside a
-// 60fps budget on integrated graphics, with the ~320 MB resident footprint
-// (not the triangles) as the thing that stops it going further. r=14 is
-// playable on a machine with memory to spare; r=16 is where the footprint
-// stops being reasonable. Drop to 8 on a weak machine.
-//
-// Filling the ring is not the expensive part: driven unbudgeted in the
-// browser, the whole r=12 ring — 729 chunks generated, 441 meshed — takes
-// 6.4 s of CPU, which the 8 ms-per-frame streaming budget covers in about
-// 13 s of play at 60fps.
+// Measured off the real generator+mesher (node) so the trade is a number
+// rather than a hope:
+//        r=8   197 meshed chunks    453 draws   0.91M tris    79 MB geometry +  71 MB chunk data
+//        r=12  441 meshed chunks    973 draws   2.03M tris   174 MB geometry + 143 MB chunk data
+//        r=20  1257 meshed chunks  2968 draws   6.44M tris   554 MB geometry + 364 MB chunk data
+// A 70° lens sees roughly a quarter of the ring at a time, so r=20 draws on
+// the order of 750 calls and 1.6M triangles per frame — fine for a discrete
+// GPU and workable on recent integrated graphics; the real cost is the
+// ~920 MB resident footprint, which needs a machine with memory to spare.
+// Drop to 12 (a vanilla-default ~320 MB) or 8 on a weaker machine. Filling
+// the ring costs ~19 s of CPU (measured: 1849 chunks generated at 5.2 ms,
+// 1257 meshed at 7.3 ms), which the 8 ms-per-frame streaming budget spreads
+// over ~40 s of play at 60fps, nearest-first.
 export const VIEW = {
-  DISTANCE_CHUNKS: 12,    // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 20,    // chunks loaded/rendered around the player
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -494,14 +491,13 @@ export const UNDERGROUND = {
 // Overworld heightmap, biomes and decoration (world/terrain.js).
 // Noise scales are in cycles per block (1/blocks-per-feature).
 export const TERRAIN = {
-  // Phase 25 — a NEW world. The old 1337 spawn opened on a forested coast
-  // hemmed in by mountains (measured: 45% of the land within 300 blocks was
-  // mountain, 2.8% desert), which is what the "forest near water every time,
-  // plains rare" report was describing. 2163 was picked by scanning seeds for
-  // the most EVEN spawn area under the rebalanced biome rules: plains 26% /
-  // forest 24% / desert 23% / mountains 27% of the land within 260 blocks,
-  // 14% water, and the player lands in plains at y64 with forest in sight.
-  SEED: 2163,
+  // A NEW world, twice. Phase 25 replaced the original 1337 spawn (a
+  // forested coast hemmed in by mountains) with 2163; the follow-up asked
+  // for a PLAINS spawn under the re-rebalanced biome rules, and 3200 was
+  // picked by scanning seeds for the most even spawn area that starts the
+  // player on plains: within 260 blocks the land is plains 25% / forest 26%
+  // / desert 27% / mountains 22%, 13% water, spawning on grass at y68.
+  SEED: 3200,
 
   // Extra columns computed around a chunk during generation so trees whose
   // canopy crosses a chunk border come out identical from both sides
@@ -510,7 +506,12 @@ export const TERRAIN = {
 
   // Very low frequency landmass swell around sea level. Where it dips
   // negative the terrain drops below sea level and oceans/lakes form.
-  CONTINENT: { SCALE: 1 / 1100, OCTAVES: 2, AMPLITUDE: 11, OFFSET: 1 },
+  // Follow-up: OFFSET 1 -> 2.5 ("oceans shouldn't be that common") lifts
+  // the whole swell so fewer of its dips reach under sea level — water fell
+  // from 25% of all columns to 9%, and what remains reads as lakes and seas
+  // rather than a world that is a quarter ocean. Rivers are carved DOWN
+  // through the lift, so they are untouched.
+  CONTINENT: { SCALE: 1 / 1100, OCTAVES: 2, AMPLITUDE: 11, OFFSET: 2.5 },
 
   // Safety floor: the surface never generates closer than this to the
   // bottom of the world, whatever the noise does.
@@ -550,16 +551,16 @@ export const TERRAIN = {
 
   // Per-biome height contribution (OFFSET above the continent base plus
   // hill noise * HILL_AMPLITUDE) and tree density (trees per column).
-  // Phase 25 rebalanced the three lowland biomes. The old numbers gave
-  // plains 39% / forest 26% / desert 10% / mountains 25% of land; deserts
-  // needed both real heat AND real dryness, which two independent fBm
-  // fields rarely deliver at once, so they were a tenth of the world.
+  // Phase 25 rebalanced the three lowland biomes; the follow-up evened
+  // plains and forest out ("same amount of plains as forest"): BASE_WEIGHT
+  // 0.38 -> 0.25 and the forest moisture gate opened a touch. Measured over
+  // 2000x2000: plains 31% / forest 29% / desert 21% / mountains 19% of land.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.38, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    PLAINS: { BASE_WEIGHT: 0.25, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
-      MOISTURE_START: 0.06,    // moisture where forest starts blending in
-      MOISTURE_FULL: 0.42,     // moisture where forest weight saturates
+      MOISTURE_START: 0.02,    // moisture where forest starts blending in
+      MOISTURE_FULL: 0.40,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
@@ -575,6 +576,15 @@ export const TERRAIN = {
   // is hash-dithered between them, so borders feather instead of hard-edging.
   // Phase 24 widened it 0.2 -> 0.35: the transition zone spans more columns.
   BIOME_DITHER_RANGE: 0.35,
+  // ...except at DESERT edges (follow-up: "too many grass blocks in
+  // deserts"). The wide dither speckled grass columns deep into desert-
+  // dominant ground and sand into the grass beside it — a broad salt-and-
+  // pepper fringe that read as grass IN the desert. When either of the top
+  // two biomes is desert the dither band is this much narrower: the edge
+  // still feathers over a couple of columns, but a desert is sand.
+  // Measured over desert-dominant columns: grass fell to 1.9% (nearly all
+  // of it on the outermost fringe where desert barely wins).
+  BIOME_DITHER_DESERT_RANGE: 0.08,
 
   // Phase 24 — domain warp on the biome fields: the climate and mountain
   // region noises are sampled at coordinates pushed around by two
@@ -2008,12 +2018,12 @@ export const SKY = {
   BELOW_COLOR: 0x9db8d2,
   MID_STOP: 0.35,                 // where the mid stop sits in dome height 0..1
   // Fog is matched to the horizon colour so terrain fades into the sky.
-  // Phase 25: pushed out with the render distance (40/140 for 128 blocks ->
-  // 72/208 for 192) — the same fraction of the view is clear as before, so
-  // the far chunk edge still dissolves into sky instead of popping.
+  // Pushed out with each render-distance raise (40/140 for 128 blocks,
+  // 72/208 for 192, 120/346 for 320) — the same fraction of the view stays
+  // clear, so the far chunk edge still dissolves into sky instead of popping.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 72,
-  FOG_FAR: 208,
+  FOG_NEAR: 120,
+  FOG_FAR: 346,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
@@ -2057,14 +2067,18 @@ export const DAY_NIGHT = {
   GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
 };
 
-// The visible sun and moon riding the sky dome. Phase 24: the sun is a
-// bright square core inside a soft atmospheric glow (one generated texture,
-// additive so the glow melts into the sky — no hard edge), and the moon
-// shows the eight vanilla phases, one per in-game day, from a set of
-// generated square-moon textures.
+// The visible sun and moon riding the sky dome. Phase 24 shipped a square
+// sun; the follow-up ("sun shouldn't have that box around it") made it a
+// ROUND disc inside a soft atmospheric glow. The box was real, twice over:
+// the old glow term still carried alpha ~16/255 at the quad's edge, which
+// additive blending paints as a faint square boundary against the sky, and
+// the texture was Nearest-filtered, so the magnified gradient stair-stepped.
+// The glow is windowed to reach EXACTLY zero before the rim now, the sun
+// texture filters linearly, and the core is a disc. The moon stays the
+// vanilla pixel square — nobody reported the moon.
 export const CELESTIAL = {
   DISTANCE: 820,                  // from the camera; inside the sky dome radius
-  SUN_SIZE: 150,                  // the square core's edge, in dome units
+  SUN_SIZE: 150,                  // the disc's diameter, in dome units
   SUN_GLOW_SCALE: 2.6,            // quad size as a multiple of the core —
                                   // the glow needs room to fade to nothing
   SUN_CORE_COLOR: 0xfffbe8,       // the square itself
@@ -2075,19 +2089,32 @@ export const CELESTIAL = {
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
 };
 
-// Phase 24 — clouds: vanilla's flat white blocky slab layer. A hashed
-// blob pattern on a CELL_SIZE grid, meshed once as merged quads (a 2x2
-// tiling of one TILE_CELLS-period pattern, so the mesh can re-anchor in
-// period steps as the player moves and the pattern never visibly jumps),
-// drifting steadily along -x like vanilla's. Slightly transparent, never
-// fogged (the layer sits far beyond FOG_FAR — fog would erase it).
+// Phase 24 — clouds. The follow-up ("make clouds more realistic") rebuilt
+// the flat quads into vanilla-fancy VOLUME slabs: every cloud is a box
+// THICKNESS blocks tall with a lit top, a shaded underside and mid-shaded
+// side walls, front-face culled so the volume reads correctly from below
+// AND from creative flight above. The pattern leans harder on its coarse
+// octave and drops isolated single cells, so the deck is drifting cumulus
+// masses rather than confetti. Still one merged mesh built once at boot (a
+// 2x2 tiling of one TILE_CELLS-period pattern re-anchoring in period steps),
+// still drifting along -x, still never fogged (it sits beyond FOG_FAR).
 export const CLOUDS = {
   HEIGHT: 192,                    // the vanilla cloud deck sits at y=192
+  THICKNESS: 4,                   // slab height (vanilla fancy clouds' 4m)
   CELL_SIZE: 12,                  // blocks per cloud cell (vanilla's texel)
   TILE_CELLS: 96,                 // pattern period in cells (1152 blocks)
-  COVER: 0.36,                    // fraction of cells that are cloud
+  COVER: 0.24,                    // fraction of ALL cells that are cloud
+  WEATHER_SHARE: 0.62,            // fraction of the deck where cloud GROUPS
+                                  // may form at all (the coarse octave's
+                                  // gate); COVER is then met inside those
+                                  // regions by the fine octave, so the sky
+                                  // is fields of distinct puffs with real
+                                  // clear stretches between the fields
+  // Per-face brightness — what makes a slab read as a lit volume: the sun
+  // hits the top, the underside is in its own shadow, the walls sit between.
+  BRIGHTNESS: { TOP: 1.0, BOTTOM: 0.7, SIDE_X: 0.88, SIDE_Z: 0.8 },
   SPEED: 0.55,                    // drift in blocks per second, along -x
-  OPACITY: 0.72,
+  OPACITY: 0.78,
   NIGHT_BRIGHTNESS: 0.16,         // colour scale at deep night (1.0 at noon)
   HORIZON_TINT: 0.18,             // fraction of the horizon colour mixed in
                                   // (what makes dawn clouds blush)

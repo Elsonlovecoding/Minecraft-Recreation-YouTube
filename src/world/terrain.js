@@ -254,14 +254,22 @@ export class TerrainGenerator {
     this._hCache.set(x + ',' + z, height); // seed the memo — computed anyway
 
     // Sort biomes by weight; dither the surface between the top two when
-    // they are close, so biome edges feather over several columns.
+    // they are close, so biome edges feather over several columns. Desert
+    // edges use their own MUCH narrower band (the follow-up fix): the wide
+    // dither scattered grass columns across desert-dominant ground, and a
+    // desert speckled with grass is not a desert. Grass-family borders
+    // (plains/forest/mountains) keep the wide feather — grass dithered into
+    // grass is invisible by design.
     const names = ['plains', 'forest', 'desert', 'mountains'];
     names.sort((a, b) => weights[b] - weights[a]);
     let surfaceBiome = names[0];
     const gap = weights[names[0]] - weights[names[1]];
-    if (gap < TERRAIN.BIOME_DITHER_RANGE) {
+    const ditherRange = names[0] === 'desert' || names[1] === 'desert'
+      ? TERRAIN.BIOME_DITHER_DESERT_RANGE
+      : TERRAIN.BIOME_DITHER_RANGE;
+    if (gap < ditherRange) {
       // Probability of flipping to the runner-up rises to 50% as gap → 0.
-      const flip = 0.5 * (1 - gap / TERRAIN.BIOME_DITHER_RANGE);
+      const flip = 0.5 * (1 - gap / ditherRange);
       if (hash01(this.seed ^ SALT_DITHER, x, z) < flip) surfaceBiome = names[1];
     }
 

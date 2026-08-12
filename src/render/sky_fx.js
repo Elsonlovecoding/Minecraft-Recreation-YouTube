@@ -41,32 +41,95 @@ function cloudField(cells, seed) {
       return a * (1 - tz) + b * tz;
     };
   };
-  const coarse = lattice(16); // big weather systems
-  const fine = lattice(4);    // ragged blocky edges
-  return (cx, cz) => 0.62 * coarse(cx, cz) + 0.38 * fine(cx, cz);
+  return {
+    coarse: lattice(16), // big weather systems (192-block features)
+    fine: lattice(4),    // individual puffs (48-block features)
+  };
 }
 
-// One merged mesh of flat quads: the classic blocky cloud slabs. Greedy
-// row-merge keeps it to a few thousand quads for the whole 2x2-tiled deck.
+// One merged mesh of cloud VOLUMES (the follow-up rebuild): every cloud is a
+// slab CLOUDS.THICKNESS tall — a greedy row-merged top and bottom, plus side
+// walls wherever a cell borders open sky — with per-face brightness baked as
+// vertex colours (lit top, shadowed underside, mid walls), which is what
+// makes the deck read as three-dimensional cumulus instead of paper.
+// Front-face culled: from below you see undersides and far walls, from
+// creative flight above you see tops, and the faces never alpha-stack
+// against each other inside one slab.
 export function createClouds() {
   const C = CLOUDS;
   const cells = C.TILE_CELLS;
-  const field = cloudField(cells, C.SEED);
-  // Threshold the field at the requested coverage (sample its distribution
-  // rather than assuming one — the two-octave blend is not uniform).
-  const samples = [];
+  const { coarse, fine } = cloudField(cells, C.SEED);
+  // Two-stage pattern (the "more realistic" rework): the coarse octave is a
+  // WEATHER GATE — only its top WEATHER_SHARE of the deck may hold cloud at
+  // all — and inside those regions the fine octave is thresholded to hit the
+  // requested global coverage. Requiring BOTH breaks the old merged blend's
+  // continent-sized sheet into groups of distinct cumulus puffs with real
+  // clear sky between the groups. Both thresholds are read off the sampled
+  // distributions rather than assumed — neither field is uniform.
+  const coarseSamples = [];
+  const fineSamples = [];
   for (let z = 0; z < cells; z++) {
-    for (let x = 0; x < cells; x++) samples.push(field(x, z));
+    for (let x = 0; x < cells; x++) {
+      coarseSamples.push(coarse(x, z));
+      fineSamples.push(fine(x, z));
+    }
   }
-  const sorted = [...samples].sort((a, b) => b - a);
-  const threshold = sorted[Math.floor(C.COVER * sorted.length)];
+  const at = (arr, cx, cz) =>
+    arr[((cz % cells) + cells) % cells * cells + (((cx % cells) + cells) % cells)];
+  const sortedCoarse = [...coarseSamples].sort((a, b) => b - a);
+  const weatherT = sortedCoarse[Math.floor(C.WEATHER_SHARE * sortedCoarse.length)];
+  // Fine threshold from the distribution INSIDE weather regions, so COVER
+  // means the same fraction of the whole deck whatever the gate admits.
+  const inWeather = [];
+  for (let i = 0; i < coarseSamples.length; i++) {
+    if (coarseSamples[i] > weatherT) inWeather.push(fineSamples[i]);
+  }
+  inWeather.sort((a, b) => b - a);
+  const wantOn = Math.floor(C.COVER * coarseSamples.length);
+  const fineT = inWeather[Math.min(inWeather.length - 1, wantOn)] ?? Infinity;
+  const rawOn = (cx, cz) =>
+    at(coarseSamples, cx, cz) > weatherT && at(fineSamples, cx, cz) > fineT;
+  // A lone cell with no orthogonal neighbour is confetti, not a cloud.
   const on = (cx, cz) =>
-    samples[((cz % cells) + cells) % cells * cells + (((cx % cells) + cells) % cells)] > threshold;
+    rawOn(cx, cz) && (
+      rawOn(cx - 1, cz) || rawOn(cx + 1, cz) || rawOn(cx, cz - 1) || rawOn(cx, cz + 1)
+    );
 
   const span = cells * C.CELL_SIZE;
+  const S = C.CELL_SIZE;
+  const H = C.THICKNESS;
+  // The BRIGHTNESS numbers are what the faces should LOOK like — convert to
+  // linear for the vertex-colour multiply, or 0.7 renders as ~0.85 (the
+  // sRGB/linear trap that bit the particle colours, the cloud night tint
+  // and the stars before this).
+  const srgb = (v) => new THREE.Color(v, v, v).convertSRGBToLinear().r;
+  const B = {
+    TOP: srgb(C.BRIGHTNESS.TOP),
+    BOTTOM: srgb(C.BRIGHTNESS.BOTTOM),
+    SIDE_X: srgb(C.BRIGHTNESS.SIDE_X),
+    SIDE_Z: srgb(C.BRIGHTNESS.SIDE_Z),
+  };
   const positions = [];
+  const colors = [];
   const indices = [];
   let count = 0;
+  // A quad from four corners with a known outward normal; the winding is
+  // corrected against the normal so front-face culling always keeps the
+  // outside. `b` is the face's baked brightness (multiplied by the
+  // day/night material colour at render time).
+  const va = new THREE.Vector3();
+  const vb = new THREE.Vector3();
+  const quad = (a, bq, c, d, normal, b) => {
+    va.set(bq[0] - a[0], bq[1] - a[1], bq[2] - a[2]);
+    vb.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+    va.cross(vb);
+    const flip = va.x * normal[0] + va.y * normal[1] + va.z * normal[2] < 0;
+    const [p1, p3] = flip ? [d, bq] : [bq, d];
+    positions.push(...a, ...p1, ...c, ...p3);
+    for (let i = 0; i < 4; i++) colors.push(b, b, b);
+    indices.push(count, count + 1, count + 2, count, count + 2, count + 3);
+    count += 4;
+  };
   // 2x2 tiles of the period, so a mesh anchored within one period step of
   // the camera always covers at least half a period in every direction.
   for (let cz = 0; cz < cells * 2; cz++) {
@@ -75,25 +138,41 @@ export function createClouds() {
       const isOn = cx < cells * 2 && on(cx, cz);
       if (isOn && runStart < 0) runStart = cx;
       if (!isOn && runStart >= 0) {
-        const x0 = runStart * C.CELL_SIZE;
-        const x1 = cx * C.CELL_SIZE;
-        const z0 = cz * C.CELL_SIZE;
-        const z1 = (cz + 1) * C.CELL_SIZE;
-        positions.push(x0, 0, z0, x1, 0, z0, x0, 0, z1, x1, 0, z1);
-        indices.push(count, count + 2, count + 1, count + 1, count + 2, count + 3);
-        count += 4;
+        const x0 = runStart * S;
+        const x1 = cx * S;
+        const z0 = cz * S;
+        const z1 = (cz + 1) * S;
+        // Top and bottom span the whole merged run.
+        quad([x0, H, z0], [x1, H, z0], [x1, H, z1], [x0, H, z1], [0, 1, 0], B.TOP);
+        quad([x0, 0, z0], [x1, 0, z0], [x1, 0, z1], [x0, 0, z1], [0, -1, 0], B.BOTTOM);
+        // Run end caps (the -x/+x walls of the whole run).
+        quad([x0, 0, z0], [x0, H, z0], [x0, H, z1], [x0, 0, z1], [-1, 0, 0], B.SIDE_X);
+        quad([x1, 0, z0], [x1, H, z0], [x1, H, z1], [x1, 0, z1], [1, 0, 0], B.SIDE_X);
+        // z walls per cell, only where the neighbouring row is open sky.
+        for (let cc = runStart; cc < cx; cc++) {
+          const wx0 = cc * S;
+          const wx1 = (cc + 1) * S;
+          if (!on(cc, cz - 1)) {
+            quad([wx0, 0, z0], [wx1, 0, z0], [wx1, H, z0], [wx0, H, z0], [0, 0, -1], B.SIDE_Z);
+          }
+          if (!on(cc, cz + 1)) {
+            quad([wx0, 0, z1], [wx1, 0, z1], [wx1, H, z1], [wx0, H, z1], [0, 0, 1], B.SIDE_Z);
+          }
+        }
         runStart = -1;
       }
     }
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   const material = new THREE.MeshBasicMaterial({
     color: 0xffffff,
+    vertexColors: true,
     transparent: true,
     opacity: C.OPACITY,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     depthWrite: false,
     fog: false,
     toneMapped: false,
@@ -203,31 +282,39 @@ function canvasTexture(canvas) {
 
 const hexRgb = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 
-// The sun: a bright square core with a soft radial glow falling to nothing —
-// rendered additively so the halo melts into whatever sky is behind it.
-// Painted per pixel: the square's own edge gets a short soft falloff (no
-// hard edge, per the brief) and the glow decays smoothly to the quad rim.
+// The sun: a bright ROUND disc with a soft radial glow — rendered additively
+// so the halo melts into whatever sky is behind it. Two rules keep the quad
+// invisible (the follow-up fix — "the sun shouldn't have that box around
+// it", and it had one): the glow is WINDOWED so it reaches exactly zero
+// before the quad rim (the old exponential still carried alpha ~16/255 at
+// the edge, which additive blending drew as a faint square against the
+// sky), and the texture filters LINEARLY (Nearest magnification turned the
+// smooth gradient into visible stair-stepped blocks). The moon keeps its
+// pixel-art Nearest filtering — that one is meant to look blocky.
 export function createSunTexture() {
-  const W = 128;
+  const W = 256;
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = W;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(W, W);
-  const coreHalf = 0.5 / CELESTIAL.SUN_GLOW_SCALE; // core square half-size, uv units
-  const soft = coreHalf * 0.35;                    // the core edge's soft band
+  const coreR = 0.5 / CELESTIAL.SUN_GLOW_SCALE; // disc radius, uv units
+  const soft = coreR * 0.22;                    // the disc edge's soft band
+  const RIM = 0.5;                              // quad half-extent in uv
   const [cr, cg, cb] = hexRgb(CELESTIAL.SUN_CORE_COLOR);
   const [gr, gg, gb] = hexRgb(CELESTIAL.SUN_GLOW_COLOR);
   for (let y = 0; y < W; y++) {
     for (let x = 0; x < W; x++) {
       const u = (x + 0.5) / W - 0.5;
       const v = (y + 0.5) / W - 0.5;
-      const dSquare = Math.max(Math.abs(u), Math.abs(v)); // square distance
-      const dRound = Math.hypot(u, v);
-      // Core: 1 inside the square, easing to 0 over the soft band.
-      const core = 1 - Math.min(1, Math.max(0, (dSquare - coreHalf) / soft));
-      // Glow: radial, strongest at the core edge, gone by the quad rim.
-      const glow = 0.55 * Math.exp(-Math.max(0, dRound - coreHalf) * 7.0);
+      const d = Math.hypot(u, v);
+      // Core: 1 inside the disc, easing to 0 over the soft band.
+      const core = 1 - Math.min(1, Math.max(0, (d - coreR) / soft));
+      // Glow: radial decay from the disc edge, multiplied by a smooth
+      // window that is exactly 0 at the quad rim — no rim, no box.
+      const fall = Math.exp(-Math.max(0, d - coreR) * 6.0);
+      const window_ = Math.max(0, 1 - d / RIM);
+      const glow = 0.5 * fall * window_ * window_;
       const a = Math.min(1, core + glow);
       const i = (y * W + x) * 4;
       const t = core; // blend the halo hue toward the core's white centre
@@ -238,7 +325,11 @@ export function createSunTexture() {
     }
   }
   ctx.putImageData(img, 0, 0);
-  return canvasTexture(canvas);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.LinearFilter;   // a gradient, not pixel art
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
 }
 
 // The eight moon phases as separate small textures — the vanilla square

@@ -110,11 +110,15 @@ src/
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night (the cycle drives
                          the Phase 24 sky furniture below)
-    sky_fx.js            the Phase 24 sky furniture: the blocky cloud deck
-                         (one merged quad mesh, pattern-anchored re-tiling),
-                         the starfield, and the generated sun (square core
-                         in a soft additive glow) and eight-phase moon
-                         textures — split from lighting.js per the size cap
+    sky_fx.js            the sky furniture (Phase 24; reworked in the Phase
+                         25 follow-up): the cloud deck as VOLUME slabs (one
+                         merged mesh — lit tops, shaded undersides, side
+                         walls, front-face culled; a coarse weather gate
+                         intersected with a fine puff octave), the
+                         starfield, and the generated sun (round disc in a
+                         rim-windowed additive glow, linear-filtered) and
+                         eight-phase moon textures — split from lighting.js
+                         per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
                          — textured cubes cropped from a block's own atlas

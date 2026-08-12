@@ -31,6 +31,60 @@ no half-wired feature behind a flag.
 
 Phase last completed: **Phase 25 — SURVIVAL AND CREATIVE MODES (final).**
 
+**Phase 25 follow-up (same session series): seven visual/world reports.**
+All landed and measured; the game remains complete and shippable.
+
+- **Render distance 12 -> 20 chunks (320 blocks).** Fog out to 120/346 to
+  match. Measured (node, real generator+mesher): 1257 meshed chunks, 2968
+  draws, 6.44M tris, 554 MB geometry + 364 MB chunk data — ~920 MB resident,
+  a machine-with-memory setting by explicit request; the config comment
+  carries the r=8/12/20 table so it is one number to turn back down.
+- **Deserts are sand.** The Phase 24 BIOME_DITHER_RANGE of 0.35 speckled
+  grass columns across desert-dominant ground (24.7% of desert-dominant
+  columns had a grass surface). Desert edges now dither over their own
+  narrow band (BIOME_DITHER_DESERT_RANGE 0.08): grass in desert fell to
+  1.9% — almost all of it on the outermost fringe where desert barely wins —
+  while grass-family borders keep the wide feather (grass dithered into
+  grass is invisible by design).
+- **Plains == forest.** BASE_WEIGHT 0.38 -> 0.25 plus a slightly opened
+  forest moisture gate: plains 30.8% / forest 29.4% of land (was 40/23),
+  with desert 21% and mountains 19%.
+- **Less ocean.** CONTINENT.OFFSET 1 -> 2.5 lifts the landmass swell so
+  fewer dips reach under sea level: water fell from 25% of all columns to
+  9%. Rivers are carved down through the lift and are untouched.
+- **Clouds are volumes.** The flat quad deck became vanilla-fancy SLABS: 4
+  blocks thick, lit tops (1.0), shaded undersides (0.7), mid side walls,
+  front-face culled so the volume reads from below and from creative flight
+  above, per-face brightness baked as vertex colours CONVERTED TO LINEAR
+  (the sRGB trap, fourth sighting). The pattern is two-stage now — a coarse
+  WEATHER GATE (top 62% of the deck may hold cloud) intersected with the
+  fine octave thresholded to 24% global cover — which breaks the old merged
+  blend's continent-sized sheet into fields of distinct cumulus, plus an
+  isolated-single-cell cleanup. Screenshot-verified from the ground, from
+  under the deck and from above it.
+- **The sun's box is gone.** It was real, twice over: the old glow term
+  still carried alpha ~16/255 at the quad rim (additive blending draws that
+  as a faint square against the sky) and the 128px texture was
+  Nearest-filtered, so the magnified gradient stair-stepped. The sun is a
+  ROUND disc now (256px, linear-filtered) whose glow is windowed to reach
+  exactly zero before the rim. The moon keeps its vanilla pixel square.
+- **A plains spawn.** TERRAIN.SEED 2163 -> 3200, scanned for the most even
+  spawn area that starts the player ON plains: within 260 blocks the land is
+  plains 25% / forest 26% / desert 27% / mountains 22%, 13% water, spawn on
+  grass at y68.
+
+Re-verified after the changes: the full survival end-to-end run 16/16 on
+three consecutive runs and the mode harness 31/31, both on the new seed,
+zero game console errors. Two harness lessons from the re-run worth
+keeping: the check-6 shelter is a DUG-IN pocket now, not a 1-thick wall,
+because this game's melee is distance-only (MELEE_RANGE 1.4, no
+line-of-sight check — an accepted simplification since the combat phase),
+so a mob pressed against a thin wall bites through it and a creeper
+ignites through one; five blocks of depth beats both gates. And a death
+screen left standing by an earlier check silently blocks showVictory (the
+two screens never stack, by design) — the harness clears it through the
+real Respawn button before the victory check.
+
 MODE SELECTION (`player/gamemode.js`, `ui/menus.js`) — a START SCREEN on load
 offers Survival or Creative and holds the world frozen until one is picked
 (verified: the day/night clock does not advance behind it). Esc mid-game
@@ -4226,7 +4280,11 @@ until 67% of random cave cells are within 60 blocks of walking of a big
 room. The one thing worth flagging is a CAVEAT on the word "verified"
 rather than a break, and it is the same one Phase 24 recorded:
 
-- **Framerate is unmeasured, again.** The generation, geometry, memory,
+- **Framerate is unmeasured, again.** (And the follow-up's r=20 render
+  distance makes the caveat bite harder: the choice was made on draw-call/
+  triangle/memory arithmetic, measured, not on a real GPU. If a real
+  machine disagrees, VIEW.DISTANCE_CHUNKS is one number with its own
+  r=8/12/20 cost table written beside it.) The generation, geometry, memory,
   biome, cavern and mountain figures come from a headless harness driving
   the real generators and the real mesher, and every gameplay claim comes
   from the real game in Chromium — but Chromium in this sandbox has NO GPU
