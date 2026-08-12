@@ -11,7 +11,7 @@
 // every block's COLLISION BOX LIST — the same lists the mesher renders from,
 // so what a player sees is what they walk into.
 
-import { PLAYER, OVERWORLD, SHIELD } from '../config.js';
+import { PLAYER, OVERWORLD, SHIELD, CREATIVE } from '../config.js';
 import {
   BLOCK, blockDef, isSolid, isLava, isWater, fluidHeight,
   collisionBoxesAt, hasCollision, isClimbable, MAX_COLLISION_OVERHANG,
@@ -57,6 +57,12 @@ export class PlayerBody {
     this.ladderFacing = null;     // which way its rungs face ('N'|'S'|'E'|'W')
     this.climbing = false;        // actively driving up a ladder this step
     this.blocking = false;        // raised shield (set by player/interaction.js)
+    // Creative flight (Phase 25). The controller owns WHEN this is true (it
+    // is the thing that knows about game modes and key taps); the body owns
+    // what flying DOES. Deliberately a plain field rather than an import of
+    // player/gamemode.js, so this module stays the DOM-free, dependency-free
+    // physics the node harness constructs directly.
+    this.flying = false;
     // Bound once: the collision box lookups pass it to connection-shaped
     // blocks (fences/walls read their neighbours) every sweep.
     this._getBlock = (x, y, z) => this.world.getBlock(x, y, z);
@@ -79,6 +85,10 @@ export class PlayerBody {
   // positive looking up) only steers the swim-sprint mechanic.
   step(input, dt) {
     if (dt <= 0) return;
+    if (this.flying) {
+      this._stepFlight(input, dt);
+      return;
+    }
     const p = this.position;
     const v = this.velocity;
     const c = PLAYER;
@@ -335,6 +345,103 @@ export class PlayerBody {
       ? Math.max(0, this.breath - dt)
       : Math.min(this.maxBreath, this.breath + dt * c.BREATH_REFILL_RATE);
 
+    this.horizontalSpeed = Math.hypot(p.x - beforeX, p.z - beforeZ) / dt;
+  }
+
+  // Creative flight (Phase 25). Gravity, buoyancy, jumping, ladders and the
+  // ground/air split are all replaced by one rule: velocity chases a wanted
+  // velocity in all three axes and decays toward zero without input. The
+  // move itself still goes through the SAME swept collision as walking
+  // (CREATIVE.FLY_COLLIDES — vanilla creative flight is flight, not
+  // spectator noclip), so a flying player can't pass through the world.
+  //
+  // Vanilla behaviours kept: sprinting doubles the pace; landing on the
+  // ground ends the flight; fall distance never accrues; water and lava are
+  // sensed (the eye overlay and fog still work under the surface) but their
+  // physics never take over.
+  _stepFlight(input, dt) {
+    const p = this.position;
+    const v = this.velocity;
+    const F = CREATIVE;
+    this.lastLanding = 0;
+    this.lastJumped = false;
+    this.lastStepUp = 0;
+    this._jumpTimer += dt;
+    this._senseWater();
+    this._senseClimb();
+    // Poses that only make sense on foot or in water are off while flying:
+    // shift is "descend", not "sneak", and the prone swim never applies.
+    this.sneaking = false;
+    this.climbing = false;
+    this.swimming = false;
+    this.swimSprinting = false;
+    this.sprinting = !!input.sprint && input.forward > 0;
+
+    const sin = Math.sin(input.yaw);
+    const cos = Math.cos(input.yaw);
+    let wx = -sin * input.forward + cos * input.strafe;
+    let wz = -cos * input.forward - sin * input.strafe;
+    const wishLen = Math.hypot(wx, wz);
+    if (wishLen > 1) {
+      wx /= wishLen;
+      wz /= wishLen;
+    }
+    const boost = this.sprinting ? F.FLY_SPRINT_MULTIPLIER : 1;
+    const k = 1 - Math.exp(-F.FLY_RESPONSE * dt);
+    const glide = Math.exp(-F.FLY_DRAG * dt);
+    if (wishLen > 0) {
+      const speed = F.FLY_SPEED * boost;
+      v.x += (wx * speed - v.x) * k;
+      v.z += (wz * speed - v.z) * k;
+    } else {
+      v.x *= glide;
+      v.z *= glide;
+    }
+    const up = (input.jump ? 1 : 0) - (input.sneak ? 1 : 0);
+    if (up !== 0) v.y += (up * F.FLY_VERTICAL_SPEED * boost - v.y) * k;
+    else v.y *= glide;
+
+    const beforeX = p.x;
+    const beforeZ = p.z;
+    if (F.FLY_COLLIDES) {
+      const dy = v.y * dt;
+      const hitY = this._sweep(1, dy);
+      if (hitY) {
+        // Touching down ends the flight, exactly like vanilla — descending
+        // onto the ground drops you back into walking.
+        if (dy < 0) {
+          this.onGround = true;
+          this.flying = false;
+        }
+        v.y = 0;
+      } else if (dy !== 0) {
+        this.onGround = false;
+      }
+      const hit = this._moveHorizontal(v.x * dt, v.z * dt);
+      if (hit.x) v.x = 0;
+      if (hit.z) v.z = 0;
+    } else {
+      p.x += v.x * dt;
+      p.y += v.y * dt;
+      p.z += v.z * dt;
+      this.onGround = false;
+    }
+
+    // A flight never becomes a fall: switching flight off mid-air drops the
+    // player from wherever they are with a clean slate, and creative takes
+    // no fall damage anyway.
+    this.fallDistance = 0;
+    this._fallStartY = p.y;
+    this._senseWater();
+    const eyeY = p.y + PLAYER.EYE_HEIGHT;
+    const eyeBlock =
+      this.world.getBlock(Math.floor(p.x), Math.floor(eyeY), Math.floor(p.z));
+    this.eyeInWater = isWaterCell(eyeBlock);
+    this.eyeInLava = isLava(eyeBlock);
+    this._standingEyeInWater = this.eyeInWater;
+    // Breath stays full: creative cannot drown, and a drained meter carried
+    // back into survival would drown the player the instant they switched.
+    this.breath = this.maxBreath;
     this.horizontalSpeed = Math.hypot(p.x - beforeX, p.z - beforeZ) / dt;
   }
 

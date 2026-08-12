@@ -15,6 +15,12 @@
 // have count 1 and never merge.
 
 import { INVENTORY, TOOL_TIERS, COMBAT, SHIELD } from '../config.js';
+// Phase 25: creative mode's "infinite blocks" and "tools never lose
+// durability" are ONE rule each, and they belong here rather than at the
+// dozen call sites — placing a block, throwing a pearl, firing an arrow,
+// shearing a sheep, blocking with a shield and eating all spend through the
+// four methods below.
+import { gamemode } from './gamemode.js';
 
 // ---------------------------------------------------------------------------
 // Item registry — stack caps and durability (per-item data lives here, like
@@ -208,6 +214,7 @@ export class Inventory {
   // Consume n from the offhand stack (offhand block placement / eating).
   consumeOffhand(n = 1) {
     const s = this.offhand.slots[0];
+    if (gamemode.creative) return !!s; // infinite: the stack never shrinks
     if (!s || s.count < n) return false;
     s.count -= n;
     if (s.count <= 0) this.offhand.slots[0] = null;
@@ -224,6 +231,7 @@ export class Inventory {
   // Wear the offhand item by n (offhand bow shots), like damageSelected.
   damageOffhand(n = 1) {
     const s = this.offhand.slots[0];
+    if (gamemode.creative) return s?.durability == null ? 'none' : 'damaged';
     if (!s || s.durability == null) return 'none';
     s.durability -= n;
     const broke = s.durability <= 0;
@@ -353,6 +361,7 @@ export class Inventory {
   // Consume n of an item by name across stacks (bow shots eat arrows).
   // All-or-nothing: false (and nothing consumed) when short.
   consumeItem(name, n = 1) {
+    if (gamemode.creative) return true; // creative arrows are inexhaustible
     let have = 0;
     for (const s of this.slots) {
       if (s && s.name === name && s.durability == null) have += s.count;
@@ -392,6 +401,9 @@ export class Inventory {
   // Consume n from the selected stack (placing blocks). False if it can't.
   consumeSelected(n = 1) {
     const s = this.slots[this.selected];
+    // Creative: placing a block never spends it (the stack is bottomless),
+    // but an EMPTY hand still has nothing to place.
+    if (gamemode.creative) return !!s;
     if (!s || s.count < n) return false;
     s.count -= n;
     if (s.count <= 0) this.slots[this.selected] = null;
@@ -403,6 +415,9 @@ export class Inventory {
   // 'broken' clears the slot when durability runs out.
   damageSelected(n = 1) {
     const s = this.slots[this.selected];
+    // Creative tools never wear. 'damaged' (not 'none') keeps every caller's
+    // "did this item have durability" branch reading true.
+    if (gamemode.creative) return s?.durability == null ? 'none' : 'damaged';
     if (!s || s.durability == null) return 'none';
     s.durability -= n;
     const broke = s.durability <= 0;
@@ -630,6 +645,7 @@ export class ArmourContainer extends SlotContainer {
   // Wear every equipped piece (combat: max(1, floor(damage/4)) per hit).
   // A piece reaching zero durability breaks — the slot clears.
   damageAll(wear) {
+    if (gamemode.creative) return; // creative armour never wears either
     let changed = false;
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];

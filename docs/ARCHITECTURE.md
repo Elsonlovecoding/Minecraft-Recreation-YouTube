@@ -110,11 +110,15 @@ src/
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night (the cycle drives
                          the Phase 24 sky furniture below)
-    sky_fx.js            the Phase 24 sky furniture: the blocky cloud deck
-                         (one merged quad mesh, pattern-anchored re-tiling),
-                         the starfield, and the generated sun (square core
-                         in a soft additive glow) and eight-phase moon
-                         textures — split from lighting.js per the size cap
+    sky_fx.js            the sky furniture (Phase 24; reworked in the Phase
+                         25 follow-up): the cloud deck as VOLUME slabs (one
+                         merged mesh — lit tops, shaded undersides, side
+                         walls, front-face culled; a coarse weather gate
+                         intersected with a fine puff octave), the
+                         starfield, and the generated sun (round disc in a
+                         rim-windowed additive glow, linear-filtered) and
+                         eight-phase moon textures — split from lighting.js
+                         per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
                          — textured cubes cropped from a block's own atlas
@@ -130,13 +134,28 @@ src/
                          entities/items.js like every other item visual
 
   player/
+    gamemode.js          SURVIVAL vs CREATIVE (Phase 25): a module singleton
+                         on the particles/audio pattern. Every creative rule
+                         is one gate in the system that already owns it —
+                         stats (invulnerable), inventory (infinite stacks, no
+                         tool wear), interaction (instant break), body
+                         (flight), mobs/dragon (ignored), hud (no bars),
+                         screens (E opens ui/creative.js). Switching only
+                         flips a flag, which is what makes a live switch cost
+                         nothing and lose nothing
     controller.js        pointer-lock input, key bindings, the first-person
-                         camera (bob, eye heights, FOV kick) and fly mode
+                         camera (bob, eye heights, FOV kick), fly mode, and
+                         the creative double-tap-space flight toggle
     body.js              PlayerBody + findSpawnPosition (Phase 21 split out
                          of controller.js per the size cap — moved verbatim):
                          the AABB physics, swept collision against every
-                         block's COLLISION BOX LIST, and the ladder climb.
-                         DOM-free and node-constructible, by design
+                         block's COLLISION BOX LIST, the ladder climb, and
+                         (Phase 25) the creative FLIGHT integrator, which
+                         replaces gravity with a chased velocity but keeps
+                         the same swept collision. `body.flying` is a plain
+                         field the controller sets — this file deliberately
+                         does NOT import gamemode.js, so it stays DOM-free
+                         and node-constructible, by design
     placement.js         block placement rules (Phase 21 split out of
                          interaction.js per the size cap): where a block may
                          go, the two-cell pieces (doors, beds), slab
@@ -294,11 +313,29 @@ src/
 
   ui/
     hud.js               hotbar, health, hunger, crosshair, potion-effect
-                         indicator (Phase 18)
+                         indicator (Phase 18), and the Phase 25 game-mode
+                         badge (bottom-right; the survival stat rows hide
+                         wholesale in creative)
+    menus.js             the Phase 25 START SCREEN (Survival / Creative, up
+                         before anything is playable) and the PAUSE MENU (Esc
+                         — the current mode and a button to switch to the
+                         other). The pause overlay is pointer-events: none
+                         except for its panel, so a click anywhere else still
+                         falls through to the canvas and resumes play
+    creative.js          the Phase 25 CREATIVE INVENTORY: the tabbed
+                         catalogue of every block and item (building blocks,
+                         decoration, tools, combat, food, materials,
+                         miscellaneous), the cross-tab search field, and the
+                         click / right-click / drag gestures that build a
+                         fresh stack out of nothing every time. The
+                         catalogue table is UI data and lives here, the way
+                         per-block data lives in world/blocks.js
     screens.js           the screen panel/cursor/slot machinery, the
                          inventory + crafting screens, death, victory
                          (Phase 20 — the win condition's screen);
-                         opens the container screens below
+                         opens the container screens below. Owns the ONE E
+                         key: in creative it routes to ui/creative.js
+                         instead of the survival inventory
     containers.js        the block-container screen SECTIONS — chest,
                          furnace, brewing stand — and their indicator art
                          (Phase 18 split out of screens.js per the size
@@ -330,7 +367,16 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 24 grew three files past the cap and cut two of them
+in this document. Phase 25 added THREE new files rather than growing any
+(`player/gamemode.js` 96, `ui/menus.js` 242, `ui/creative.js` 528) and left
+every file it edited under the cap: `ui/hud.js` 777 (mode badge + the
+survival-bar gate), `ui/screens.js` 752 (the E route), `player/interaction.js`
+780, `player/body.js` 775 (the flight integrator), `player/inventory.js` 660,
+`player/stats.js` 541, `player/controller.js` 300, `src/main.js` 749 (the test
+chest coming out paid for the menu wiring). `entities/dragon.js` (884) is
+still the only file over the cap and still carries the mandated rig cut;
+`world/emitters.js` (829) and `world/blocks.js` (915) still carry theirs.
+Phase 24 grew three files past the cap and cut two of them
 back the same session: `world/terrain.js` (the rivers/surface-rules/vegetation
 pass took it 546 → 868) gave up its seeded 2D noise machinery to
 `world/terrain_noise.js` (124, moved verbatim — terrain is 751 now), and
@@ -407,10 +453,16 @@ takes `register` so the import cycle never bites. It re-exports all ten
 symbols, so nothing else changed an import. 901 now, under the cap for the
 first time since Phase 21 even after the deepslate set landed in it.
 
-**Feel goes through the two singletons.** Anything that wants a particle or a
-sound imports `particles` (render/particles.js) or `audio` (systems/audio.js)
-directly and calls it — no wiring through factories, the CHUNK_LIGHT_UNIFORMS
-pattern. Both are inert until main.js initialises them, which is what keeps
+**Three module singletons, imported directly.** Anything that wants a particle
+or a sound imports `particles` (render/particles.js) or `audio`
+(systems/audio.js) and calls it; anything that needs to know whether the game
+is in survival or creative imports `gamemode` (player/gamemode.js) and asks it.
+No wiring through factories — the CHUNK_LIGHT_UNIFORMS pattern. `gamemode`
+joined them in Phase 25 for the same reason the other two exist: a dozen
+unrelated systems each need one boolean, and threading it through every
+constructor would have meant editing every factory signature in the project to
+say one thing. player/body.js is the deliberate exception — it takes
+`body.flying` as a field so the physics stays importable in node. Both are inert until main.js initialises them, which is what keeps
 node-testable modules (player/body.js, entities/entity.js) free of three.js:
 those two deliberately emit NOTHING, and their feedback is edge-detected by
 their managers instead (entities/mobs.js watches mob health, systems/ambience.js

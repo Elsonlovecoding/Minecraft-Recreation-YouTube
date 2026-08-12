@@ -16,6 +16,7 @@ import {
 } from '../config.js';
 import { renderSlotContent, createItemIcon } from './icons.js';
 import { getAtlasTexture, TILE } from '../render/atlas.js';
+import { gamemode } from '../player/gamemode.js';
 
 let breathRow = null;
 let bubbles = [];
@@ -53,6 +54,12 @@ let sleepEl = null;      // full-screen wash while a night passes in a bed
 let sleepFade = 0;
 let toastEl = null;      // transient message line above the hotbar
 let toastTimer = 0;
+// Phase 25 — game modes. The survival bars (hearts, hunger, armour,
+// absorption, bubbles) simply do not exist in creative, so the rows are
+// hidden as a group; the badge in the bottom corner says which mode is on.
+let heartsRow = null;
+let hungerRow = null;
+let modeEl = null;
 
 // The lava overlay art: the real still-lava atlas tile, darkened, tiled
 // across the screen (vanilla draws the block texture over the whole view).
@@ -386,6 +393,14 @@ export function initHud(inventory) {
       border: ${Math.max(1, Math.round(UI.EFFECTS_HUD.ICON_PX / 24))}px solid rgba(0, 0, 0, 0.85);
       box-shadow: 0 0 0 ${Math.max(1, Math.round(UI.EFFECTS_HUD.ICON_PX / 24))}px rgba(190, 190, 190, 0.25);
     }
+    #hud-mode {
+      position: fixed; right: ${UI.MODE_BADGE.RIGHT_PX}px;
+      bottom: ${UI.MODE_BADGE.BOTTOM_PX}px; z-index: 5;
+      pointer-events: none; user-select: none;
+      color: #ffffff; opacity: ${UI.MODE_BADGE.OPACITY};
+      font: ${UI.MODE_BADGE.FONT_PX}px/1 monospace;
+      text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.85);
+    }
     .hud-effect span {
       color: #fff; font: ${UI.EFFECTS_HUD.LABEL_PX}px/1 monospace;
       text-shadow: 1px 1px 0 #000;
@@ -451,16 +466,16 @@ export function initHud(inventory) {
     half: heartDataUrl('half'),
     empty: heartDataUrl('empty'),
   };
-  const hearts = document.createElement('div');
-  hearts.id = 'hud-hearts';
+  heartsRow = document.createElement('div');
+  heartsRow.id = 'hud-hearts';
   heartEls = [];
   for (let i = 0; i < PLAYER.MAX_HEALTH / 2; i++) {
     const h = document.createElement('div');
     h.className = 'heart';
-    hearts.appendChild(h);
+    heartsRow.appendChild(h);
     heartEls.push(h);
   }
-  document.body.appendChild(hearts);
+  document.body.appendChild(heartsRow);
   lastHealth = -1;
 
   // --- absorption hearts (Phase 22 — the golden apple): the same heart in
@@ -510,7 +525,7 @@ export function initHud(inventory) {
     half: hungerDataUrl('half'),
     empty: hungerDataUrl('empty'),
   };
-  const hungerRow = document.createElement('div');
+  hungerRow = document.createElement('div');
   hungerRow.id = 'hud-hunger';
   hungerEls = [];
   for (let i = 0; i < PLAYER.MAX_HUNGER / 2; i++) {
@@ -563,6 +578,18 @@ export function initHud(inventory) {
   toastEl = document.createElement('div');
   toastEl.id = 'hud-toast';
   document.body.appendChild(toastEl);
+
+  // --- the game-mode badge (Phase 25): small, dim, bottom-right, where the
+  // hotbar and the stat rows never reach. Written on every mode change and
+  // once now, so it is correct from the first frame.
+  modeEl = document.createElement('div');
+  modeEl.id = 'hud-mode';
+  document.body.appendChild(modeEl);
+  const writeMode = () => {
+    modeEl.textContent = `${gamemode.label} Mode`;
+  };
+  gamemode.subscribe(writeMode);
+  writeMode();
 }
 
 // The potion item whose tinted-bottle icon stands for each effect.
@@ -657,6 +684,29 @@ export function updateHud(player, stats, dt = 0) {
     const inLava = !!player.body?.eyeInLava;
     lavaEl.style.display = inLava ? 'block' : 'none';
   }
+  // Phase 25 — creative has no survival bars at all: no hearts, no
+  // absorption, no armour, no drumsticks, no bubbles, and no damage flash.
+  // Written EVERY frame rather than only on the mode change: the same
+  // belt-and-braces rule the absorption row learned in Phase 22, and it
+  // makes a mid-flight switch correct on the very next frame.
+  const creative = gamemode.creative;
+  if (creative) {
+    heartsRow.style.display = 'none';
+    absorbRow.style.display = 'none';
+    armourRow.style.display = 'none';
+    hungerRow.style.display = 'none';
+    breathRow.style.display = 'none';
+    flashEl.style.opacity = '0';
+    // Force a redraw of each row's contents the next survival frame.
+    lastHealth = -1;
+    lastHunger = -1;
+    lastArmour = -1;
+    lastAbsorb = -1;
+    updateEffects(stats);
+    return;
+  }
+  heartsRow.style.display = 'flex';
+  hungerRow.style.display = 'flex';
   const frac = player.breath / player.maxBreath;
   breathRow.style.display = frac < 1 ? 'block' : 'none';
   if (frac < 1) {

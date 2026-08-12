@@ -8,14 +8,284 @@ Updated at the end of every session. Read at the start of every session.
 
 ## Status
 
-**THE GAME IS FEATURE COMPLETE.** A player can start from nothing, punch a
-tree, and follow the full progression — tools, mining, the Nether, blaze
-rods, brewing, endermen, eyes of ender, the stronghold, the end portal —
-into the End, destroy the crystals, kill the Ender Dragon, and step through
-the activated exit portal to the victory screen. The SPEC's success test is
-met end to end.
+**THE PROJECT IS COMPLETE.**
 
-Phase last completed: **Phase 24 — POLISH: terrain, sky and ground vegetation.**
+**Phase 25 was the last phase. The game is finished and shippable.** It loads
+from a static file server, offers SURVIVAL or CREATIVE on a start screen, and
+either one is a whole game.
+
+In SURVIVAL a player starts from nothing, punches a tree, and follows the full
+progression — tools, mining, smelting, a night with things in it, the Nether,
+a fortress, blaze rods, brewing, endermen, eyes of ender, the stronghold, the
+end portal — into the End, destroys the crystals, kills the Ender Dragon, and
+steps through the activated exit portal to the victory screen. SPEC.md's
+success test is met, end to end, and was driven through the real systems in a
+real browser this session: 16/16 checks, from an empty inventory on a fresh
+world to Return Home with the inventory intact (see THE FINAL PASS below).
+
+In CREATIVE they fly, break anything instantly, and build out of a tabbed,
+searchable catalogue of every block and item in the game.
+
+Nothing temporary remains in the build. There is no test chest, no debug kit,
+no half-wired feature behind a flag.
+
+Phase last completed: **Phase 25 — SURVIVAL AND CREATIVE MODES (final).**
+
+**Phase 25 follow-up (same session series): seven visual/world reports.**
+All landed and measured; the game remains complete and shippable.
+
+- **Render distance 12 -> 20 chunks (320 blocks).** Fog out to 120/346 to
+  match. Measured (node, real generator+mesher): 1257 meshed chunks, 2968
+  draws, 6.44M tris, 554 MB geometry + 364 MB chunk data — ~920 MB resident,
+  a machine-with-memory setting by explicit request; the config comment
+  carries the r=8/12/20 table so it is one number to turn back down.
+- **Deserts are sand.** The Phase 24 BIOME_DITHER_RANGE of 0.35 speckled
+  grass columns across desert-dominant ground (24.7% of desert-dominant
+  columns had a grass surface). Desert edges now dither over their own
+  narrow band (BIOME_DITHER_DESERT_RANGE 0.08): grass in desert fell to
+  1.9% — almost all of it on the outermost fringe where desert barely wins —
+  while grass-family borders keep the wide feather (grass dithered into
+  grass is invisible by design).
+- **Plains == forest.** BASE_WEIGHT 0.38 -> 0.25 plus a slightly opened
+  forest moisture gate: plains 30.8% / forest 29.4% of land (was 40/23),
+  with desert 21% and mountains 19%.
+- **Less ocean.** CONTINENT.OFFSET 1 -> 2.5 lifts the landmass swell so
+  fewer dips reach under sea level: water fell from 25% of all columns to
+  9%. Rivers are carved down through the lift and are untouched.
+- **Clouds are volumes.** The flat quad deck became vanilla-fancy SLABS: 4
+  blocks thick, lit tops (1.0), shaded undersides (0.7), mid side walls,
+  front-face culled so the volume reads from below and from creative flight
+  above, per-face brightness baked as vertex colours CONVERTED TO LINEAR
+  (the sRGB trap, fourth sighting). The pattern is two-stage now — a coarse
+  WEATHER GATE (top 62% of the deck may hold cloud) intersected with the
+  fine octave thresholded to 24% global cover — which breaks the old merged
+  blend's continent-sized sheet into fields of distinct cumulus, plus an
+  isolated-single-cell cleanup. Screenshot-verified from the ground, from
+  under the deck and from above it.
+- **The sun's box is gone.** It was real, twice over: the old glow term
+  still carried alpha ~16/255 at the quad rim (additive blending draws that
+  as a faint square against the sky) and the 128px texture was
+  Nearest-filtered, so the magnified gradient stair-stepped. The sun is a
+  ROUND disc now (256px, linear-filtered) whose glow is windowed to reach
+  exactly zero before the rim. The moon keeps its vanilla pixel square.
+- **Distant terrain quality (fourth follow-up request — "don't make the
+  far places blurry or low quality").** Two causes, both fixed. The block
+  atlas had NO mipmaps (disabled since Phase 1 "so tiles don't blur into
+  each other"), so Nearest-minified terrain degenerated into shimmering
+  pixel noise at distance; it carries a hand-built TILE-LOCAL mip chain
+  now — successive 2x2 box downsamples from 256x256 to 16x16, where each
+  16px tile is exactly one pixel, and the chain STOPS there, so no level
+  can ever mix two tiles' texels (vanilla's own 4-mipmap-level trick).
+  RGB averages are alpha-weighted so leaves/plants keep their edge
+  colours; NearestMipmapLinear minification, Nearest magnification (pixel
+  art up close untouched, screenshot-verified), 16x anisotropy so grazing-
+  angle ground doesn't over-blur. And the fog stopped scaling
+  proportionally with render distance — at 480 blocks the old fractions
+  put everything past mid-distance in a milky wash; it is 340/510 now, so
+  terrain is CLEAR to ~70% of the view and the fog's only job is masking
+  the chunk edge (~80% haze at 480). Verified with before/after vistas of
+  the full r=30 ring.
+- **Render distance 20 -> 30 chunks (480 blocks) (third follow-up
+  request).** Fog out to 180/520. Measured: 2821 meshed chunks, 6665
+  draws, 14.2M triangles, 1224 MB geometry + 780 MB chunk data — a ~2 GB
+  resident footprint that wants a discrete GPU and 16 GB of system memory;
+  the r=8/12/20/30 cost table sits beside the number in config.js. The
+  cloud deck's re-anchor guarantee (coverage to at least 576 blocks out)
+  still clears the 480-block view. The e2e harness's forced ring-fill was
+  capped at a fixed 12 chunks — spawn attempts land 24-96 blocks out, so
+  that covers every attempt with lit chunks without asking the GPU-less
+  sandbox browser for gigabytes.
+- **A readable day clock (third follow-up request).** The debug HUD's
+  TIME line shows minutes into the day now — "TIME 12:41 / 20:00 (night)"
+  — instead of the raw day fraction; 10:00 is sunset.
+- **A half-and-half day (second follow-up request).** The 20-minute cycle
+  now splits exactly 10 minutes of day and 10 of night: the sun is above
+  the horizon for t 0-0.5 (as it always was, by the orbit maths) and the
+  dusk/dawn ramps shrank from vanilla's 1.5 minutes each to 30-second
+  washes sitting just inside the night's edges (keyframes 0.5-0.525 and
+  0.975-1.0), so full darkness holds 9 of the night's 10 minutes (was 7).
+  Measured in the running game by sweeping the whole day in one-second
+  steps: day 10.0 min, night 10.0 min, full dark 9.0 min, dusk 30 s,
+  dawn 29 s. The debug HUD's phase label follows the new boundaries.
+- **A plains spawn.** TERRAIN.SEED 2163 -> 3200, scanned for the most even
+  spawn area that starts the player ON plains: within 260 blocks the land is
+  plains 25% / forest 26% / desert 27% / mountains 22%, 13% water, spawn on
+  grass at y68.
+
+Re-verified after the changes: the full survival end-to-end run 16/16 on
+three consecutive runs and the mode harness 31/31, both on the new seed,
+zero game console errors. Two harness lessons from the re-run worth
+keeping: the check-6 shelter is a DUG-IN pocket now, not a 1-thick wall,
+because this game's melee is distance-only (MELEE_RANGE 1.4, no
+line-of-sight check — an accepted simplification since the combat phase),
+so a mob pressed against a thin wall bites through it and a creeper
+ignites through one; five blocks of depth beats both gates. And a death
+screen left standing by an earlier check silently blocks showVictory (the
+two screens never stack, by design) — the harness clears it through the
+real Respawn button before the victory check.
+
+MODE SELECTION (`player/gamemode.js`, `ui/menus.js`) — a START SCREEN on load
+offers Survival or Creative and holds the world frozen until one is picked
+(verified: the day/night clock does not advance behind it). Esc mid-game
+brings up a PAUSE MENU that names the current mode and offers the other one
+by name — "Switch to Creative" / "Switch to Survival". The switch is live:
+`gamemode.set` flips ONE flag and notifies subscribers, so there is no reload,
+no regeneration, no teleport and no copying — the world, the position and the
+inventory are the same objects a frame later, in both directions (verified by
+serialising the inventory across a switch and comparing). The mode shows in
+the bottom-right HUD corner as a small dim "Survival Mode" / "Creative Mode".
+
+The design that makes that cheap: `player/gamemode.js` is a module singleton
+on the established `particles`/`audio` pattern (ARCHITECTURE.md now calls them
+the three singletons), and every creative rule is ONE gate in the system that
+already owns the rule:
+
+| rule | where |
+|---|---|
+| cannot be damaged or die | `stats.damage` — every source in the game arrives there |
+| no hunger drain | `stats.gainExhaustion` |
+| instant break, no drops | `interaction.miningPlan` (bedrock/frames stay `Infinity`) |
+| infinite blocks | `inventory.consumeSelected` / `consumeOffhand` / `consumeItem` |
+| tools never wear | `inventory.damageSelected` / `damageOffhand` / `armour.damageAll` |
+| hostiles ignore the player | `mobs.playerTargetable` (every AI, injected ones included) and the same gate in `dragon.js` |
+| no health/hunger bars | `hud.updateHud`, written every frame |
+| E opens the creative inventory | `screens.js`, the one owner of that key |
+
+CREATIVE FLIGHT (`player/body.js` `_stepFlight`, `player/controller.js`) —
+double-tap Space toggles it, Space rises, Shift descends, sprinting doubles
+the pace, and the whole thing is 2.5x walking (`CREATIVE.FLY_SPEED` 10.9 vs
+`WALK_SPEED` 4.3, measured live at 10.90 blocks/s). Gravity, buoyancy,
+jumping and ladders are all replaced by one rule — velocity chases a wanted
+velocity on all three axes and decays without input — but the move still goes
+through the SAME swept collision as walking, because vanilla creative flight
+is flight, not spectator noclip (`CREATIVE.FLY_COLLIDES`, default true; see
+the deliberate slices). Landing ends the flight, vanilla-style; fall distance
+never accrues; leaving creative grounds the player at once.
+
+CREATIVE INVENTORY (`ui/creative.js`) — 188 entries over seven tabs (building
+blocks, decoration, tools, combat, food, materials, miscellaneous) with a
+search field that filters across EVERY tab at once, so an item is findable
+without knowing its drawer. Click an entry for a full stack, right-click for
+one, drag one into a slot, drop a stack on the backdrop to destroy it. The
+catalogue is infinite by construction: nothing is ever removed from it —
+every gesture builds a brand-new stack out of `freshStack()`. Verified: every
+catalogue name resolves to a real icon source (0 blanks), and every craftable
+or ingredient name in `systems/crafting.js` appears in the catalogue (0
+missing).
+
+THE FIVE REPORTED BUGS — all five measured, not asserted:
+
+(1) RENDER DISTANCE was too short. `VIEW.DISTANCE_CHUNKS` 8 → 12 (128 → 192
+blocks — vanilla's own default), with the fog pushed out to match (40/140 →
+72/208, the same clear fraction of the view). The number is backed by a
+measurement off the real generator and mesher rather than a guess: at r=8 the
+ring is 197 meshed chunks / 453 draw calls / 0.91M triangles / 79 MB geometry
++ 71 MB chunk data; at r=12 it is 441 / 973 / 2.03M / 174 MB + 143 MB. A 70°
+lens sees roughly a quarter of the ring, so r=12 draws on the order of 250
+calls and 0.5M triangles a frame. What stops it going further is the ~320 MB
+resident footprint, not the triangles — r=14 is playable with memory to
+spare, r=16 is not reasonable. Filling the ring is not the expensive part
+either: driven unbudgeted in the browser, the whole r=12 ring (729 chunks
+generated, 441 meshed) takes 6.4 s of CPU, which the 8 ms-per-frame
+streaming budget covers in about 13 s of play at 60fps. It is one number in
+config.js with all of those figures written beside it.
+
+(2) BIOME DISTRIBUTION was unbalanced. Three changes, and the numbers over a
+2000x2000 sample went from plains 39% / forest 26% / desert 10% / mountains
+25% to **plains 40% / forest 23% / desert 19% / mountains 18%** — all four
+with real presence. The climate fields got HIGHER frequencies (1/480, 1/420 →
+1/360, 1/320) because the old patches were so large that a whole session
+could happen inside one, which is what "plains are rare" actually described;
+mountains gave up a third of their land (`WEIGHT_START` 0.12 → 0.25); and
+desert stopped needing extreme heat AND extreme dryness at once. On "forest
+appears near water almost every time": measured, the generator has no such
+correlation to remove — forest is 26.0% of coastal land and 22.6% of inland
+land, and it was 26.2% vs 26.1% BEFORE any change. What was real is that the
+three biome axes shared one domain warp, so their boundaries bent together
+and whichever biome owned a stretch of coast owned all of it; moisture has
+its OWN warp pair on its own frequency now (`BIOME_WARP.MOISTURE_SCALE`), so
+the wet edge cuts across the hot and mountainous ones.
+
+(3) A NEW WORLD. `TERRAIN.SEED` 1337 → **2163**, picked by scanning seeds for
+the most EVEN spawn area under the rebalanced rules. The old spawn was a
+forested coast hemmed in by mountains (measured: 45% of the land within 300
+blocks was mountain, 2.8% desert, and the spawn column itself was forest).
+The new one is plains at y64 with, within 260 blocks: plains 29% / forest 25%
+/ desert 22% / mountains 24%, 15% water.
+
+(4) MOUNTAINS ARE GRASSY. The report was right and the Phase 24 entry marking
+this fixed is CORRECTED in place below. Phase 24 measured 60% grass / 38%
+stone and called it done; worse, 34 of those 38 points came from the STONE
+LINE, not from steepness — the line sat at y=108 while peaks reach ~140, so
+it stripped a third of every mountain rather than capping the tops. The line
+is 128 now (jitter 10 → 7) and `STEEP_DROP` is 4, so ordinary ridged relief
+no longer counts as a cliff. Measured after: **91.0% grass / 7.6% stone**
+globally, 95.5% grass around the new spawn.
+
+(5) LARGE CAVERNS ARE FINDABLE. Phase 23's mechanism was sound — chambers are
+PLACED, not thresholded out of noise — and its measurements were true. What
+was wrong was the RATE: one chamber per 224-block region put a chamber's
+footprint over ~3% of the cave band, and a player could explore a long time
+without meeting one. The tiles are 128 blocks now at 88% occupancy
+(`GREAT_CAVERN.REGION_SIZE`/`CHANCE`), and each chamber sends out three
+connector bores instead of two. Measured on real generated chunk data over a
+352x352 region: **5.4% of all open cave air is "big room"** (a cell with 8
+blocks of clear air each way horizontally and 6 vertically); from a random
+cave cell the air-path distance to a big room is **≤60 blocks for 67% of
+them, ≤120 for 80%, ≤240 for 91%**; chambers measure 36-56 across and 30-39
+tall; and **6 of 6** chambers fully inside the sampled region are reachable
+on foot from open sky. Density is one per ~136 blocks of travel, up from one
+per ~259.
+
+THE FINAL PASS — a survival run driven through the game's own systems in
+Chromium, 16/16 green on three consecutive runs, zero game console errors
+(the only 404 is the browser's own /favicon.ico request):
+
+  1. fresh world — empty inventory, 20/20 health and hunger, plains at y65
+  2. wood — a real generated oak log 1 block from spawn, punched by hand
+     (2.0s, drops true), picked up through the item manager
+  3. crafting — 6 logs → planks → sticks → crafting table → wooden pickaxe,
+     sword and shovel, all through the real `CraftingGrid`
+  4. mining — SPEC tool gating exact (stone 5.0s bare-handed no drop, 0.75s
+     with a wooden pickaxe with drop; iron ore needs stone; diamond needs
+     iron; obsidian needs diamond) and the ore is really in the ground near
+     spawn (coal 194, iron 296, gold 148, redstone 231, diamond 50 cells in
+     an 80x80x98 census, all-deepslate below y=-10)
+  5. smelting — a furnace burns coal and turns 3 raw iron into 3 ingots
+  6. a night — the sky darkens to level 11, 13-14 hostiles spawn naturally
+     across four or five species (zombie, skeleton, spider, creeper,
+     enderman), a zombie put down 7 blocks away closes the distance, and a
+     player who walls themselves into a 1x2 pocket comes through the rest of
+     the night at 20/20. Standing in the open instead is genuinely lethal —
+     an unarmed, unarmoured player was killed outright in two of the runs,
+     which is the survival loop working, not a failure
+  7. the nether portal — a hand-built 4x5 obsidian frame lights and fills
+  8. the Nether — a real fortress (110 pieces) with 3531 nether brick and a
+     blaze spawner around its heart
+  9. blaze rods — a blaze spawns, takes damage and dies
+ 10. brewing — water bottle → awkward → fire resistance on a real stand
+ 11. the stronghold — 12 end portal frames and 1646 stone bricks exactly at
+     the eye-of-ender point, 1175 blocks from spawn
+ 12. the end portal — the twelfth eye fills the 3x3 interior (9 cells)
+ 13. the End — the island (18413 end-stone cells sampled), ten crystal-topped
+     obsidian pillars, the dragon at 200 health
+ 14. the dragon — every crystal pops through its real combat facade, health
+     reaches 0, the death sequence runs to 'dead' and the exit portal opens
+ 15. VICTORY — standing in the activated exit portal shows the victory screen
+ 16. Return Home — back to the overworld with the inventory intact
+
+Plus a mode harness, 31/31: the start screen and its freeze, survival's empty
+inventory and absent test chest, survival wear and consumption, the pause
+menu's readout and switch, inventory identity across the switch, a click on
+the backdrop falling through to the canvas and resuming play, creative's
+hidden bars, instant break, infinite stacks, invulnerability, ignoring mobs,
+flight (rise, descend, 10.9 b/s, no fall damage), the creative screen's seven
+tabs and cross-tab search, click-for-a-full-stack twice from the same entry,
+and everything working again after switching back.
+
+---
+
+Previous phase: **Phase 24 — POLISH: terrain, sky and ground vegetation.**
 
 The overworld reads like Minecraft now: rivers wind to the sea, mountains
 are grassy with bare stone only up high and on cliffs, clouds drift over a
@@ -39,7 +309,15 @@ unchanged. Mountain surfaces stopped switching to stone at one fixed
 height: bare stone appears only above a noise-jittered STONE LINE
 (`SURFACE.STONE_LINE`) or on faces steeper than `STEEP_DROP` — measured
 over 320x320: mountain-biome surface is 57% grass / 26% stone, where the
-old rule left whole ranges bald. Gravel patches (`SURFACE.GRAVEL`) break up
+old rule left whole ranges bald.
+**CORRECTED IN PLACE (Phase 25): this was not enough, and the report that
+said so was right.** The mechanism was correct but the line was set at
+y=108 against peaks that reach ~140, so it stripped a third of every
+mountain instead of capping the tops — and 34 of the 38 stone points came
+from the LINE, not from steepness, which the Phase 24 measurement did not
+separate. Phase 25 moved the line to 128 (jitter 7) and STEEP_DROP to 4:
+91.0% grass / 7.6% stone. A single grass/stone ratio could not fail the
+thing being reported; splitting it by CAUSE could. Gravel patches (`SURFACE.GRAVEL`) break up
 beaches and riverbeds; underwater floors are sandy in the shallows and
 dirt/gravel below.
 
@@ -179,6 +457,14 @@ VERIFIED, not asserted: 5 chambers in a 512x512 world, one per ~229 blocks
 of travel, 32-56 blocks across and 20-40 tall by construction, and a flood
 fill from open sky reaches 5 of 5. In the running game, standing at
 (292, -30, 308) measures 38x51 blocks of open space with 18 up and 18 down.
+**AMENDED (Phase 25): every number here was true, and the report that
+caverns were still too rare to find was ALSO true.** Density was the thing
+nobody had measured: at one chamber per 224-block region a chamber's
+footprint covered ~3% of the cave band. Phase 25 changed only the RATE
+(REGION_SIZE 224 -> 128, CHANCE 0.72 -> 0.88, connectors 2 -> 3) and then
+measured the quantity the report was actually about — how far you have to
+walk THROUGH AIR from a random cave cell to reach a big room: 67% within
+60 blocks, 80% within 120, 91% within 240. See the Phase 25 entry.
 
 LAVA ABOVE -54 — the PROGRESS entry marking this fixed in Phase 10 was wrong
 and is corrected below. Phase 10 asked a 2D mask whether a COLUMN was in a
@@ -425,26 +711,46 @@ normal flood fill), and the mandated ui/screens.js split
 
 ## TEMPORARY, MUST REMOVE
 
-- **The spawn test chests** (`TEST_CHEST` in config.js, default true;
-  placement in main.js right after prebuild): TWO chests beside the
-  player's spawn point, stocked so the portal, the Nether, brewing, eyes
-  of ender, the stronghold loop AND the dragon fight can all be tested
-  without a full playthrough. History: removed at the end of Phase 20 as
-  originally mandated, then RESTORED by request in the Phase 20
-  follow-up with the End-fight kit expanded. Contents: 14 obsidian,
-  1 flint and steel, 1 brewing stand, 64 blaze rods, 8 blaze powder,
-  8 nether wart, 16 ender pearls, 16 eyes of ender, 6 glass bottles,
-  6 water bottles, 3 buckets, a full diamond armour set, a diamond
-  sword/pickaxe/axe/shovel, 1 iron sword, 3 bows, 128 arrows, 5 golden
-  apples, 64 torches, 64 cobblestone, 64 oak planks (tools, armour and
-  bows arrive at full durability, one per slot, through
-  `container.add`). Delete the config flag and the main.js block
-  together when it goes again.
+_Nothing._ Phase 25 deleted the spawn test chests and the `TEST_CHEST` config
+flag together, as mandated. Survival starts with an empty inventory in an
+unmodified world — verified in the running game (every one of the 36 slots
+null, and no chest block anywhere in the 9x9x6 box around the spawn point).
+A player who wants a kit picks Creative on the start screen.
+
+For the record, since this entry has been the project's one standing debt
+since Phase 15: the chests held 14 obsidian, flint and steel, a brewing
+stand, 64 blaze rods, 8 blaze powder, 8 nether wart, 16 ender pearls, 16
+eyes of ender, 6 glass bottles, 6 water bottles, 3 buckets, a full diamond
+armour set, diamond sword/pickaxe/axe/shovel, an iron sword, 3 bows, 128
+arrows, 5 golden apples, 64 torches, 64 cobblestone and 64 oak planks. They
+were removed at the end of Phase 20 as originally mandated, restored by
+request for End-fight testing, and are now gone for good.
 
 ---
 
 ## Working
 
+- **Phase 25 game modes** — `player/gamemode.js`: the `gamemode` module
+  singleton (`current` / `creative` / `survival` / `other` / `label` /
+  `chosen`, `set(mode)`, `toggle()`, `subscribe(fn)`). Import it and ask it;
+  never thread a mode flag through a factory. Its subscribers today are
+  stats (restore to full on entering creative), controller (ground the
+  player on leaving), hud (badge text) and menus (button labels).
+- **Phase 25 start screen + pause menu** — `ui/menus.js`
+  `createMenus({ canvas })` -> `{ setPaused(paused), startShown, pauseShown,
+  chooseMode(mode) }`. main.js calls `setPaused` every frame with its own
+  pause verdict; the overlay never shows over the start screen or before the
+  first lock. The pause overlay is `pointer-events: none` with an `auto`
+  panel, which is what keeps click-anywhere-to-resume working.
+- **Phase 25 creative flight** — `body.flying` (a plain field; the
+  controller sets it) switches `PlayerBody.step` to `_stepFlight`. Tunables
+  in `CREATIVE`. `player.setFlying(on)` / `player.flying` on the controller;
+  double-tap Space is the player-facing toggle and is creative-only.
+- **Phase 25 creative inventory** — `ui/creative.js`
+  `createCreativeScreen({ inventory, canvas })` -> `{ openScreen,
+  closeScreen(relock), isOpen, cursor, visibleItems }`. `CREATIVE_TABS` is
+  the catalogue (exported, so a test can walk it); add an item by adding its
+  name to a tab — it must already resolve through `itemVisualInfo`.
 - **Phase 24 rivers** — `TERRAIN.RIVERS` in `world/terrain.js`
   heightFromWeights: |field| < width presses the height toward a bed below
   sea level (parabolic profile, eased banks, width varied by a second
@@ -3613,6 +3919,39 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Partially built
 
+- Phase 25 deliberate slices:
+  - **Creative flight COLLIDES with terrain.** The brief's last creative
+    bullet ("collision still applies normally when not flying") can be read
+    as asking for noclip while flying; vanilla creative flight collides, and
+    SPEC.md's whole standard is "convincingly like Minecraft", so that is
+    what shipped. It is one flag — `CREATIVE.FLY_COLLIDES` — and setting it
+    false gives the fly-through-walls reading with no other change.
+  - Breaking a block in creative drops NOTHING (vanilla). The creative
+    inventory is where blocks come from, so a drop would only be litter.
+    Unbreakable blocks stay unbreakable: `miningPlan` only collapses the
+    time for a block with a FINITE hardness, so bedrock and end portal
+    frames are as safe in creative as in survival.
+  - Creative armour still shows on the player preview and still counts for
+    `armourPoints`, it just never wears. There is no damage to reduce.
+  - The creative inventory has no armour or offhand slots and no crafting
+    grid — the catalogue supplies finished items, and right-clicking a piece
+    of armour in the world equips it exactly as it does in survival.
+  - The search field is NOT auto-focused on open. E is both the open and the
+    close key; a focused field would eat the closing press and the screen
+    would look stuck. The foot hint says to click the box to search.
+  - A creative player is ignored by hostiles but is not invisible: mobs
+    still wander, burn in daylight and take damage. Passive mobs behave
+    exactly as they do in survival.
+  - Buckets still swap bucket <-> water_bucket in creative (the scoop path
+    needs that swap to work at all); vanilla would keep both. Nothing is
+    lost either way — the catalogue has all three buckets.
+  - Switching to creative restores health, hunger and saturation to full and
+    puts out any fire, so switching back to survival starts from a clean
+    state instead of from the hit that made you switch. Switching the other
+    way changes nothing.
+  - There is no third mode (no spectator, no adventure, no hardcore) and no
+    per-world default: the start screen asks every load, because the game
+    has no world saving to remember an answer in.
 - Phase 22 deliberate slices:
   - Particles are small textured/coloured CUBES, not vanilla's camera-facing
     quads. The brief asked for cubes; they tumble on a per-instance yaw+pitch
@@ -3969,7 +4308,58 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._ The two Phase 23 follow-up reports are closed — see
+_Nothing known broken._ The five Phase 24 follow-up reports are all closed
+and all measured (see the Phase 25 status entry): render distance raised
+with the geometry and memory numbers written into config beside it; the
+biome mix rebalanced to plains 40 / forest 23 / desert 19 / mountains 18 and
+the coast/forest claim measured to be absent from the generator both before
+and after; a new seed with an even spawn area; the mountain stone line
+corrected from 60/38 to 91/8 grass/stone; and great caverns raised in RATE
+until 67% of random cave cells are within 60 blocks of walking of a big
+room. The one thing worth flagging is a CAVEAT on the word "verified"
+rather than a break, and it is the same one Phase 24 recorded:
+
+- **Framerate is unmeasured, again.** (And the follow-up's r=20 render
+  distance makes the caveat bite harder: the choice was made on draw-call/
+  triangle/memory arithmetic, measured, not on a real GPU. If a real
+  machine disagrees, VIEW.DISTANCE_CHUNKS is one number with its own
+  r=8/12/20 cost table written beside it.) The generation, geometry, memory,
+  biome, cavern and mountain figures come from a headless harness driving
+  the real generators and the real mesher, and every gameplay claim comes
+  from the real game in Chromium — but Chromium in this sandbox has NO GPU
+  and falls back to swiftshader, where the game runs at 2-10 fps whatever
+  the settings. So the browser run measures correctness (block layout,
+  reachability, screens, HUD state, mode gates, flight numbers) and NOT the
+  60fps target. The render-distance decision was therefore made on the
+  quantities that CAN be measured — 973 draw calls, 2.03M triangles and
+  ~320 MB resident at r=12 — with r=8 left one line away in config.js for
+  anyone whose machine disagrees. The same GPU-less environment is why the
+  double-tap-space flight toggle had to be verified twice: with real key
+  events at a viewport small enough to hold a workable frame rate (two
+  presses 243ms apart, flight ON) and with synthetic events through the same
+  listener (tap, tap -> flying; tap, tap -> grounded), because at 1280x720
+  the software renderer delivers input once per ~500ms frame and no
+  double-tap window would ever close.
+
+- **The chunk ring does not fill in this sandbox — and it does not at r=8
+  either.** Worth recording, because it looks exactly like a render-distance
+  regression and is not one. In the GPU-less browser the game runs at
+  5-17 fps, and `world.js` `_streamPass` spends a fixed 8 ms per FRAME
+  nearest-first: near chunks stay dirty because `world/fluids.js` is still
+  settling generated water (measured: 300-1600 setBlocks per 10 s, mostly
+  water flow, declining but not to zero while new chunks keep arriving), one
+  remesh costs ~9 ms, so at 5 fps the entire budget goes on remeshing the
+  chunks already meshed and the ring never grows past ~72. A/B at the same
+  viewport and the same 90 s warm-up: **r=12 gives 15.5 fps / 72 meshed /
+  115 loaded; r=8 gives 17 fps / 72 meshed / 115 loaded** — identical, so the
+  stall is frame-rate-bound, not distance-bound. At 60 fps the streamer gets
+  twelve times the budget and the water churn is a rounding error against it.
+  Nothing was changed here: the streaming budget and the fluid settle are
+  both WORKING per this document, and the last session of a project is the
+  wrong place to re-engineer a system on the evidence of a software
+  renderer.
+
+The two Phase 23 follow-up reports are closed — see
 the Phase 24 status entry: the lava one was real (the settle scan grew the
 generated pools; pools are contained basins now, measured), and the
 deepslate one could not be reproduced against this code by ANY measurement,
@@ -4033,518 +4423,68 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-- **Phase 24 APIs.** `world/plants.js`: `isCrossPlant(id)` /
-  `plantCanSitOn(plantId, soilId)` are the predicates every plant rule
-  reads; add a plant by registering it there and adding its tile to
-  `CROSS_PLANT_TILE` — the mesher (`CROSS_TILE`), items
-  (`ATLAS_SPRITE_ITEMS`, add manually), and placement all key off those.
-  `__dayNight.dayIndex` is the moon clock; `setTimeOfDay` counts a backward
-  jump > 2% of a day as a day wrap (sleeping advances the phase; re-pinning
-  the clock in a test does not). Clouds live in the scene root
-  (`clouds.mesh`) and are driven — drift, light, visibility — entirely from
-  `createDayNightCycle`.
-- **The cloud/star materials must stay sRGB-aware.** Three stores material
-  colours LINEAR and converts on output; a brightness computed in linear
-  reads ~2x too bright on screen (the first night screenshot showed a
-  mid-grey cloud sheet over a deep-navy sky — `setLight` now converts both
-  ways). Same trap as the Phase 22 particle colours; third time it bites,
-  put a helper somewhere shared.
-- **Measuring the fluid AFTERMATH, not just generation.** The lava lesson,
-  twice now: a generation census cannot see what `world/fluids.js` does on
-  settle. The scratch harness pattern that finally caught it: generate a
-  region, then for every fluid cell ask "does it have AIR below or beside"
-  — any yes is a cell the automaton WILL grow. Zero is the only passing
-  score for something meant to be static.
-- **Rendering a surface map beats screenshots for terrain tuning.** The
-  rivers/beaches/stone-line were all tuned from a 768x768 top-view PNG
-  rendered straight from the generator in node (colour per top block +
-  hillshade) — one look showed river connectivity, beach reach and biome
-  blending at once. The GPU-less browser can't give you that view.
-- **Browser-harness notes.** `__player.toggleFly()` works headless (the F4
-  path needs pointer lock, the method doesn't); `body.position` is a plain
-  {x,y,z} — assign fields, don't `.set()`; hide `#lock-hint` before
-  screenshots. Sky shots want the camera parked at y≈140 in fly mode.
-- The 60fps target is still unmeasured in this environment (SwiftShader,
-  no GPU — the Phase 23 caveat stands). What IS measured: generation 4.5
-  ms/chunk, meshing 13.9 vs 13.7 ms/chunk baseline in node — the plant
-  quads are noise. If a real-GPU session ever profiles the game, clouds
-  are one draw call and the starfield one Points draw.
-- **Great caverns are placed, not sampled — do not "tune" them back into a
-  noise field.** `world/caverns.js` exists because three phases proved the
-  noise-threshold approach cannot make a room: at a threshold high enough to
-  be rare, an fBm iso-surface is a scatter of fragments, and the knobs
-  (frequency, threshold, region mask) trade rarity against size without ever
-  buying volume. If a future phase wants bigger, rarer, or more caverns, the
-  numbers to change are `CAVES.GREAT_CAVERN.RADIUS_*`, `HEIGHT_*`,
-  `REGION_SIZE` and `CHANCE` — they map directly onto blocks and spacing,
-  which is the entire point of placing them.
-- **How to verify world generation without a GPU.** The claims in this
-  phase's status entry came from a headless harness: import
-  `world/terrain.js` in node with a stub for `three` (the only browser
-  dependency in the generation path is `render/atlas.js`'s import), give it a
-  15-line `Chunk` class matching `world/chunks.js`'s get/set/index, and
-  generate a region into one flat array. Two measurements were worth more
-  than everything else:
-  - **Connected components are useless for finding caverns.** The tunnel
-    network links the whole region into one component that trivially passes
-    any "is it 30 blocks across" test. Use CLEARANCE instead: erode the air
-    set N times with the 6-neighbourhood and cluster the survivors. Tunnels
-    die by N≈4; anything alive at N=8 is a room.
-  - **Ore rarity must be measured per solid block INSIDE the ore's Y band**,
-    not per column. Per-column counts made iron look more common than coal
-    purely because iron's band is 97 levels deep and coal's usable band is
-    about 65. Per-block, the SPEC ordering is exactly right: coal 3.49,
-    iron 3.15, redstone 1.79, gold 1.14, diamond 0.67 per 1000.
-- **Diamond findability, with the arithmetic.** At y -59..-50 diamond ore is
-  1 per 572 solid blocks. An iron pickaxe through deepslate (hardness 3.0,
-  6x tier) is 0.5 s/block, so 10 minutes of strip mining breaks 1200 blocks
-  and exposes roughly 3600 — about 6 diamond ore. Deepslate doubling the
-  mining time was the thing to watch here: it halves the blocks-per-minute,
-  and the target is still met with margin. If deepslate ore hardness (4.5)
-  is ever raised, re-run that sum.
-- **The browser harness needs three.js served locally.** unpkg.com is
-  blocked by the sandbox's egress policy, so a Playwright run must
-  `page.route('https://unpkg.com/**', ...)` and fulfil `three.module.js`
-  from a local `npm install three@0.160.0`. index.html stays pinned to the
-  CDN — that is SPEC, and the interception is test-only. Chromium here has
-  no GPU (swiftshader, ~13 fps), so chunk streaming takes 1-2 minutes to
-  fill in after a teleport: wait on `world.streamStats().meshed`, and expect
-  the count to plateau well below the full ring.
-- **Seeing underground in a screenshot.** The game has real light
-  propagation, so a teleport into a cave renders black. `__inventory.add('torch', 8)`
-  puts the held light in hand (LIGHTING.HELD_LIGHT), which lights a few
-  blocks — but for judging the SHAPE of a cavern, render a cross-section
-  from the world data instead of trying to photograph it. That is what
-  settled this phase's question in one look.
-- **Phase 22 APIs.** `particles` (render/particles.js) and `audio`
-  (systems/audio.js) are module-level SINGLETONS: import and call, no wiring.
-  Both are inert until main.js runs `particles.init({ scene, world })` and
-  the first `audio.unlock()` (the canvas pointerdown listener), which is what
-  keeps them safe to import from anywhere. Add a new effect by adding an
-  emitter method to the ParticleSystem class and its numbers to
-  config PARTICLES; add a new sound by adding a method that calls
-  `playLayer(name, parts, { place, volume, key })` and its numbers to
-  config AUDIO. `blockSoundGroup(name)` maps a block registry name to a
-  material timbre — extend the string tests there, NOT world/blocks.js.
-- **Harness notes that cost this session real time.** `__interaction`
-  gained `debugRightClick()` (test scaffolding beside `debugSetMouse`): a
-  right-click PRESS only resolves through the pending flag the real
-  mousedown sets, so `debugSetMouse(false, true)` alone can never test a
-  bucket, a pearl or any other use action. And driving `interaction.update()`
-  by hand does NOT move the camera — the camera is derived in
-  `player.update()`, so a targeting test must let real frames run
-  (`debugForceInput(true)` keeps the loop alive without pointer lock) after
-  `setView`. Fluid-flow tests must wait on GAME time, not wall clock: under
-  SwiftShader the whole world runs at ~10fps and heavy `setBlock` loops
-  (2000 cells) stall it for minutes — build small arenas.
-- **Do not emit from `player/body.js` or `entities/entity.js`.** Both are
-  deliberately three.js-free and node-constructible, and importing the
-  particle/audio singletons would drag `three` into them. Their feedback is
-  edge-detected by their managers instead: `entities/mobs.js` compares
-  `entity.health` to `mob.shownHealth` each frame (which covers EVERY damage
-  source — melee, arrows, blasts, burning, suffocation), and
-  `systems/ambience.js` reads `body.lastLanding` / `horizontalSpeed` /
-  `touchingWater`. Keep it that way.
-- **Per-instance colours must be sRGB-decoded.** The renderer encodes
-  linear -> sRGB on output and three decodes any colour you hand a material,
-  but an instanced attribute bypasses that: `render/particles.js` runs config
-  hexes through SRGB_TO_LINEAR at spawn. Skipping it renders dark smoke as
-  pale grey (it did, until it was caught in a screenshot).
-- **THE GAME IS COMPLETE AND POLISHED.** Phase 20 shipped the finale;
-  Phase 21 shipped the building set; Phase 22 shipped the feel. What
-  is left is maintenance context, in rough priority order:
-  - TWO files are over the ARCHITECTURE cap and both carry a MANDATED CUT:
-    `entities/dragon.js` (878 — cut the rig: spawnDragon/attach/
-    layoutChain/animate plus localToWorld/worldToLocal, into
-    `entities/dragon_rig.js`) and `world/blocks.js` (908 — cut the fluid
-    families: the lava/water id tables and their predicates; pass BLOCK/
-    BLOCKS in the way `world/shapes.js` takes `register`, or the import
-    cycle bites). Phase 21 cleared combat.js (572 now) with the arrow
-    split that had been mandated since Phase 17, and made four more cuts
-    (arrows, placement, body, shapes/shape_tables).
-  - Phase 21 API notes: a block's shape is written ONCE. Add a non-cube
-    block by giving it a `shape` in `world/shapes.js` and marking it
-    `special: 'shape'` — the mesher's `emitShape` and `collisionBoxesAt`
-    both read it, so there is nothing else to write. `collisionBoxesAt(id,
-    getBlock, x, y, z)` is the physics entry (it takes getBlock because
-    fences/walls resolve their connections per cell, cached per 4-bit
-    mask); `MAX_COLLISION_OVERHANG` is why the sweeps scan one cell
-    further "behind" a face. `hasCollision(id)` is the cheap pre-check.
-  - Anything that displays per-position STATE follows world/signs.js and
-    world/frames.js: a Map keyed by cell, a block listener that tears the
-    entry down when the block stops being that block, `swapDimensionState`,
-    and registration in BOTH main.js's listener list and its dimension
-    managers list. Forgetting the managers list leaks state across
-    dimensions (the Phase 15 rule).
-  - `render/item_art.js` is where an item with no shipped texture gets its
-    sprite; add a painter there and `itemVisualInfo` routes dropped items,
-    the held hand and the UI icons through it automatically.
-  - The sign editor releases pointer lock while typing and re-requests it
-    on Done, and main.js's `isPaused()` excludes `signs.isEditing` so the
-    world keeps running. A headless test that edits a sign will lose the
-    lock for later right-click cases — run those first (this cost real
-    time this session).
-  - The stronghold-rooms report from Phase 19 remains open: the library
-    should become a two-storey room (bookshelf walls, wooden walkways,
-    ladder) and the portal room a taller chamber with a raised walkway
-    around the frame. Cosmetic — the run is completable as is.
-  - ~~SPEC "feel" rows never built: footstep/break/place sounds, rivers,
-    water flow~~ — Phase 21 shipped water flow, Phase 22 shipped every
-    sound and particle row. RIVERS are now the ONE unbuilt SPEC feature
-    left in the whole document; they need a fluid-aware carver pass.
-- Phase 20 APIs: `createDragonFight` (entities/dragon.js) owns the whole
-  End fight; it deliberately does NOT join the dimension managers list —
-  it gates every update on `dimensions.activeKey === 'end'` and syncs
-  its one fightRoot group's visibility first thing each update, which is
-  equivalent for a fight that only exists in one dimension (state
-  freezes while away, nothing leaks — the Phase 19 `activeKey` gotcha
-  handled by construction). Combat reaches it through the
-  `combatTargets` FACADE in main.js (raycast merge + blastTargets
-  concat) — if a future phase adds another non-mob combat target, extend
-  the facade, not combat.js. `generator.pillars()` /
-  `exitPortalCells()` / `fountainTop()` (dimensions/end.js) are the
-  End's layout truth, shared via the ONE EndGenerator instance main.js
-  creates (the stronghold-blueprint pattern — never construct a second
-  one except in tests, where determinism makes them agree).
-- The dragon's rig is driven, not posed: neck/tail pivots are laid along
-  bezier chains per frame (`layoutChain`), jaw/wingtips/lower-legs are
-  re-parented onto parent parts at attach() (the models.js pivots are
-  only rest positions). Anything that needs the head's world position
-  reads `dragon.headLocal` through `localToWorld` (manual yaw+scale
-  math — no matrixWorld reads, no allocation).
-- Harness notes that cost this session real time (on top of the
-  PROGRESS Phase 14/19 notes, which all still apply): teleporting the
-  player DOWN in tests must reset `body._fallStartY` (not just
-  `fallDistance` — landing damage is computed from the fall START, so a
-  scenic teleport from y=105 to the ground otherwise lands as ~40 blocks
-  of lethal fall damage); and long End-side polls must disable natural
-  spawning (`__mobs.setNaturalSpawning(false)`) or wandering endermen
-  eventually aggro off the fixed test crosshair and kill the player
-  mid-suite. The Phase 20 browser suite (scratchpad browser_test.mjs
-  pattern: local three via test.html + playwright-core against
-  /opt/pw-browsers chromium) runs the WHOLE finale — boot, End arrival,
-  crystal pop through combat.attack, healing, perch, melee vs arrow
-  rules, breath ticks, death, portal fill, victory screen, Return Home —
-  21 checks green with zero console errors, plus a 25-check node fight
-  harness (fight_test.mjs) over the state machine with stub world/combat.
-- Phase 19 APIs: `world.generator.stronghold` (a StrongholdGenerator) is
-  the layout truth — `blueprint()` (frames/portalCells/chests/bounds),
-  `entryPoint()`, `lootFor(x,y,z)`; main.js shares the one instance with
-  `createEndPortal` and the chest scan. `createEndPortal.checkActivation`
-  re-derives portal state from world blocks (idempotent). The End
-  arrival is END.PLATFORM/ISLAND_TOP_Y; the trip back (exit portal) can
-  reuse the same travel shape with switchTo('overworld'). The chest
-  chunk-scan (`_chestScanned`, world/chests.js) now exists for ANY
-  structure that generates chests — a dungeon phase would only add loot
-  in its own lootFor. Per-dimension spawn pools take `{ name, weight }`
-  overrides (entities/spawning.js). STATS.VOID_DAMAGE_Y is the void
-  floor; the End def's group/sky/spawn wiring in main.js is the model
-  for any future dimension.
-- Phase 19 gotcha, learned the hard way: ANY per-frame system that walks
-  `registry[dimensions.activeKey]`-style tables MUST handle a dimension
-  key it has never seen — the End's first arrival killed the game loop
-  inside portals.js (undefined list) until the registry grew an 'end'
-  entry. Grep for `activeKey` when adding dimensions.
-- Phase 18 APIs: `strongholdCenter(seed)` (dimensions/stronghold.js) is
-  the single source of truth for the stronghold's location — generation
-  and the eyes must never disagree. `consumableValue(name)`
-  (player/inventory.js) is the eat/drink registry lookup; add potions in
-  POTIONS (colour + effect) and effects in stats.js's `effects` map +
-  `eat()`. `stats.igniteFire(seconds)` is the external-burn entry;
-  `stats.effects`/`strengthBonus` the readers. `combat.spawnFireball`
-  takes `fireSeconds` (direct player hits only). The brewing stand is
-  `brewing.standAt(x,y,z)` (systems/brewing.js, the furnace pattern);
-  container screen sections live in ui/containers.js — a new container
-  screen adds its section there and its mode/open call in screens.js.
-  `player.yaw`/`player.pitch` are the exact camera angles (the enderman
-  stare derives the forward vector from them — reuse for anything that
-  needs "is the player looking at X").
-- The enderman teleport helper (entities/enderman.js `teleportRandom`)
-  is the shape the End fight's dragon-area blinks can reuse; its
-  dry-standable check is water-aware. Enderman spawns in the End: list
-  'enderman' in the End def's spawn table (registry entry has no
-  `nether` flag, so keep the End def explicit).
-- Phase 17 APIs: `world.generator.fortress` (Nether dimension) —
-  `blueprint(rx, rz)` and `heartOf(rx, rz)` locate fortresses for
-  tooling/tests. `PLANTABLE` (world/blocks.js) is the crop-planting hook
-  (a future wheat only needs an entry + a growth system like
-  world/wart.js). `combat.spawnFireball` takes per-fireball `size`
-  (render + deflection hitbox), `damageRadius` and `maxHardness`;
-  `combat.explode` takes opts.maxHardness. The spawner discovery scan
-  (`chunk._spawnerScanned`, world/spawners.js) is the pattern for ANY
-  block entity a structure generates into chunk data (the stronghold's
-  loot chests will need exactly this — chests.js currently only creates
-  state on block events or first use).
-- The blaze's firing cycle state lives on the mob record
-  (blazeCharge/blazeBurst/blazeTimer/blazeSpin); the rod-ring animation
-  reads BLAZE_RINGS from models.js — keep geometry there, behaviour
-  tunables in MOBS.BLAZE.
-- Phase 16 APIs: dimension defs (main.js) carry `spawn` tables —
-  `{ hostiles: [names], passives: [names], hostileCap, passiveCap,
-  anyLight }` resolved by `mobs.setSpawnProfile` on every switch; put new
-  Nether mobs (blaze) in the nether def's list and mark their registry
-  entries `nether: true` so the overworld pools skip them. `def.flying`
-  on a registry entry makes entities/entity.js fly (wishY, no gravity
-  while alive); `type.scale` scales the whole model group; `type.
-  minBrightness` floors the light tint. `combat.spawnFireball({from, vel,
-  damage, blockRadius, fromPlayer})` (systems/fireballs.js) is the
-  exploding-projectile entry; `combat.explode(centre, damage,
-  {blockRadius})` takes per-blast radii now. `NETHER_SKY.AMBIENT_LIGHT` /
-  `dayNight.ambientLight` / `uMinSkyLevel` is the dimension ambient
-  channel (the End profile can carry its own). `fluids.setTickSeconds`
-  is the per-dimension lava pace.
-- Phase 15 APIs: `dimensions.switchTo(key)` / `activeKey`
-  (dimensions/dimensions.js) is the only dimension entry point — managers
-  participate via `swapDimensionState(stored)`; ANY new per-frame system
-  that keeps world-coordinate state must implement it and be added to the
-  managers list in main.js, or its state will leak across dimensions.
-  `portals.registry` (per-dimension), `portals.tryIgnite(target)`,
-  `portals.standFraction` (a HUD vignette hook if wanted).
-  `dayNight.setDimensionSky(profile)` takes any NETHER_SKY-shaped config
-  block — the End's purple sky is the same mechanism.
-  `world.swapState` is dimensions.js's tool; nothing else should call it.
-- The skeleton report is genuinely closed this time (visible
-  raise-draw-release + arrows floored at MIN_TINT 0.45, verified by
-  browser sampling); if a future report contradicts PROGRESS again,
-  believe the report — the Phase 14 harness proved internal state, not
-  what a player sees.
-- ~~ui/screens.js (~810) is now the only file over the cap~~ — Phase 18:
-  split done (ui/containers.js; screens.js 670). ~~player/interaction.js
-  (817)~~ — Phase 19: split done (player/fluid_actions.js; interaction
-  765; the mobs.js spawn-profile machinery also moved to
-  entities/spawning.js, mobs.js 758). STILL OVER THE CAP and MUST be
-  split before anything else lands in it: `systems/combat.js` (808 — the
-  arrow machinery cut, mandated since Phase 17).
-- With the survival loop closed, the remaining SPEC arc is the endgame:
-  the stronghold, the End and the dragon.
-- Phase 14 APIs for later phases: `mobs.useOnMob(mob, itemName)` is the
-  right-click-on-mob hook (extend for wheat-luring/breeding). Passive
-  types: `ai: 'passive'` + optional `wool`/`laysEggs`/`maxFallSpeed`/
-  `overlay`/`dropsFor(mob)` registry fields. `attachOverlayModel`
-  (models.js) for any second-sheet layer. The active-hand sources in
-  interaction.js (`mainHand`/`offHand`) are where any new right-click
-  action should plug in (add its name to `hasRightClickUse` or the
-  offhand fallback will shadow it — that list gates which hand acts).
-  `CHUNK_LIGHT_UNIFORMS.uHeldLight*` is the dynamic-light channel; other
-  dynamic sources (a thrown glowstone?) could ride the same uniforms if
-  ever needed (one light only by design). `stats.canEatFood(food)` is
-  the eating gate; `STATS.EXHAUSTION_SCALE` the single hunger-pace knob.
-- **The unloaded-chunk rule is now universal**: dropped items, arrows AND
-  mobs freeze whenever their chunk isn't loaded. Any new per-frame system
-  that calls `world.getBlock`/`getLight` for an entity must sit inside a
-  `world.getChunkIfLoaded(...)` gate — without it, streaming unloads turn
-  into a synchronous chunk regeneration every frame (the Phase 14 review's
-  one major finding, and the same bug shape Phases 6 and 12 each hit once).
-- Attaching a shared cached mesh (`createExtrudedItemMesh`) to an entity
-  that gets TINTED means cloning its material per instance — the cache is
-  shared with the player's hand and every dropped copy. And declare the
-  group with `let` before the factory call: `onReady` fires SYNCHRONOUSLY
-  on a cache hit, so a `const` is still in its temporal dead zone (this
-  has now bitten twice — Phase 10's held tool, Phase 14's skeleton bow).
-- File-size caps (ARCHITECTURE): mobs.js 758 (Phase 19 spawn-profile
-  move), interaction.js 765 (Phase 19 fluid-actions split), screens.js
-  670. Only combat.js (808) remains OVER with its mandated arrow cut —
-  see the cap bullet above and ARCHITECTURE.md.
-- The mob-type registry entries for the herds reference config MOBS.PASSIVE
-  at module load (chicken maxFallSpeed) — config stays import-order-safe
-  as long as it has no imports of its own; keep it that way.
-- Headless-harness note (cost this session real time): the game clamps
-  frame dt at DEBUG.MAX_DELTA (0.1s) — under SwiftShader's few-fps frames,
-  wall-clock waits deliver a FRACTION of the expected game time. Always
-  wait on game time (poll `__dayNight.timeOfDay`); the session scratchpad
-  harness has `waitGame`/`__gameWait` helpers and a full green suite to
-  copy (n_core, n_models, t_boot/passives/skeleton/offhand/armour/
-  earlygame/heldlight_perf/light_probe/shots).
-- Phase 13's roster notes still apply for enderman/blaze/ghast (sheets:
-  enderman 64x32, blaze 64x32, ghast 64x32 in assets/entity/).
-- Phase 12 APIs for later phases: `Entity` (entities/entity.js) is the
-  physics base — construct with (world, pos, typeDef), steer via
-  wishX/wishZ, `damage(amount, dirX, dirZ)`, `aabb`. `findPath`/
-  `standableAt` (entities/pathfinding.js) are pure over a getBlock fn;
-  budget knobs in MOBS.PATH. `createMobModel(type)` (entities/models.js)
-  -> { group, parts, material } — parts are pivot Groups (swing via
-  rotation), material is per-instance for tinting. `world.getLight(x,y,z)`
-  -> { sky, block } | null (never rebuild light windows per query);
-  `dayNight.skyDarken` for effective-light gates. The combat bridge in
-  main.js passes WEAPON_DAMAGE[selectedName] ?? fist into `mobs.attack`;
-  skeleton arrows and creeper explosions should call `stats.damage` +
-  `applyKnockback` like the melee bite does, and apply `ARMOR_REDUCTION`
-  once armour equip slots exist (still unbuilt). Vanilla attack/break
-  exhaustion costs also remain for the combat phase.
-- Flowing lava (world/fluids.js): event-driven — anything that edits
-  blocks gets flow updates for free via the world listener. If water flow
-  arrives later, generalise the automaton (feeder levels + heights are
-  the only lava-specific parts; water spreads 7 with faster ticks). The
-  Nether phase should widen LAVA_RANGE there (vanilla doubles range and
-  halves the tick in the Nether).
-- The pause: `isPaused()` in main.js is the single gate — new per-frame
-  systems must tick inside the `if (!paused)` block. Anything input-driven
-  must gate on pointer lock (that is what makes input dead while paused).
-- Mob visuals: mobs are unlit like chests/items — the per-frame
-  world.getLight tint in mobs.js `animate` is the pattern; if items/hand
-  ever get light tinting, reuse it.
-- Phase 11 APIs for later phases: `foodValue(name)` (player/inventory.js)
-  is the edibility registry — new foods just add an entry (and a texture).
-  `stats.eat/canEat/hunger/saturation/burning/dead/respawn`,
-  `screens.showDeath()`/`closeScreen(relock)`, `inventory.replaceSelected`
-  (bucket-style item swaps). The torch mesher (`emitTorch` in
-  world/chunks.js + `TORCH_LEAN` in blocks.js) is the template for other
-  small box models (brewing stand). `ATLAS_SPRITE_ITEMS` (entities/items.js)
-  routes any item whose art is an atlas tile into all sprite paths.
-  Eating currently pauses hold-to-place but not mining; vanilla also slows
-  the eater — not modelled (nothing depends on it yet).
-- Phase 10 APIs for later phases: `world.addBlockListener(fn)` — the
-  block-change hook is a list now (falling, smelting, chests subscribe);
-  listeners must not throw. `SlotContainer` (player/inventory.js) is the
-  base for any block container — the brewing stand should subclass it like
-  `Furnace` does (slot gates via canPlaceIn/clickSlot overrides, shift
-  routing via addStack) and get a screen mode next to 'furnace' in
-  screens.js (indicator art + screens.update polling is the template).
-  `smelting.furnaceAt(x,y,z)` / `chests.chestAt(x,y,z)` are the state
-  lookups (lazy-create). `createChestMesh(size)` for anything chest-shaped;
-  `createModelMesh(model, size)` (entities/items.js) is the centred item
-  variant. Oriented placement: extend `placementVariant` in blocks.js.
-  Buckets scoop and place both fluids as of Phase 11 (a scooped lava
-  bucket is also the premium furnace fuel, closing that loop).
-- Mining note (Phase 10 update): lava lakes flood all carved space at
-  y<=-54, so "the right depth" to tell players is now y≈-52 (diamond
-  density there is within ~12% of the old -54 guidance; the 39/40
-  findability simulation was ore-density-driven and unaffected).
-- Furnace facings: placement picks FURNACE/_N/_E/_W toward the player;
-  smelting swaps lit variants in place. If another oriented block arrives
-  (dispenser-like), follow the same pattern — ids are cheap, the mesher
-  needs nothing.
-- Phase 9 APIs for later phases: `stats.damage(amount)` for any damage source;
-  `stats.health/maxHealth/flashFraction` for UI. `inventory.drainAll()`
-  empties and returns stacks. `createExtrudedItemMesh(name, size)`
-  (entities/items.js) for any held/shown item slab (async texture build,
-  cached per name). The caves carver is `world.generator.caves`
-  (`ravineDepthAt`, `surfaceOpenAt` are pure and cheap; the mining-sim
-  and cave-census harnesses in the session scratchpad show how to drive
-  it for tests).
-- Lava physics (Phase 10): lava is a dense fluid in PlayerBody behind the
-  existing fluid handling (touchingLava/lavaSubmersion/eyeInLava; tunables
-  in PLAYER.LAVA_*). Water maths are untouched — keep it that way; the
-  swim-sprint mechanic and breath stay water-only, and the standing-eye
-  disengage rule still applies to water.
-- Mining note for balance: diamond concentrates hard toward y=-60..-40
-  (bottom-biased); with lava lakes flooding y<=-54, "the right depth" to
-  tell players is y≈-52.
-- Phase 8 APIs for later phases: `craftResult(slots, width)` is the only
-  matcher; add recipes via the `shaped`/`shapeless` helpers at the top of
-  systems/crafting.js (append — order matters only if two patterns could
-  match the same grid, which none do today). `CraftingGrid` is reusable
-  for any future grid-shaped container. `screens.openCrafting()` opens the
-  3x3; new usable blocks hook into main.js's `onUseBlock` (return true =
-  click consumed; sneaking already bypasses upstream).
-  `interaction.renderHand(renderer)` must stay the LAST render call of the
-  frame; anything new drawn as an overlay should render before it.
-- The held-item/hand look lives entirely in `INTERACTION.HAND` (config):
-  FOV/NEAR/FAR for the dedicated hand camera, POSITION/tilts/scales sized
-  for that frustum — if the FOV changes, everything needs re-tuning
-  against screenshots (sizes appear ~1.5x bigger at 50 vs 70).
-- Phase 7 APIs for later phases: `inventory` (main.js `window.__inventory`)
-  is the single item-ownership truth — `add(name, count)` returns leftover
-  (crafting/smelting outputs, mob drops), `addStack` preserves durability,
-  `canAccept`, `selectedName`/`selectedStack`, `consumeSelected`,
-  `damageSelected` ('broken' clears), `subscribe(fn)` for any new UI.
-  `itemMaxStack`/`itemMaxDurability` are the item registry — extend the
-  tables there for new items. `items.spawn(name, count, pos, vel?,
-  durability?)` drops anything and pickups route durability back through
-  `onPickup(name, count, durability)` in main.js. Slot UI: reuse
-  `renderSlotContent`/`createItemIcon` (ui/icons.js) for any new screen.
-  `interaction.target` is the live raycast result ({x,y,z,id,face,distance}
-  or null); `createBlockMesh(blockId, size)` (entities/items.js) builds the
-  mini-block used by drops and the held hand.
-- The break key includes the held item name — any selection change resets
-  break progress and recomputes the plan (that's what keeps the tier/drop
-  gate and durability charge honest); don't "optimise" it back out.
-- Headless-harness gotchas (cost this session real time): headless Chromium
-  FREEZES requestAnimationFrame permanently once pointer lock engages — do
-  event-driven tests (keys, screens, wheel) under real lock, but anything
-  frame-driven unlocked via `setView`/`debugSetMouse`/`debugForceInput`;
-  Playwright's injected mouse also emits huge fake movementX/Y around lock
-  engagement, so suppress mousemove (capture + stopImmediatePropagation) or
-  never use page.mouse while locked. SwiftShader frames are slow and uneven
-  — wait on frame counters (`renderer.info.render.frame`) or polled
-  conditions, never wall-clock. Phase 8 note: the hand pass is a second
-  render() per frame, so `renderer.info.render.frame` now advances by 2 per
-  displayed frame (fine for waiting on progress) and `info.render.calls/
-  triangles` report the hand pass, not the world — use a mid-frame probe if
-  world draw-call stats are ever needed again. The right-click use decision
-  resolves in interaction.update(), so a locked-pointer harness test that
-  dispatches a synthetic right mousedown must drive
-  `__interaction.update(dt)` once by hand (rAF is frozen under lock).
-- Player API for later phases: `controller.body` is the physics truth —
-  `position` (feet centre), `velocity`, `onGround`, `swimming`,
-  `submersion`, `eyeInWater`, `breath`/`maxBreath`, `sneaking`,
-  `sprinting`, `fallDistance`, and per-step one-frame signals
-  `lastLanding` (blocks fallen, set on the landing step) and `lastStepUp`.
-  `controller.mode` is 'walk' | 'fly'. Reach checks for interaction should
-  ray from `__camera` (it sits at the eye, bob included).
-- `PlayerBody` is deliberately DOM-free and constructible in node with any
-  `{ getBlock }` — keep it that way; the physics test harness depends on it.
-  `findSpawnPosition(world, overrides)` is also pure and node-testable.
-- Movement/physics tuning all lives in `config.js` `PLAYER` (response rates,
-  water feel, bob, spawn search); fly mode in `DEBUG`. `STEP_HEIGHT` and
-  `SNEAK_EDGE_DROP` are the vanilla 0.6 as of Phase 6 — and as predicted,
-  Phase 21's slabs and stairs auto-step for free on it; full blocks still
-  require a jump.
-- Browser-chrome caveat: reserved Ctrl+W (close tab) cannot be prevented —
-  that's why the hint leads with double-tap sprint, and why fly mode's
-  Ctrl-fast + W is a known sharp edge (debug-only, left as is). All other
-  game-key chords are `preventDefault`ed while pointer-locked.
-- Water physics constants interlock: the exit hop stays correct as long as
-  it keeps re-applying while the body clips water (don't regress it to
-  `swimming`-only — that stalls below the bank lip at >=90fps), and
-  `WATER_BUOYANCY` > 1 is what floats the eye above water at rest.
-- The old debug camera survives as fly mode (F4): no collision, no gravity,
-  breath refills, `DEBUG.FLY_SPEED/_FAST`. Toggling back to walk lifts the
-  body out of any solid overlap before physics resumes.
-- Break/place should just call `world.setBlock` — it dirties the chunk and
-  every loaded neighbour within light range (up to the 3x3), and the
-  streaming pass remeshes dirty chunks nearest-first within the frame
-  budget. The edited chunk remeshes next frame; neighbour light catches up
-  over the following few frames.
-- The mesher (`buildChunkMesh`) requires all 8 neighbour chunks' data (for
-  culling, AO and the light window); the streaming pass guarantees it. If
-  you call it manually, go through `World._remesh`.
-- Lighting invariants to preserve: `computeLightWindow` must stay a pure
-  function of the 3x3 blocks (that's what makes light seam-free and
-  deterministic); anything that writes `chunk.blocks` must go through
-  `Chunk.set` (or null `_lightMeta` itself) or stale heightmaps/emitters
-  will linger. Mob spawning ("light level <= 7") can read
-  `computeLightWindow` or, cheaper, be given a `getLight(x,y,z)` helper on
-  World later — don't rebuild windows per mob query.
-- Day/night hooks for later phases: `dayNight.timeOfDay` (0 sunrise, 0.25
-  noon, 0.5 sunset, 0.75 midnight) is the single time source — zombies
-  burning in daylight, beds, and hostile spawn rules should read it.
-  All palette/beauty tuning lives in `DAY_NIGHT.KEYFRAMES`, tints and
-  falloff in `LIGHTING`, sun/moon size in `CELESTIAL` (config.js).
-- Transparent-block culling merges same-id neighbours (`nid === id`
-  skipped). If a future block needs same-id internal faces (glass panes
-  don't; stained glass wouldn't), that's the line to revisit in chunks.js.
-- Caves will expose underground faces: culling already handles it (carve
-  air, set dirty). Ores are opaque cubes — zero mesher work needed.
-- `world.getHeight` is the raw terrain height (pre-trees/edits);
-  `getHighestSolidY` scans actual blocks — use the latter for spawning.
-- Terrain diagnostics (`logTerrainProfile`, `logColumn`, `logBlockCensus` in
-  ui/debug.js and the `window.__world`/`__camera`/`__renderer` handles) are
-  dev scaffolding — keep them, they make regressions visible.
-- All terrain tuning lives in `config.js` `TERRAIN`; streaming knobs in
-  `STREAMING`; water/cutout/shadow-follow visuals in `RENDER`; spawn point
-  in `DEBUG`. World seed: `TERRAIN.SEED`.
-- Atlas textures are pre-tinted (grass top and leaves are already green).
-  Lava exists in the registry as an opaque-pass fluid; it gets placed (and
-  can get an emissive/animated treatment) with the caves/lava-pools phase.
-- Brewing-stand and iron bars still mesh as full cubes (`special` shapes
-  are later polish); torches render their real box model as of Phase 11
-  (floor post + tilted wall variants) and cactus its inset shape.
-- Headless testing note: the sandbox blocks unpkg.com, so the Playwright
-  harness intercepts the three.js CDN URL and serves the identical build
-  from npm (`three@0.160.0`). index.html is unchanged for production.
+**There is no next session — Phase 25 was the last one, and the project is
+complete.** What follows is kept as a maintainer's handbook: if anyone picks
+this up again, these are the things that were expensive to learn.
 
----
+### Phase 25 APIs
+
+- `player/gamemode.js` is the third module singleton (with `particles` and
+  `audio`). Import `gamemode`, ask it, don't pass it. Adding a creative rule
+  means finding the ONE place that already owns that rule and gating it
+  there; if you can't find such a place, the rule probably belongs to a
+  system that doesn't exist yet.
+- `body.flying` is a field, not a gamemode lookup, precisely so
+  `player/body.js` stays node-constructible with a bare `{ getBlock }` world.
+  Keep it that way.
+- `ui/creative.js` exports `CREATIVE_TABS`; a new item is one string in one
+  tab, but it must already resolve through `entities/items.js`
+  `itemVisualInfo` or it renders as a blank tile. The scratch check that
+  guards this walks every catalogue name against the block registry,
+  `ATLAS_SPRITE_ITEMS`, the generated painters, the potion table and
+  `assets/items/*.png`, and walks `systems/crafting.js` the other way to
+  catch anything the catalogue forgot.
+- `ui/screens.js` owns the E key for BOTH inventories. If a third screen ever
+  wants E, put the routing there rather than adding another document-level
+  listener that has to guess who else is open.
+
+### The lessons this project kept re-learning
+
+- **Measure the quantity the report is about.** Phase 10 measured "lava above
+  y=10" while the complaint lived at y=-13. Phase 23 measured GENERATED lava
+  and missed what the fluid settle scan then grew. Phase 24 measured a
+  mountain's grass/stone RATIO and missed that almost all the stone came from
+  one cause it could have separated. Phase 23 measured cavern SIZE and COUNT,
+  both true, while the report was about how far you have to walk to find one.
+  Four phases, one mistake: a census that cannot fail the thing being
+  reported is not evidence. Before measuring, write down what number would
+  make the reporter say "yes, that's it".
+- **A correlation someone reports may not be in the code.** "Forest appears
+  near water almost every time" measured at 26.2% coastal vs 26.1% inland —
+  it was a property of one spawn area, not the generator. Saying so plainly,
+  with the number, and then fixing the real nearby problem (coupled domain
+  warps) is better than inventing a mechanism to remove.
+- **Noise thresholds do not make rooms.** Three phases tried; see
+  `world/caverns.js`'s header. Place structures; threshold textures.
+- **sRGB vs linear bit this project three times** (particles, clouds, stars).
+  Three.js stores material colours linear and converts on output.
+- **The size cap is what kept this readable.** 25 phases, ~11k lines of
+  source, and the largest file is 915 lines. Every split is recorded in
+  ARCHITECTURE.md with the reason. `entities/dragon.js` (884) still carries
+  its mandated rig cut, `world/emitters.js` (829) its small-box emitters and
+  `world/blocks.js` (915) its lookups tail — those are the three to make
+  before anything else lands in them.
+
+### Running the dev harnesses
+
+The game itself has no npm dependencies and loads three.js from the CDN via
+the importmap in `index.html` — that is what ships. The harnesses need a
+local three (this sandbox blocks unpkg.com) and Playwright, both installed
+into a gitignored `node_modules`, plus a gitignored `test.html` whose
+importmap points at the local copy. Serve the project root over HTTP
+(`python3 -m http.server`) and drive `test.html`; `window.__*` handles are
+exposed from main.js for everything, and `player.debugForceInput(true)`
+unfreezes the loop without real pointer lock.
 
 ## Session log
 
@@ -4574,3 +4514,4 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 | 22 | **Polish: particles and sound.** `render/particles.js` — ONE pooled, capped, allocation-free particle simulation in TWO instanced draw calls (textured cubes cropped from a block's own atlas tile; flat coloured cubes), struct-of-arrays state, spawn-time light tint and distance cull, gated block collision, sRGB-decoded colours: block break/place, footstep scuffs and landing bursts tinted to the block underfoot, water splash + bubble trail, lava embers and pops, expanding explosion smoke/debris/flash, red damage hits, death puffs, pickup sparkles, end-portal swirls, enderman blink columns, torch and glowstone flicker. `systems/audio.js` — the WHOLE game's sound synthesised with the Web Audio API (no files): one context, layered 2-4 voice sounds, a bus compressor, distance falloff + stereo pan, a voice budget, per-material footstep/break/place/mining timbres, hurt/death, swing/hit, bow draw/release/impact, hiss/boom/shriek/crackle/warp, splash/bubble/lava pop, pickup, the victory chime, looping water/lava/portal ambience and underground cave tones; combat.js and portals.js gave up their private WebAudio for it. `systems/ambience.js` — footsteps/landing/splash/bubbles plus vanilla's randomDisplayTick. Measured 0.16ms/frame at 1900 particles, 0.25ms/frame for particles + ambience together in a busy scene, 0.30ms in the creeper-beside-lava worst case. The six reported bugs: the MAGENTA boss bar shown by ARRIVING in the End (not by the fight's first tick), water buckets placing through a fluid-aware ray (aiming at water used to no-op) with flow re-verified 7 cells/step-lower/fills/falls, golden apples granting Absorption II — 4 yellow hearts for 2:00 — plus 5s of Regeneration II, with a HUD row above the health hearts that empties first, and the potion-effect indicator shrunk to vanilla's small top-right icon + countdown, held non-tool items un-mirrored (blocks measured identical to the mesher and left alone), ender pearls as a real thrown projectile that teleports for 2.5 hearts, and thrown eyes of ender drawing through terrain. 50 automated browser checks green, zero console errors, screenshot-verified. | Rivers (the last unbuilt SPEC feature); dragon.js (878) and blocks.js (908) still over the cap with their mandated cuts; particles are cubes not billboards and are lit once at spawn; no music; no XP so "level-up" rides the victory |
 | 23 | **Polish: deepslate and the underground.** Deepslate below y=0 (`world/terrain.js`), blended over the band to y=-8 by a per-block hash roll so the transition is speckled rather than a plane — hardness 3.0 (2x stone), dropping cobbled deepslate, with all five ores taking their deepslate variant in it (blocks 163-169, atlas 58-64) and cobbled deepslate accepted as a stone crafting material (furnace, brewing stand, the five stone tools). **GREAT CAVERNS** (`world/caverns.js` — new): the fourth attempt at big caves and the first that works, because it stops sampling noise and PLACES them — 224-block regions, 72% each, hashed centre/radii/height, a superellipsoid body (y exponent 3.2 = a room, not a lens) warped by a 3D field, a mid-level shelf slab for the ledges and drops, and two climbing connector bores into the tunnel network. Verified: 5 chambers per 512x512 (one per ~229 blocks), 32-56 across and 20-40 tall, 5/5 reachable by flood fill from open sky, 38x51x36 of open space measured in the running game. Lava above -54 rebuilt as placed pools (a few seeded sites per chunk flooding ≤8 floor cells below y=-12, plus rare wall springs) after the Phase 10 mask flooded whole cave floors: 464 → 27 cells per 100x100 columns. Underground water springs and puddles, waterfalls down cavern walls, gravel/clay banks beside them (clay's tile generated at boot, like the item art; the frame-with-eye tile moved to 69 since the new atlas overwrote 58). Ore distribution re-measured PER SOLID BLOCK inside each SPEC band — coal 3.49 / iron 3.15 / redstone 1.79 / gold 1.14 / diamond 0.67 per 1000 — and diamond is 1 per 572 at y-59..-50, about 6 exposed in 10 minutes of strip mining even at deepslate's doubled hardness. The three reported bugs: footsteps rebuilt as pure noise with halved decays and no sprint volume boost (the 150→90 Hz sine glide under every step WAS the "strange, unnatural" sprint noise), a `lowpass` on `tone()` taming every sawtooth/square voice, a dedicated landing sound; `audio.setPaused()` suspending the whole AudioContext on pause (verified running→suspended→running, sounds refused while paused); the potion indicator doubled to 48px with a 20px countdown. Two ARCHITECTURE cuts, one of them the long-mandated `world/fluid_families.js` out of blocks.js (901 now — under the cap for the first time since Phase 21). 69-module import smoke + 33 registry/crafting/fluid checks + the generation survey + a Chromium end-to-end run, zero console errors. | Rivers (the last unbuilt SPEC feature); `entities/dragon.js` (878) is now the only file over the cap, its rig cut still mandated; `world/caves.js` at 786 has no room left (ore/vein passes are its next cut); framerate UNMEASURED this phase (no GPU in the sandbox — generation cost was measured directly and is unchanged); the atlas's four new plant tiles (65-68) are unused, no ground plants were added |
 | 24 | **Polish: terrain, sky and ground vegetation.** RIVERS (the last unbuilt SPEC feature): zero-contours of a low-frequency field press the heightmap below sea level (parabolic bed, eased banks, width varied along the run) so every channel is continuous and joins open water by construction — verified on a 768x768 surface map rendered from the real generator. Surface rules rewritten: beach sand only within reach of actual water, underwater floors sandy-then-dirt with gravel patches (riverbeds and beaches both), mountain bare stone only above a noise-jittered stone line or on ≥3-block cliff faces (measured 57% grass / 26% stone on mountain surfaces), domain-warped biome sampling (±34 blocks) + a wider dither band for irregular edges, tree density/height FIELDS for glades, thickets and groves, and occasional closed-basin surface lava pools in mountains/deserts. SKY: the vanilla blocky cloud deck at y=192 (one merged mesh, hashed blob pattern, period re-anchoring, steady -x drift, sRGB-correct day/night light), the sun rebuilt as a square core in a soft additive glow, the moon given the eight phases from generated textures (the cycle counts days now; sleeping advances the phase), a starfield wheeling on the sun's orbit fading through dusk/dawn on its own keyframe channel, and a keyframed skylight TINT (white noon / warm dawn-dusk / cool night) so terrain light agrees with the sky; fog stays horizon-matched. GROUND VEGETATION (atlas 65-68, finally used): short grass, dandelions, poppies, dead bushes as CROSS-PLANE blocks — a new mesher path (two DoubleSide X-quads, cutout pass, width-true diagonals, per-position nudge), no collision, no light attenuation, never culled; grass in per-biome noise patches, flowers rarer and clustered by colour, bushes on desert sand; instant break (seeds 1/8 from grass only), popped when their soil goes, placeable on grass/dirt, replaceable by blocks and buckets, flat sprite items. The TWO reported bugs: shallow lava was REAL — Phase 23 measured generated cells but the settle scan grew every open-rimmed pool into an apron; pools are now recessed erosion-verified basins (148 contained cells + 8 springs per 256x256, ZERO leak adjacencies). Deepslate was measured correct everywhere including the live browser game (9188/9188 deepslate-family cells at spawn depth; 100.00% purity below y=-9 across three seeds) — the report matches a stale cached build, with a console check recorded in Known broken. Splits: world/ores.js (caves.js's mandated vein cut, byte-identical streams), world/terrain_noise.js, world/plants.js, render/sky_fx.js. Generation 4.5 ms/chunk, meshing 13.9 vs 13.7 baseline, boots in Chromium with zero console errors, screenshot-verified through the full day cycle. | emitters.js (829) and blocks.js (915) over the cap with cuts mandated (small-box emitters; the lookups tail); dragon.js rig cut still outstanding; framerate unmeasured again (no GPU — generation/meshing measured directly instead); flowing water stops at plant cells instead of washing them away; the crack overlay and target outline are full-cube on plants (torch precedent); clouds are flat quads, not the fancy 4-thick boxes |
+| 25 | **THE FINAL PHASE — survival and creative modes; the game is complete.** A START SCREEN on load offers Survival or Creative and holds the world frozen until one is chosen; Esc brings up a PAUSE MENU naming the current mode with a button to switch to the other; the mode shows as a small badge in the HUD corner. Switching is live and lossless because `player/gamemode.js` is a module singleton (the third, beside `particles` and `audio`) whose `set()` flips ONE flag: no reload, no regeneration, no teleport, inventory identical across the switch in both directions (verified by serialising it). Every creative rule is a single gate in the system that already owns it — `stats.damage` (invulnerable), `stats.gainExhaustion` (no hunger), `miningPlan` (instant break, no drops, unbreakables still unbreakable), `inventory.consume*`/`damage*` (infinite stacks, no tool wear), `mobs.playerTargetable` + the same in `dragon.js` (hostiles ignore you), `hud.updateHud` (no bars), `screens.js` (E routes elsewhere). CREATIVE FLIGHT (`body._stepFlight`): double-tap Space toggles, Space up, Shift down, sprint doubles it, 10.9 b/s measured against walking's 4.3, landing ends it, no fall damage, and the move still goes through the same swept collision as walking (`CREATIVE.FLY_COLLIDES`). CREATIVE INVENTORY (`ui/creative.js`): 188 entries over seven tabs with a search that spans all of them, click for a full stack / right-click for one / drag into a slot / drop outside to destroy, infinite by construction (every gesture builds a new stack, nothing is ever removed) — verified 0 blank icons and 0 craftable names missing. The TEST CHEST and its config flag are GONE; survival starts empty in an unmodified world. The five reported bugs: render distance 8 -> 12 chunks with fog to match and the geometry/memory numbers written into config (441 meshed / 973 draws / 2.03M tris / ~320 MB at r=12); biomes rebalanced to plains 40 / forest 23 / desert 19 / mountains 18 with moisture given its own domain warp (and the forest-hugs-coast claim measured to be absent from the generator, 26.0% vs 22.6%, and 26.2% vs 26.1% before any change); a new seed 2163 whose spawn area is 29/25/22/24 across the four biomes; the mountain stone line moved 108 -> 128 with STEEP_DROP 3 -> 4, taking mountains from 60% grass to 91%; great caverns raised in RATE (region 224 -> 128, chance 0.72 -> 0.88, 3 connectors) until 5.4% of all open cave air is big-room and 67% of random cave cells are within 60 blocks of walking of one, 6/6 reachable from open sky. THE FINAL PASS: a survival run from a fresh world to the victory screen driven through the game's own systems in Chromium, 16/16 green, plus a 30/30 mode harness, zero game console errors. Three new files, nothing over the size cap that was not already. | Nothing. The project is finished. The three standing ARCHITECTURE size cuts (`entities/dragon.js` rig, `world/emitters.js` small-box emitters, `world/blocks.js` lookups tail) are the only debt, and only bind if someone grows those files again. |

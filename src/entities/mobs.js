@@ -41,6 +41,9 @@ import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js
 import { blockDef } from '../world/blocks.js';
 import { particles } from '../render/particles.js';
 import { audio } from '../systems/audio.js';
+// Phase 25: hostile mobs ignore a creative player (SPEC-side rule lives in
+// player/gamemode.js — this file only asks).
+import { gamemode } from '../player/gamemode.js';
 
 // MOB_TYPES (stats/drops) lives in entities/registry.js as of Phase 15.
 
@@ -278,7 +281,7 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     if (
       mob.meleeTimer === 0 && Math.hypot(dx, dz) < MOBS.MELEE_RANGE &&
       Math.abs(t.y - p.y) < MOBS.MELEE_VERTICAL_RANGE &&
-      !stats.dead && player.mode !== 'fly'
+      playerTargetable()
     ) {
       mob.meleeTimer = MOBS.MELEE_COOLDOWN_SECONDS;
       combat.damagePlayer(mob.type.attackDamage, dx, dz);
@@ -291,9 +294,14 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
     return Math.hypot(t.x - p.x, t.y - p.y, t.z - p.z);
   };
 
-  // The player can be engaged at all: alive, and not the untouchable
-  // debug fly camera (every AI stands down uniformly).
-  const playerTargetable = () => !stats.dead && player.mode !== 'fly';
+  // The player can be engaged at all: alive, not in CREATIVE (Phase 25 —
+  // "hostile mobs do not attack the player": they wander and go about their
+  // business, and never so much as steer toward you), and not the
+  // untouchable debug fly camera. Every AI stands down uniformly, including
+  // the ones injected from their own files (skeleton, ghast, blaze,
+  // enderman) — they all take this gate as a parameter.
+  const playerTargetable = () =>
+    !stats.dead && !gamemode.creative && player.mode !== 'fly';
 
   // --- per-mob AI ----------------------------------------------------------
 

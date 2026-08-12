@@ -205,8 +205,27 @@ export const CHUNK = {
   HEIGHT: 384,            // overworld world height (MAX_Y - MIN_Y)
 };
 
+// RENDER DISTANCE. Phase 25 went 8 -> 12; the follow-ups went 12 -> 20 and
+// then 20 -> 30 (480 blocks) by request. This is THE knob to turn for
+// performance: everything below scales with its square.
+//
+// Measured off the real generator+mesher (node) so the trade is a number
+// rather than a hope:
+//        r=8   197 meshed chunks    453 draws   0.91M tris    79 MB geometry +  71 MB chunk data
+//        r=12  441 meshed chunks    973 draws   2.03M tris   174 MB geometry + 143 MB chunk data
+//        r=20  1257 meshed chunks  2968 draws   6.44M tris   554 MB geometry + 364 MB chunk data
+//        r=30  2821 meshed chunks  6665 draws  14.23M tris  1224 MB geometry + 780 MB chunk data
+// A 70° lens sees roughly a quarter of the ring at a time, so r=30 draws on
+// the order of 1700 calls and 3.6M triangles per frame — that wants a real
+// discrete GPU, and the ~2 GB resident footprint wants 16 GB of system
+// memory with a 64-bit browser. This is an enthusiast setting by explicit
+// request; drop to 20 (~920 MB), 12 (a vanilla-default ~320 MB) or 8 on
+// lesser machines. Filling the ring costs ~38 s of CPU (measured: 3969
+// chunks generated at 5.1 ms, 2821 meshed at 6.4 ms), which the
+// 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
+// nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 8,     // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 30,    // chunks loaded/rendered around the player
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -292,11 +311,21 @@ export const CAVES = {
   // lower floor you can see down onto. Two hashed connector bores leave the
   // chamber near floor height and climb gently outward until they meet the
   // tunnel network.
+  // Phase 25 raised the RATE, not the mechanism. Phase 23's chambers were
+  // real and measured, but at one per 224-block region a chamber's mouth
+  // covered ~3% of the cave band and a player could explore for a long time
+  // without meeting one — which is exactly what the report said. The tiles
+  // are 128 blocks now and nearly all of them host a chamber (one per ~136
+  // blocks of travel, ~9% of all columns standing over one), and each
+  // chamber sends out THREE connector bores instead of two, so the tunnel
+  // network runs into a chamber far more often than it used to.
   GREAT_CAVERN: {
-    REGION_SIZE: 224,        // world tiles this wide host at most one chamber
-    CHANCE: 0.72,            // ...and do so this often — ~1 per 264 blocks
+    REGION_SIZE: 128,        // world tiles this wide host at most one chamber
+    CHANCE: 0.88,            // ...and do so this often — ~1 per 136 blocks
     MARGIN: 40,              // keep the centre this far inside its region so
                              // two neighbouring chambers can never overlap
+                             // (max body reach is RADIUS_MAX * (1 + WARP) + 2
+                             // = 38 blocks, which must stay <= MARGIN)
     MIN_Y: -50,              // above the lava-lake flood at -54
     MAX_Y: 24,               // and far below sea level (62)
     RADIUS_MIN: 18,          // horizontal radii -> a longest axis of 36..58
@@ -322,7 +351,8 @@ export const CAVES = {
       LEVEL_MAX: 0.55,       // measured up from the floor
     },
     CONNECTORS: {
-      COUNT: 2,              // bores leaving each chamber
+      COUNT: 3,              // bores leaving each chamber (Phase 25: 2 -> 3,
+                             // so a wandering tunnel meets one sooner)
       RADIUS: 2.2,           // bore radius (walkable)
       LENGTH_MIN: 40,        // ...run this far out to meet the tunnel net
       LENGTH_MAX: 90,
@@ -463,7 +493,13 @@ export const UNDERGROUND = {
 // Overworld heightmap, biomes and decoration (world/terrain.js).
 // Noise scales are in cycles per block (1/blocks-per-feature).
 export const TERRAIN = {
-  SEED: 1337,
+  // A NEW world, twice. Phase 25 replaced the original 1337 spawn (a
+  // forested coast hemmed in by mountains) with 2163; the follow-up asked
+  // for a PLAINS spawn under the re-rebalanced biome rules, and 3200 was
+  // picked by scanning seeds for the most even spawn area that starts the
+  // player on plains: within 260 blocks the land is plains 25% / forest 26%
+  // / desert 27% / mountains 22%, 13% water, spawning on grass at y68.
+  SEED: 3200,
 
   // Extra columns computed around a chunk during generation so trees whose
   // canopy crosses a chunk border come out identical from both sides
@@ -472,7 +508,12 @@ export const TERRAIN = {
 
   // Very low frequency landmass swell around sea level. Where it dips
   // negative the terrain drops below sea level and oceans/lakes form.
-  CONTINENT: { SCALE: 1 / 1100, OCTAVES: 2, AMPLITUDE: 11, OFFSET: 1 },
+  // Follow-up: OFFSET 1 -> 2.5 ("oceans shouldn't be that common") lifts
+  // the whole swell so fewer of its dips reach under sea level — water fell
+  // from 25% of all columns to 9%, and what remains reads as lakes and seas
+  // rather than a world that is a quarter ocean. Rivers are carved DOWN
+  // through the lift, so they are untouched.
+  CONTINENT: { SCALE: 1 / 1100, OCTAVES: 2, AMPLITUDE: 11, OFFSET: 2.5 },
 
   // Safety floor: the surface never generates closer than this to the
   // bottom of the world, whatever the noise does.
@@ -482,19 +523,27 @@ export const TERRAIN = {
   HILLS: { SCALE: 1 / 160, OCTAVES: 4, PERSISTENCE: 0.5, LACUNARITY: 2 },
 
   // Climate fields drive biome weights. Both are fBm in [-1, 1].
+  // Phase 25 raised both frequencies (1/480, 1/420 -> 1/360, 1/320): biome
+  // patches used to be so large that a whole play session could happen
+  // inside one of them, which is what "plains are rare" actually meant —
+  // globally plains were the commonest biome, but you never walked to one.
+  // At these scales a walk of a few hundred blocks crosses several.
   CLIMATE: {
-    TEMPERATURE_SCALE: 1 / 480,
-    MOISTURE_SCALE: 1 / 420,
+    TEMPERATURE_SCALE: 1 / 360,
+    MOISTURE_SCALE: 1 / 320,
     OCTAVES: 3,
   },
 
   // Mountains come from their own region mask, not climate, so ranges read
   // as coherent chains. Ridged noise supplies the relief inside a region.
   MOUNTAINS: {
-    REGION_SCALE: 1 / 700,
+    REGION_SCALE: 1 / 560,
     REGION_OCTAVES: 2,
-    WEIGHT_START: 0.12,        // region noise where mountains begin to blend in
-    WEIGHT_FULL: 0.55,         // region noise where mountains fully dominate
+    // Phase 25: 0.12 -> 0.30. Mountains took a quarter of all land and
+    // nearly half of it near the old spawn, crowding out the lowland
+    // biomes; they are a fifth of it now and still form coherent ranges.
+    WEIGHT_START: 0.25,        // region noise where mountains begin to blend in
+    WEIGHT_FULL: 0.60,         // region noise where mountains fully dominate
     RIDGE_SCALE: 1 / 260,
     RIDGE_OCTAVES: 3,
     RIDGE_SHARPNESS: 2.2,      // exponent on the ridge profile; higher = sharper crests
@@ -504,19 +553,23 @@ export const TERRAIN = {
 
   // Per-biome height contribution (OFFSET above the continent base plus
   // hill noise * HILL_AMPLITUDE) and tree density (trees per column).
+  // Phase 25 rebalanced the three lowland biomes; the follow-up evened
+  // plains and forest out ("same amount of plains as forest"): BASE_WEIGHT
+  // 0.38 -> 0.25 and the forest moisture gate opened a touch. Measured over
+  // 2000x2000: plains 31% / forest 29% / desert 21% / mountains 19% of land.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.35, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    PLAINS: { BASE_WEIGHT: 0.25, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
       MOISTURE_START: 0.02,    // moisture where forest starts blending in
-      MOISTURE_FULL: 0.38,     // moisture where forest weight saturates
+      MOISTURE_FULL: 0.40,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
-      HEAT_START: 0.08,        // temperature where desert starts blending in
-      HEAT_FULL: 0.45,
-      DRY_START: -0.2,         // below this moisture the air is fully dry
-      DRY_FULL: 0.15,          // above this moisture desert weight is zero
+      HEAT_START: -0.06,       // temperature where desert starts blending in
+      HEAT_FULL: 0.30,
+      DRY_START: -0.32,        // below this moisture the air is fully dry
+      DRY_FULL: 0.30,          // above this moisture desert weight is zero
     },
     MOUNTAINS: { TREE_DENSITY: 0.003 },
   },
@@ -525,6 +578,15 @@ export const TERRAIN = {
   // is hash-dithered between them, so borders feather instead of hard-edging.
   // Phase 24 widened it 0.2 -> 0.35: the transition zone spans more columns.
   BIOME_DITHER_RANGE: 0.35,
+  // ...except at DESERT edges (follow-up: "too many grass blocks in
+  // deserts"). The wide dither speckled grass columns deep into desert-
+  // dominant ground and sand into the grass beside it — a broad salt-and-
+  // pepper fringe that read as grass IN the desert. When either of the top
+  // two biomes is desert the dither band is this much narrower: the edge
+  // still feathers over a couple of columns, but a desert is sand.
+  // Measured over desert-dominant columns: grass fell to 1.9% (nearly all
+  // of it on the outermost fringe where desert barely wins).
+  BIOME_DITHER_DESERT_RANGE: 0.08,
 
   // Phase 24 — domain warp on the biome fields: the climate and mountain
   // region noises are sampled at coordinates pushed around by two
@@ -534,6 +596,17 @@ export const TERRAIN = {
     SCALE: 1 / 210,            // warp field frequency
     OCTAVES: 2,
     AMPLITUDE: 34,             // blocks of push at full field strength
+    // Phase 25 — MOISTURE gets its OWN warp pair, on its own frequency,
+    // instead of sharing the temperature/mountain warp. Sharing one warp
+    // made the three biome axes bend together, so their boundaries lined up
+    // and a region tended to be one biome's; with independent warps the wet
+    // edge, the hot edge and the mountain edge cut across each other and a
+    // walk meets a mixture. (It is also the honest answer to the "forest
+    // hugs the coastline" report — see PROGRESS: the generator has no
+    // forest/coast link to remove, measured, but coupled warps DID make
+    // whatever biome owned a stretch of coast own all of it.)
+    MOISTURE_SCALE: 1 / 155,
+    MOISTURE_AMPLITUDE: 46,
   },
 
   // Phase 24 — rivers. The zero-contours of one low-frequency field supply
@@ -585,12 +658,18 @@ export const TERRAIN = {
     // height line (a "stone line" like vanilla's snow line — never one fixed
     // height) or on faces too steep for grass to sit. Everything below and
     // gentler is grassed like the rest of the world.
+    // Phase 25: the Phase 24 line at 108 was still low enough to strip a
+    // third of every mountain (measured: 60% grass / 38% stone, and 34 of
+    // those 38 points came from the LINE, not from steepness). Peaks reach
+    // ~140, so a line at 128 leaves the top dozen blocks bare and grasses
+    // the rest, and STEEP_DROP 3 -> 4 stops ordinary ridged relief from
+    // counting as a cliff. Measured after: 91% grass / 7.6% stone.
     STONE_LINE: {
-      HEIGHT: 108,             // mean height where slopes turn to bare stone
-      JITTER: 10,              // ± blocks of noise on that line
+      HEIGHT: 128,             // mean height where slopes turn to bare stone
+      JITTER: 7,               // ± blocks of noise on that line
       SCALE: 1 / 70,           // jitter field frequency
     },
-    STEEP_DROP: 3,             // a column this many blocks above its lowest
+    STEEP_DROP: 4,             // a column this many blocks above its lowest
                                // 4-neighbour is a cliff face — bare stone at
                                // any height (grass could not sit on it)
   },
@@ -1662,6 +1741,34 @@ export const ITEMS = {
 };
 
 // ---------------------------------------------------------------------------
+// Game modes (Phase 25) — SURVIVAL is the whole game as SPEC.md describes it;
+// CREATIVE removes the survival pressure and hands the player everything.
+// The mode itself lives in player/gamemode.js (a module singleton, the
+// particles/audio pattern); these are its tunables.
+// ---------------------------------------------------------------------------
+
+export const CREATIVE = {
+  // Flight. Vanilla creative flies at ~10.9 blocks/s — about 2.5x walking —
+  // and doubles that while sprinting. Rise/descend are their own rate.
+  FLY_SPEED: 10.9,               // horizontal blocks/s
+  FLY_SPRINT_MULTIPLIER: 2.0,    // ...times this while sprinting
+  FLY_VERTICAL_SPEED: 7.5,       // blocks/s holding space (up) / shift (down)
+  FLY_RESPONSE: 14,              // 1/s exponential approach to the wanted
+                                 // velocity — the flight has weight, but the
+                                 // ramp is short enough to feel immediate
+  FLY_DRAG: 9,                   // 1/s damping with no input (a gentle glide)
+  DOUBLE_TAP_SECONDS: 0.35,      // second space tap within this toggles flight
+  // Vanilla creative flight still COLLIDES with terrain — it is flight, not
+  // spectator noclip — so the body sweeps exactly as it does on foot. Set
+  // false for a fly-through-walls camera instead.
+  FLY_COLLIDES: true,
+  // Leaving the ground with flight off never accrues fall distance in
+  // creative anyway (the player cannot be damaged), but the flag keeps the
+  // landing particles/sounds honest: a creative landing is silent-ish.
+  LAND_EFFECTS: false,
+};
+
+// ---------------------------------------------------------------------------
 // Inventory
 // ---------------------------------------------------------------------------
 
@@ -1748,6 +1855,26 @@ export const UI = {
     PITCH_SENSITIVITY: 1.4,       // target radians per canvas-height of cursor
     ARMOUR_INFLATE_PX: 0.75,      // armour overlay growth per side (pixels)
     LEGGING_INFLATE_PX: 0.4,      // trousers sit inside the boots/chest layer
+  },
+
+  // The game-mode badge (Phase 25): the current mode, small and dim, in the
+  // bottom-right corner where nothing else draws — unobtrusive, but always
+  // answerable without opening a menu.
+  MODE_BADGE: {
+    BOTTOM_PX: 8,
+    RIGHT_PX: 10,
+    FONT_PX: 13,
+    OPACITY: 0.55,
+  },
+
+  // The creative inventory screen (Phase 25, ui/creative.js): a tabbed grid
+  // of every block and item in the game with a search field.
+  CREATIVE_SCREEN: {
+    COLUMNS: 9,                   // items per row...
+    ROWS: 6,                      // ...and rows per page (54 visible)
+    SLOT_PX: 46,                  // matches the survival screen's slots
+    TAB_PX: 40,                   // tab button height
+    SEARCH_PX: 15,                // search field font size
   },
 };
 
@@ -1844,11 +1971,11 @@ export const INTERACTION = {
 // ---------------------------------------------------------------------------
 
 export const TIME = {
-  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes
-                                  // (Phase 14 — real Minecraft timing; the
-                                  // phase splits live in DAY_NIGHT.KEYFRAMES:
-                                  // day 10 min, sunset 1.5, night 7,
-                                  // sunrise 1.5)
+  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes,
+                                  // split half and half by request — 10
+                                  // minutes of day, 10 of night, with quick
+                                  // 30-second dusk/dawn washes at the
+                                  // night's edges (DAY_NIGHT.KEYFRAMES)
   START_TIME: 0.04,               // day fraction at boot (just after sunrise);
                                   // t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
 };
@@ -1892,10 +2019,18 @@ export const SKY = {
   HORIZON_COLOR: 0xbcd8f5,
   BELOW_COLOR: 0x9db8d2,
   MID_STOP: 0.35,                 // where the mid stop sits in dome height 0..1
-  // Fog is matched to the horizon colour so terrain fades into the sky
+  // Fog is matched to the horizon colour so terrain fades into the sky.
+  // Retuned with the "far places look low quality" report: the old rule
+  // scaled NEAR/FAR with the render distance at the same fractions, which
+  // at 480 blocks meant everything past mid-distance sat in a milky wash.
+  // Now that the atlas has its tile-local mip chain (distant terrain is
+  // clean colour, not noise, so it can BEAR being seen), the fog's only
+  // remaining job is masking the chunk edge: clear to 340 blocks (~70% of
+  // the view), fading over the last stretch so the 480-block edge sits at
+  // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 40,
-  FOG_FAR: 140,
+  FOG_NEAR: 340,
+  FOG_FAR: 510,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
@@ -1905,12 +2040,13 @@ export const SKY = {
 //   SUN_LEVEL   scales the directional sun + hemisphere ambient (entities)
 //   SKY_DARKEN  levels subtracted from baked skylight (0 day .. 11 deep night)
 //   GLOW        strength of the warm horizon glow around the sun's position
-// Phase 14 retiming — the real Minecraft phase lengths over the 20-minute
-// cycle: daytime exactly 10 minutes (t 0.0-0.5, the sun above the horizon:
-// it rises at t=0 and sets at t=0.5 by the orbit maths), sunset 1.5 minutes
-// (0.5-0.575), night 7 minutes (0.575-0.925), sunrise 1.5 minutes
-// (0.925-1.0). The old spread spent ~2 minutes total on each transition and
-// only ~5.6 on night.
+// Retimed by request to a TRUE half-and-half day: over the 20-minute cycle
+// the sun is above the horizon for exactly 10 minutes (t 0.0-0.5 — it rises
+// at t=0 and sets at t=0.5 by the orbit maths) and below it for exactly 10
+// (t 0.5-1.0). The dusk and dawn ramps are quick 30-second washes sitting
+// just inside the night's edges (0.5-0.525 and 0.975-1.0), so full darkness
+// holds for 9 of the night's 10 minutes. (The previous timing was vanilla's:
+// 1.5-minute transitions and only 7 minutes of full night.)
 // Phase 24 added two channels: STARS (starfield alpha, fading in through
 // dusk and out through dawn) and TINT (the skylight tint uniform — white at
 // midday, warm at dawn/dusk, cool at night — which is what keeps the LIGHT
@@ -1923,30 +2059,34 @@ export const DAY_NIGHT = {
     { T: 0.500, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
       STARS: 0, TINT: 0xffffff },
-    { T: 0.5375, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
+    { T: 0.5125, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0 },
-    { T: 0.575, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.525, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
-    { T: 0.925, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
+    { T: 0.975, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
       BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
-    { T: 0.9625, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
+    { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0 },
   ],
   GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
 };
 
-// The visible sun and moon riding the sky dome. Phase 24: the sun is a
-// bright square core inside a soft atmospheric glow (one generated texture,
-// additive so the glow melts into the sky — no hard edge), and the moon
-// shows the eight vanilla phases, one per in-game day, from a set of
-// generated square-moon textures.
+// The visible sun and moon riding the sky dome. Phase 24 shipped a square
+// sun; the follow-up ("sun shouldn't have that box around it") made it a
+// ROUND disc inside a soft atmospheric glow. The box was real, twice over:
+// the old glow term still carried alpha ~16/255 at the quad's edge, which
+// additive blending paints as a faint square boundary against the sky, and
+// the texture was Nearest-filtered, so the magnified gradient stair-stepped.
+// The glow is windowed to reach EXACTLY zero before the rim now, the sun
+// texture filters linearly, and the core is a disc. The moon stays the
+// vanilla pixel square — nobody reported the moon.
 export const CELESTIAL = {
   DISTANCE: 820,                  // from the camera; inside the sky dome radius
-  SUN_SIZE: 150,                  // the square core's edge, in dome units
+  SUN_SIZE: 150,                  // the disc's diameter, in dome units
   SUN_GLOW_SCALE: 2.6,            // quad size as a multiple of the core —
                                   // the glow needs room to fade to nothing
   SUN_CORE_COLOR: 0xfffbe8,       // the square itself
@@ -1957,19 +2097,32 @@ export const CELESTIAL = {
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
 };
 
-// Phase 24 — clouds: vanilla's flat white blocky slab layer. A hashed
-// blob pattern on a CELL_SIZE grid, meshed once as merged quads (a 2x2
-// tiling of one TILE_CELLS-period pattern, so the mesh can re-anchor in
-// period steps as the player moves and the pattern never visibly jumps),
-// drifting steadily along -x like vanilla's. Slightly transparent, never
-// fogged (the layer sits far beyond FOG_FAR — fog would erase it).
+// Phase 24 — clouds. The follow-up ("make clouds more realistic") rebuilt
+// the flat quads into vanilla-fancy VOLUME slabs: every cloud is a box
+// THICKNESS blocks tall with a lit top, a shaded underside and mid-shaded
+// side walls, front-face culled so the volume reads correctly from below
+// AND from creative flight above. The pattern leans harder on its coarse
+// octave and drops isolated single cells, so the deck is drifting cumulus
+// masses rather than confetti. Still one merged mesh built once at boot (a
+// 2x2 tiling of one TILE_CELLS-period pattern re-anchoring in period steps),
+// still drifting along -x, still never fogged (it sits beyond FOG_FAR).
 export const CLOUDS = {
   HEIGHT: 192,                    // the vanilla cloud deck sits at y=192
+  THICKNESS: 4,                   // slab height (vanilla fancy clouds' 4m)
   CELL_SIZE: 12,                  // blocks per cloud cell (vanilla's texel)
   TILE_CELLS: 96,                 // pattern period in cells (1152 blocks)
-  COVER: 0.36,                    // fraction of cells that are cloud
+  COVER: 0.24,                    // fraction of ALL cells that are cloud
+  WEATHER_SHARE: 0.62,            // fraction of the deck where cloud GROUPS
+                                  // may form at all (the coarse octave's
+                                  // gate); COVER is then met inside those
+                                  // regions by the fine octave, so the sky
+                                  // is fields of distinct puffs with real
+                                  // clear stretches between the fields
+  // Per-face brightness — what makes a slab read as a lit volume: the sun
+  // hits the top, the underside is in its own shadow, the walls sit between.
+  BRIGHTNESS: { TOP: 1.0, BOTTOM: 0.7, SIDE_X: 0.88, SIDE_Z: 0.8 },
   SPEED: 0.55,                    // drift in blocks per second, along -x
-  OPACITY: 0.72,
+  OPACITY: 0.78,
   NIGHT_BRIGHTNESS: 0.16,         // colour scale at deep night (1.0 at noon)
   HORIZON_TINT: 0.18,             // fraction of the horizon colour mixed in
                                   // (what makes dawn clouds blush)
@@ -2443,18 +2596,6 @@ export const AUDIO = {
     VOLUME: 0.5,
   },
 };
-
-// ---------------------------------------------------------------------------
-// TEMPORARY, MUST REMOVE — spawn test chests
-// ---------------------------------------------------------------------------
-
-// Places stocked chests at the player's spawn point so the endgame — the
-// portal, the Nether, brewing, eyes of ender, the stronghold and the
-// DRAGON FIGHT — can be tested without a full playthrough (main.js reads
-// it at boot). Removed at the end of Phase 20 as originally mandated,
-// then restored by request for End-fight testing; delete the flag and the
-// main.js block together when it goes again.
-export const TEST_CHEST = true;
 
 // ---------------------------------------------------------------------------
 // Debug / development

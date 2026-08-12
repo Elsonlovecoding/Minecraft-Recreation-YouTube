@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, TEST_CHEST, BEDS, DRAGON,
+  MOBS, TERRAIN, BEDS, DRAGON,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { loadAtlas } from './render/atlas.js';
@@ -16,6 +16,9 @@ import { createClouds } from './render/sky_fx.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hud.js';
 import { createScreens } from './ui/screens.js';
+import { createCreativeScreen } from './ui/creative.js';
+import { createMenus } from './ui/menus.js';
+import { gamemode } from './player/gamemode.js';
 import { World } from './world/world.js';
 import {
   BLOCK, isFurnace, isTorch, torchSupportCell, isSolid, blockDef,
@@ -80,6 +83,10 @@ async function init() {
   const dayNight = createDayNightCycle({ sky, fog: scene.fog, sun, ambient, clouds });
 
   const atlasTexture = await loadAtlas();
+  // Anisotropic filtering over the atlas's tile-local mip chain: without it,
+  // ground seen at a grazing angle — most of what a 480-block view IS —
+  // over-blurs along the view direction. 16x is free on any real GPU.
+  atlasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   // Phase 22: the two feel systems. Both are module-level singletons any
   // system can emit into (the CHUNK_LIGHT_UNIFORMS pattern) — before these
@@ -492,69 +499,10 @@ async function init() {
     `${(performance.now() - buildStart).toFixed(0)}ms`,
   );
 
-  // TEMPORARY, MUST REMOVE (config TEST_CHEST): chests at the spawn point
-  // stocked so the portal, the Nether, brewing, eyes of ender, the
-  // stronghold AND the dragon fight can all be tested without a full
-  // playthrough. (Removed at the end of Phase 20 as mandated, restored by
-  // request for End-fight testing with the fight kit expanded.)
-  if (TEST_CHEST) {
-    const p = player.body.position;
-    // The kit, in slot order. Durability items (tools, armour, bows)
-    // arrive at full durability through `add`, one per slot. Water
-    // bottles and buckets stack to 1, so they cost a slot each — the kit
-    // runs past one chest's 27, and the overflow fills a second chest
-    // beside the first.
-    const TEST_KIT = [
-      ['obsidian', 14],
-      ['flint_and_steel', 1],
-      ['brewing_stand', 1],
-      ['blaze_rod', 64],
-      ['blaze_powder', 8],
-      ['nether_wart', 8],
-      ['ender_pearl', 16],
-      ['ender_eye', 16],
-      ['glass_bottle', 6],
-      ['water_bottle', 6],
-      ['bucket', 3],
-      ['diamond_helmet', 1],
-      ['diamond_chestplate', 1],
-      ['diamond_leggings', 1],
-      ['diamond_boots', 1],
-      ['diamond_sword', 1],
-      ['diamond_pickaxe', 1],
-      ['diamond_axe', 1],
-      ['diamond_shovel', 1],
-      ['iron_sword', 1],
-      ['bow', 3],          // End-fight kit: spares against durability
-      ['arrow', 128],      // the dragon + ten crystals want volume
-      ['golden_apple', 5], // fight sustain
-      ['torch', 64],
-      ['cobblestone', 64],
-      ['oak_planks', 64],
-    ];
-    // Prefer a column whose surface is level with the player — leaves count
-    // as solid, so a bare offset could sit a chest on a tree canopy. The
-    // two offset lists never overlap, so the chests can't collide.
-    const placeChest = (offsets) => {
-      const level = offsets.find(([ox, oz]) => {
-        const x = Math.floor(p.x) + ox;
-        const z = Math.floor(p.z) + oz;
-        return Math.abs((world.getHighestSolidY(x, z) + 1) - p.y) <= 2;
-      });
-      const [ox, oz] = level ?? offsets[0];
-      const x = Math.floor(p.x) + ox;
-      const z = Math.floor(p.z) + oz;
-      const y = world.getHighestSolidY(x, z) + 1;
-      world.setBlock(x, y, z, BLOCK.CHEST);
-      return chests.chestAt(x, y, z);
-    };
-    const chest = placeChest([[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]]);
-    const spare = placeChest([[3, 0], [-3, 0], [0, 3], [0, -3], [3, 1], [-3, -1]]);
-    for (const [name, count] of TEST_KIT) {
-      const leftover = chest.container.add(name, count);
-      if (leftover > 0) spare.container.add(name, leftover);
-    }
-  }
+  // (Phase 25 removed the TEMPORARY spawn test chests and the TEST_CHEST
+  // config flag with them. Survival starts with an empty inventory in an
+  // unmodified world, which is what the SPEC's success test measures;
+  // anyone who wants a kit picks Creative on the start screen.)
 
   // Terrain diagnostics (dev scaffolding — they make regressions visible)
   logTerrainProfile(world);
@@ -602,8 +550,12 @@ async function init() {
 
   initDebug();
   initHud(inventory);
+  // Phase 25: the creative inventory is its own screen (ui/creative.js) —
+  // E routes to it instead of the survival inventory while creative is on.
+  const creativeScreen = createCreativeScreen({ inventory, canvas });
   screens = createScreens({
     inventory, canvas, items, player, camera,
+    openCreative: () => creativeScreen.openScreen(),
     // Dying in the Nether respawns at the OVERWORLD spawn point (Phase 15):
     // the dimension switches home before the respawn teleport.
     onRespawn: () => {
@@ -617,6 +569,14 @@ async function init() {
     },
   });
   window.__screens = screens;
+  window.__creative = creativeScreen;
+  // Phase 25: the start screen (Survival / Creative) and the pause menu that
+  // reports the mode and switches it. The start screen holds the game frozen
+  // until a mode is chosen — `isPaused()` below is already true whenever the
+  // pointer is unlocked, and nothing can lock it while the overlay is up.
+  const menus = createMenus({ canvas });
+  window.__menus = menus;
+  window.__gamemode = gamemode;
 
   // Pickups go to the inventory (existing stacks first, then the first empty
   // slot); the return value tells the item manager how many were accepted.
@@ -667,12 +627,15 @@ async function init() {
   const isPaused = () =>
     document.pointerLockElement !== canvas &&
     !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
+    !creativeScreen.isOpen &&
     !signs.isEditing && !player.inputOverridden;
   // Esc while paused resumes, like vanilla. The lock request can reject
   // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
   // up and a click resumes instead (same swallow as the click path).
+  // Phase 25: never before a mode has been chosen — the start screen owns
+  // the input until then, and Esc must not smuggle the player past it.
   document.addEventListener('keydown', (e) => {
-    if (e.code !== 'Escape' || !isPaused()) return;
+    if (e.code !== 'Escape' || !isPaused() || !gamemode.chosen) return;
     const req = canvas.requestPointerLock();
     if (req && typeof req.catch === 'function') req.catch(() => {});
   });
@@ -685,6 +648,9 @@ async function init() {
     // The "Game paused" title only reads right once play has begun; the
     // first-boot freeze keeps the plain "Click to play" hint.
     document.body.classList.toggle('mc-paused', paused && everLocked);
+    // Phase 25: the pause MENU (mode readout + the switch button) rides the
+    // same verdict, and stands down while the start screen is up.
+    menus.setPaused(paused && everLocked);
     if (!paused) {
       player.update(delta);
       interaction.update(delta);
