@@ -2020,13 +2020,17 @@ export const SKY = {
   BELOW_COLOR: 0x9db8d2,
   MID_STOP: 0.35,                 // where the mid stop sits in dome height 0..1
   // Fog is matched to the horizon colour so terrain fades into the sky.
-  // Pushed out with each render-distance raise (40/140 for 128 blocks,
-  // 72/208 for 192, 120/346 for 320, 180/520 for 480) — the same fraction
-  // of the view stays clear, so the far chunk edge still dissolves into sky
-  // instead of popping.
+  // Retuned with the "far places look low quality" report: the old rule
+  // scaled NEAR/FAR with the render distance at the same fractions, which
+  // at 480 blocks meant everything past mid-distance sat in a milky wash.
+  // Now that the atlas has its tile-local mip chain (distant terrain is
+  // clean colour, not noise, so it can BEAR being seen), the fog's only
+  // remaining job is masking the chunk edge: clear to 340 blocks (~70% of
+  // the view), fading over the last stretch so the 480-block edge sits at
+  // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 180,
-  FOG_FAR: 520,
+  FOG_NEAR: 340,
+  FOG_FAR: 510,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over

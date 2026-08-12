@@ -157,9 +157,67 @@ const GENERATED_TILES = [
   [TILE.CLAY, paintClay],
 ];
 
+// The tile-local mip chain (the "far places look low quality" fix). With no
+// mipmaps, Nearest-minified terrain degenerates into shimmering pixel noise
+// at distance — every screen pixel lands on one arbitrary texel of a 16px
+// tile. The classic reason this project disabled them ("tiles blur into each
+// other") only bites when the chain runs PAST tile resolution, so this chain
+// STOPS there, exactly like vanilla's 4 mipmap levels: successive 2x2 box
+// downsamples from 256x256 to 16x16, where each tile is one pixel. Tile
+// boundaries stay 2x2-aligned at every level, so no level ever mixes two
+// tiles' texels, and three.js allocates texture storage for exactly these
+// levels — sampling can never reach a level that would bleed. RGB averages
+// are alpha-weighted so cutout tiles (leaves, plants) keep their edge
+// colours instead of ringing dark.
+function buildMipChain(base) {
+  const levels = [base];
+  let src = base.getContext('2d').getImageData(0, 0, base.width, base.height);
+  let w = base.width;
+  let h = base.height;
+  const count = Math.round(Math.log2(ATLAS.TILE_PIXELS)); // 16px tiles -> 4
+  for (let level = 0; level < count; level++) {
+    const nw = w >> 1;
+    const nh = h >> 1;
+    const dst = new ImageData(nw, nh);
+    for (let y = 0; y < nh; y++) {
+      for (let x = 0; x < nw; x++) {
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let a = 0;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            const i = ((y * 2 + dy) * w + (x * 2 + dx)) * 4;
+            const al = src.data[i + 3];
+            r += src.data[i] * al;
+            g += src.data[i + 1] * al;
+            b += src.data[i + 2] * al;
+            a += al;
+          }
+        }
+        const j = (y * nw + x) * 4;
+        dst.data[j] = a ? Math.round(r / a) : 0;
+        dst.data[j + 1] = a ? Math.round(g / a) : 0;
+        dst.data[j + 2] = a ? Math.round(b / a) : 0;
+        dst.data[j + 3] = Math.round(a / 4);
+      }
+    }
+    const c = document.createElement('canvas');
+    c.width = nw;
+    c.height = nh;
+    c.getContext('2d').putImageData(dst, 0, 0);
+    levels.push(c);
+    src = dst;
+    w = nw;
+    h = nh;
+  }
+  return levels;
+}
+
 // Loads assets/block_atlas.png once, paints the generated tiles into it and
-// hands back one texture. NearestFilter keeps the pixel-art look; mipmaps are
-// disabled so tiles don't blur into each other at distance.
+// hands back one texture. NearestFilter magnification keeps the pixel-art
+// look up close; minification blends through the tile-local mip chain above
+// so distant terrain reads as clean colour instead of noise.
 export async function loadAtlas() {
   if (atlasTexture) return atlasTexture;
   const loader = new THREE.TextureLoader();
@@ -183,8 +241,11 @@ export async function loadAtlas() {
   loaded.dispose();
   atlasTexture = new THREE.CanvasTexture(canvas);
   atlasTexture.magFilter = THREE.NearestFilter;
-  atlasTexture.minFilter = THREE.NearestFilter;
-  atlasTexture.generateMipmaps = false;
+  // Nearest WITHIN a mip level (pixel-art up close), linear BETWEEN levels
+  // (no visible band where the terrain switches detail).
+  atlasTexture.minFilter = THREE.NearestMipmapLinearFilter;
+  atlasTexture.generateMipmaps = false; // the chain is hand-built, and stops
+  atlasTexture.mipmaps = buildMipChain(canvas); // at tile resolution
   atlasTexture.wrapS = THREE.ClampToEdgeWrapping;
   atlasTexture.wrapT = THREE.ClampToEdgeWrapping;
   atlasTexture.colorSpace = THREE.SRGBColorSpace;

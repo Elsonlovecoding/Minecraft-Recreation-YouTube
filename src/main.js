@@ -83,6 +83,10 @@ async function init() {
   const dayNight = createDayNightCycle({ sky, fog: scene.fog, sun, ambient, clouds });
 
   const atlasTexture = await loadAtlas();
+  // Anisotropic filtering over the atlas's tile-local mip chain: without it,
+  // ground seen at a grazing angle — most of what a 480-block view IS —
+  // over-blurs along the view direction. 16x is free on any real GPU.
+  atlasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   // Phase 22: the two feel systems. Both are module-level singletons any
   // system can emit into (the CHUNK_LIGHT_UNIFORMS pattern) — before these

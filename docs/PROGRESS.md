@@ -68,6 +68,23 @@ All landed and measured; the game remains complete and shippable.
   Nearest-filtered, so the magnified gradient stair-stepped. The sun is a
   ROUND disc now (256px, linear-filtered) whose glow is windowed to reach
   exactly zero before the rim. The moon keeps its vanilla pixel square.
+- **Distant terrain quality (fourth follow-up request — "don't make the
+  far places blurry or low quality").** Two causes, both fixed. The block
+  atlas had NO mipmaps (disabled since Phase 1 "so tiles don't blur into
+  each other"), so Nearest-minified terrain degenerated into shimmering
+  pixel noise at distance; it carries a hand-built TILE-LOCAL mip chain
+  now — successive 2x2 box downsamples from 256x256 to 16x16, where each
+  16px tile is exactly one pixel, and the chain STOPS there, so no level
+  can ever mix two tiles' texels (vanilla's own 4-mipmap-level trick).
+  RGB averages are alpha-weighted so leaves/plants keep their edge
+  colours; NearestMipmapLinear minification, Nearest magnification (pixel
+  art up close untouched, screenshot-verified), 16x anisotropy so grazing-
+  angle ground doesn't over-blur. And the fog stopped scaling
+  proportionally with render distance — at 480 blocks the old fractions
+  put everything past mid-distance in a milky wash; it is 340/510 now, so
+  terrain is CLEAR to ~70% of the view and the fog's only job is masking
+  the chunk edge (~80% haze at 480). Verified with before/after vistas of
+  the full r=30 ring.
 - **Render distance 20 -> 30 chunks (480 blocks) (third follow-up
   request).** Fog out to 180/520. Measured: 2821 meshed chunks, 6665
   draws, 14.2M triangles, 1224 MB geometry + 780 MB chunk data — a ~2 GB
