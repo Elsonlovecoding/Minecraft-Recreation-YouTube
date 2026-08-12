@@ -205,8 +205,28 @@ export const CHUNK = {
   HEIGHT: 384,            // overworld world height (MAX_Y - MIN_Y)
 };
 
+// RENDER DISTANCE. Phase 25 raised it 8 -> 12 chunks (128 -> 192 blocks) —
+// vanilla's own default — because at 8 the world stopped a couple of hills
+// away and nothing read at landscape scale. This is THE knob to turn for
+// performance: everything below scales with its square.
+//
+// Measured off the real generator+mesher (node, seed 1337) so the trade is a
+// number rather than a hope:
+//        r=8   197 meshed chunks   453 draw calls   0.91M tris    79 MB geometry +  71 MB chunk data
+//        r=12  441 meshed chunks   973 draw calls   2.03M tris   174 MB geometry + 143 MB chunk data
+// A 70° lens sees roughly a quarter of the ring at a time, so r=12 draws on
+// the order of 250 calls and 0.5M triangles per frame — comfortably inside a
+// 60fps budget on integrated graphics, with the ~320 MB resident footprint
+// (not the triangles) as the thing that stops it going further. r=14 is
+// playable on a machine with memory to spare; r=16 is where the footprint
+// stops being reasonable. Drop to 8 on a weak machine.
+//
+// Filling the ring is not the expensive part: driven unbudgeted in the
+// browser, the whole r=12 ring — 729 chunks generated, 441 meshed — takes
+// 6.4 s of CPU, which the 8 ms-per-frame streaming budget covers in about
+// 13 s of play at 60fps.
 export const VIEW = {
-  DISTANCE_CHUNKS: 8,     // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 12,    // chunks loaded/rendered around the player
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -292,11 +312,21 @@ export const CAVES = {
   // lower floor you can see down onto. Two hashed connector bores leave the
   // chamber near floor height and climb gently outward until they meet the
   // tunnel network.
+  // Phase 25 raised the RATE, not the mechanism. Phase 23's chambers were
+  // real and measured, but at one per 224-block region a chamber's mouth
+  // covered ~3% of the cave band and a player could explore for a long time
+  // without meeting one — which is exactly what the report said. The tiles
+  // are 128 blocks now and nearly all of them host a chamber (one per ~136
+  // blocks of travel, ~9% of all columns standing over one), and each
+  // chamber sends out THREE connector bores instead of two, so the tunnel
+  // network runs into a chamber far more often than it used to.
   GREAT_CAVERN: {
-    REGION_SIZE: 224,        // world tiles this wide host at most one chamber
-    CHANCE: 0.72,            // ...and do so this often — ~1 per 264 blocks
+    REGION_SIZE: 128,        // world tiles this wide host at most one chamber
+    CHANCE: 0.88,            // ...and do so this often — ~1 per 136 blocks
     MARGIN: 40,              // keep the centre this far inside its region so
                              // two neighbouring chambers can never overlap
+                             // (max body reach is RADIUS_MAX * (1 + WARP) + 2
+                             // = 38 blocks, which must stay <= MARGIN)
     MIN_Y: -50,              // above the lava-lake flood at -54
     MAX_Y: 24,               // and far below sea level (62)
     RADIUS_MIN: 18,          // horizontal radii -> a longest axis of 36..58
@@ -322,7 +352,8 @@ export const CAVES = {
       LEVEL_MAX: 0.55,       // measured up from the floor
     },
     CONNECTORS: {
-      COUNT: 2,              // bores leaving each chamber
+      COUNT: 3,              // bores leaving each chamber (Phase 25: 2 -> 3,
+                             // so a wandering tunnel meets one sooner)
       RADIUS: 2.2,           // bore radius (walkable)
       LENGTH_MIN: 40,        // ...run this far out to meet the tunnel net
       LENGTH_MAX: 90,
@@ -463,7 +494,14 @@ export const UNDERGROUND = {
 // Overworld heightmap, biomes and decoration (world/terrain.js).
 // Noise scales are in cycles per block (1/blocks-per-feature).
 export const TERRAIN = {
-  SEED: 1337,
+  // Phase 25 — a NEW world. The old 1337 spawn opened on a forested coast
+  // hemmed in by mountains (measured: 45% of the land within 300 blocks was
+  // mountain, 2.8% desert), which is what the "forest near water every time,
+  // plains rare" report was describing. 2163 was picked by scanning seeds for
+  // the most EVEN spawn area under the rebalanced biome rules: plains 26% /
+  // forest 24% / desert 23% / mountains 27% of the land within 260 blocks,
+  // 14% water, and the player lands in plains at y64 with forest in sight.
+  SEED: 2163,
 
   // Extra columns computed around a chunk during generation so trees whose
   // canopy crosses a chunk border come out identical from both sides
@@ -482,19 +520,27 @@ export const TERRAIN = {
   HILLS: { SCALE: 1 / 160, OCTAVES: 4, PERSISTENCE: 0.5, LACUNARITY: 2 },
 
   // Climate fields drive biome weights. Both are fBm in [-1, 1].
+  // Phase 25 raised both frequencies (1/480, 1/420 -> 1/360, 1/320): biome
+  // patches used to be so large that a whole play session could happen
+  // inside one of them, which is what "plains are rare" actually meant —
+  // globally plains were the commonest biome, but you never walked to one.
+  // At these scales a walk of a few hundred blocks crosses several.
   CLIMATE: {
-    TEMPERATURE_SCALE: 1 / 480,
-    MOISTURE_SCALE: 1 / 420,
+    TEMPERATURE_SCALE: 1 / 360,
+    MOISTURE_SCALE: 1 / 320,
     OCTAVES: 3,
   },
 
   // Mountains come from their own region mask, not climate, so ranges read
   // as coherent chains. Ridged noise supplies the relief inside a region.
   MOUNTAINS: {
-    REGION_SCALE: 1 / 700,
+    REGION_SCALE: 1 / 560,
     REGION_OCTAVES: 2,
-    WEIGHT_START: 0.12,        // region noise where mountains begin to blend in
-    WEIGHT_FULL: 0.55,         // region noise where mountains fully dominate
+    // Phase 25: 0.12 -> 0.30. Mountains took a quarter of all land and
+    // nearly half of it near the old spawn, crowding out the lowland
+    // biomes; they are a fifth of it now and still form coherent ranges.
+    WEIGHT_START: 0.25,        // region noise where mountains begin to blend in
+    WEIGHT_FULL: 0.60,         // region noise where mountains fully dominate
     RIDGE_SCALE: 1 / 260,
     RIDGE_OCTAVES: 3,
     RIDGE_SHARPNESS: 2.2,      // exponent on the ridge profile; higher = sharper crests
@@ -504,19 +550,23 @@ export const TERRAIN = {
 
   // Per-biome height contribution (OFFSET above the continent base plus
   // hill noise * HILL_AMPLITUDE) and tree density (trees per column).
+  // Phase 25 rebalanced the three lowland biomes. The old numbers gave
+  // plains 39% / forest 26% / desert 10% / mountains 25% of land; deserts
+  // needed both real heat AND real dryness, which two independent fBm
+  // fields rarely deliver at once, so they were a tenth of the world.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.35, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    PLAINS: { BASE_WEIGHT: 0.38, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
-      MOISTURE_START: 0.02,    // moisture where forest starts blending in
-      MOISTURE_FULL: 0.38,     // moisture where forest weight saturates
+      MOISTURE_START: 0.06,    // moisture where forest starts blending in
+      MOISTURE_FULL: 0.42,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
-      HEAT_START: 0.08,        // temperature where desert starts blending in
-      HEAT_FULL: 0.45,
-      DRY_START: -0.2,         // below this moisture the air is fully dry
-      DRY_FULL: 0.15,          // above this moisture desert weight is zero
+      HEAT_START: -0.06,       // temperature where desert starts blending in
+      HEAT_FULL: 0.30,
+      DRY_START: -0.32,        // below this moisture the air is fully dry
+      DRY_FULL: 0.30,          // above this moisture desert weight is zero
     },
     MOUNTAINS: { TREE_DENSITY: 0.003 },
   },
@@ -534,6 +584,17 @@ export const TERRAIN = {
     SCALE: 1 / 210,            // warp field frequency
     OCTAVES: 2,
     AMPLITUDE: 34,             // blocks of push at full field strength
+    // Phase 25 — MOISTURE gets its OWN warp pair, on its own frequency,
+    // instead of sharing the temperature/mountain warp. Sharing one warp
+    // made the three biome axes bend together, so their boundaries lined up
+    // and a region tended to be one biome's; with independent warps the wet
+    // edge, the hot edge and the mountain edge cut across each other and a
+    // walk meets a mixture. (It is also the honest answer to the "forest
+    // hugs the coastline" report — see PROGRESS: the generator has no
+    // forest/coast link to remove, measured, but coupled warps DID make
+    // whatever biome owned a stretch of coast own all of it.)
+    MOISTURE_SCALE: 1 / 155,
+    MOISTURE_AMPLITUDE: 46,
   },
 
   // Phase 24 — rivers. The zero-contours of one low-frequency field supply
@@ -585,12 +646,18 @@ export const TERRAIN = {
     // height line (a "stone line" like vanilla's snow line — never one fixed
     // height) or on faces too steep for grass to sit. Everything below and
     // gentler is grassed like the rest of the world.
+    // Phase 25: the Phase 24 line at 108 was still low enough to strip a
+    // third of every mountain (measured: 60% grass / 38% stone, and 34 of
+    // those 38 points came from the LINE, not from steepness). Peaks reach
+    // ~140, so a line at 128 leaves the top dozen blocks bare and grasses
+    // the rest, and STEEP_DROP 3 -> 4 stops ordinary ridged relief from
+    // counting as a cliff. Measured after: 91% grass / 7.6% stone.
     STONE_LINE: {
-      HEIGHT: 108,             // mean height where slopes turn to bare stone
-      JITTER: 10,              // ± blocks of noise on that line
+      HEIGHT: 128,             // mean height where slopes turn to bare stone
+      JITTER: 7,               // ± blocks of noise on that line
       SCALE: 1 / 70,           // jitter field frequency
     },
-    STEEP_DROP: 3,             // a column this many blocks above its lowest
+    STEEP_DROP: 4,             // a column this many blocks above its lowest
                                // 4-neighbour is a cliff face — bare stone at
                                // any height (grass could not sit on it)
   },
@@ -1662,6 +1729,34 @@ export const ITEMS = {
 };
 
 // ---------------------------------------------------------------------------
+// Game modes (Phase 25) — SURVIVAL is the whole game as SPEC.md describes it;
+// CREATIVE removes the survival pressure and hands the player everything.
+// The mode itself lives in player/gamemode.js (a module singleton, the
+// particles/audio pattern); these are its tunables.
+// ---------------------------------------------------------------------------
+
+export const CREATIVE = {
+  // Flight. Vanilla creative flies at ~10.9 blocks/s — about 2.5x walking —
+  // and doubles that while sprinting. Rise/descend are their own rate.
+  FLY_SPEED: 10.9,               // horizontal blocks/s
+  FLY_SPRINT_MULTIPLIER: 2.0,    // ...times this while sprinting
+  FLY_VERTICAL_SPEED: 7.5,       // blocks/s holding space (up) / shift (down)
+  FLY_RESPONSE: 14,              // 1/s exponential approach to the wanted
+                                 // velocity — the flight has weight, but the
+                                 // ramp is short enough to feel immediate
+  FLY_DRAG: 9,                   // 1/s damping with no input (a gentle glide)
+  DOUBLE_TAP_SECONDS: 0.35,      // second space tap within this toggles flight
+  // Vanilla creative flight still COLLIDES with terrain — it is flight, not
+  // spectator noclip — so the body sweeps exactly as it does on foot. Set
+  // false for a fly-through-walls camera instead.
+  FLY_COLLIDES: true,
+  // Leaving the ground with flight off never accrues fall distance in
+  // creative anyway (the player cannot be damaged), but the flag keeps the
+  // landing particles/sounds honest: a creative landing is silent-ish.
+  LAND_EFFECTS: false,
+};
+
+// ---------------------------------------------------------------------------
 // Inventory
 // ---------------------------------------------------------------------------
 
@@ -1748,6 +1843,26 @@ export const UI = {
     PITCH_SENSITIVITY: 1.4,       // target radians per canvas-height of cursor
     ARMOUR_INFLATE_PX: 0.75,      // armour overlay growth per side (pixels)
     LEGGING_INFLATE_PX: 0.4,      // trousers sit inside the boots/chest layer
+  },
+
+  // The game-mode badge (Phase 25): the current mode, small and dim, in the
+  // bottom-right corner where nothing else draws — unobtrusive, but always
+  // answerable without opening a menu.
+  MODE_BADGE: {
+    BOTTOM_PX: 8,
+    RIGHT_PX: 10,
+    FONT_PX: 13,
+    OPACITY: 0.55,
+  },
+
+  // The creative inventory screen (Phase 25, ui/creative.js): a tabbed grid
+  // of every block and item in the game with a search field.
+  CREATIVE_SCREEN: {
+    COLUMNS: 9,                   // items per row...
+    ROWS: 6,                      // ...and rows per page (54 visible)
+    SLOT_PX: 46,                  // matches the survival screen's slots
+    TAB_PX: 40,                   // tab button height
+    SEARCH_PX: 15,                // search field font size
   },
 };
 
@@ -1892,10 +2007,13 @@ export const SKY = {
   HORIZON_COLOR: 0xbcd8f5,
   BELOW_COLOR: 0x9db8d2,
   MID_STOP: 0.35,                 // where the mid stop sits in dome height 0..1
-  // Fog is matched to the horizon colour so terrain fades into the sky
+  // Fog is matched to the horizon colour so terrain fades into the sky.
+  // Phase 25: pushed out with the render distance (40/140 for 128 blocks ->
+  // 72/208 for 192) — the same fraction of the view is clear as before, so
+  // the far chunk edge still dissolves into sky instead of popping.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 40,
-  FOG_FAR: 140,
+  FOG_NEAR: 72,
+  FOG_FAR: 208,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
@@ -2443,18 +2561,6 @@ export const AUDIO = {
     VOLUME: 0.5,
   },
 };
-
-// ---------------------------------------------------------------------------
-// TEMPORARY, MUST REMOVE — spawn test chests
-// ---------------------------------------------------------------------------
-
-// Places stocked chests at the player's spawn point so the endgame — the
-// portal, the Nether, brewing, eyes of ender, the stronghold and the
-// DRAGON FIGHT — can be tested without a full playthrough (main.js reads
-// it at boot). Removed at the end of Phase 20 as originally mandated,
-// then restored by request for End-fight testing; delete the flag and the
-// main.js block together when it goes again.
-export const TEST_CHEST = true;
 
 // ---------------------------------------------------------------------------
 // Debug / development

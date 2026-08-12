@@ -28,6 +28,7 @@ import {
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, PLANTABLE } from '../world/blocks.js';
 import { consumableValue, armourSlotIndex } from './inventory.js';
+import { gamemode } from './gamemode.js';
 import { createHand } from './hand.js';
 import { createFluidActions } from './fluid_actions.js';
 import { particles } from '../render/particles.js';
@@ -118,6 +119,14 @@ export function parseHeldTool(itemName) {
 // the wrong class counts as a bare hand for the tier gate (an axe never
 // harvests stone).
 export function miningPlan(def, heldItemName) {
+  // Phase 25 — creative: everything breaks instantly whatever is held, and
+  // nothing drops (vanilla; the creative inventory is where blocks come
+  // from). Unbreakable blocks — bedrock, portal frames, hardness null/∞ —
+  // stay unbreakable: `time` only collapses for a block that HAS a hardness,
+  // and isTargetable already rejects the rest.
+  if (gamemode.creative) {
+    return { time: Number.isFinite(def.hardness) ? 0 : Infinity, drops: false };
+  }
   const tool = parseHeldTool(heldItemName);
   const matchesClass = !!tool && !!def.tool && tool.toolClass === def.tool;
   const gateTier = matchesClass ? tool.tier : 'hand';

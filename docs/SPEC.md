@@ -20,6 +20,26 @@ normal progression all the way to the End without being blocked by a missing fea
 
 Everything on the critical path from first tree to dead dragon.
 
+## Game modes
+
+The game opens on a start screen offering **Survival** or **Creative**, and the
+pause menu switches between them live — no reload, no loss of world state, and
+the inventory carries across in both directions.
+
+**Survival** is everything else in this document: health, hunger, all damage
+sources, death dropping the inventory, timed block breaking by hardness and
+tool tier, tool durability, hostile mobs, and an empty inventory at spawn.
+The success test above is a survival test.
+
+**Creative** removes the pressure and hands the player the game: flight
+(double-tap space; space rises, shift descends; faster than walking; no fall
+damage), no health or hunger and no way to be damaged or die, instant block
+breaking whatever is held, blocks that never leave the inventory when placed,
+tools that never wear, and hostile mobs that ignore the player. Collision
+still applies — creative flies, it does not phase through the world. E opens
+a tabbed, searchable inventory of every block and item in the game instead of
+the survival one.
+
 ## Out of scope
 
 Do not build these. If a session is running long, these were never the target anyway.

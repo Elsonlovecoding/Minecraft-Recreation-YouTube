@@ -65,6 +65,12 @@ export class TerrainGenerator {
     // surface rules and decoration variation.
     this.warpXNoise = table(0x70819213);
     this.warpZNoise = table(0x81921324);
+    // Phase 25 — the MOISTURE field gets its own warp pair on its own
+    // frequency. Sharing one warp with temperature and the mountain regions
+    // bent all three boundaries the same way, so they lined up and a whole
+    // stretch of country came out as one biome.
+    this.mWarpXNoise = table(0x1f2e3d4c);
+    this.mWarpZNoise = table(0x2e3d4c5b);
     this.riverNoise = table(0x92132435);
     this.riverWidthNoise = table(0x13243546);
     this.stoneLineNoise = table(0x24354657);
@@ -92,11 +98,14 @@ export class TerrainGenerator {
 
   // --- climate and biome weights -------------------------------------------
 
-  climateAt(x, z) {
+  // `mx`/`mz` (Phase 25) are the MOISTURE sample point, warped independently
+  // of the temperature/mountain one. They default to (x, z) so any caller
+  // that only wants the raw climate pair still gets it.
+  climateAt(x, z, mx = x, mz = z) {
     const c = TERRAIN.CLIMATE;
     return {
       temperature: fbm(this.temperatureNoise, x * c.TEMPERATURE_SCALE, z * c.TEMPERATURE_SCALE, c.OCTAVES),
-      moisture: fbm(this.moistureNoise, x * c.MOISTURE_SCALE, z * c.MOISTURE_SCALE, c.OCTAVES),
+      moisture: fbm(this.moistureNoise, mx * c.MOISTURE_SCALE, mz * c.MOISTURE_SCALE, c.OCTAVES),
     };
   }
 
@@ -111,7 +120,16 @@ export class TerrainGenerator {
     const WP = TERRAIN.BIOME_WARP;
     const wx = x + fbm(this.warpXNoise, x * WP.SCALE, z * WP.SCALE, WP.OCTAVES) * WP.AMPLITUDE;
     const wz = z + fbm(this.warpZNoise, x * WP.SCALE, z * WP.SCALE, WP.OCTAVES) * WP.AMPLITUDE;
-    const { temperature, moisture } = this.climateAt(wx, wz);
+    // The moisture field's own warp (Phase 25) — a different frequency and a
+    // different pair of noise tables, so the wet boundary cuts ACROSS the hot
+    // and mountainous ones instead of running beside them.
+    const mx = x +
+      fbm(this.mWarpXNoise, x * WP.MOISTURE_SCALE, z * WP.MOISTURE_SCALE, WP.OCTAVES) *
+      WP.MOISTURE_AMPLITUDE;
+    const mz = z +
+      fbm(this.mWarpZNoise, x * WP.MOISTURE_SCALE, z * WP.MOISTURE_SCALE, WP.OCTAVES) *
+      WP.MOISTURE_AMPLITUDE;
+    const { temperature, moisture } = this.climateAt(wx, wz, mx, mz);
     const M = TERRAIN.MOUNTAINS;
     const B = TERRAIN.BIOMES;
 

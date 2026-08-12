@@ -37,6 +37,7 @@ import { createMobModel, DRAGON_MODEL } from './models.js';
 import { createCrystals } from './crystals.js';
 import { createDragonFx } from './dragon_fx.js';
 import { rayAABB, lineOfSight } from '../systems/combat.js';
+import { gamemode } from '../player/gamemode.js';
 
 const PX = 1 / 16;
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -340,7 +341,12 @@ export function createDragonFight({
 
   // --- flight ---------------------------------------------------------------
 
-  const playerTargetable = () => !stats.dead && player.mode !== 'fly';
+  // The same gate the mob manager uses (entities/mobs.js): a creative player
+  // is not a target — the dragon flies its circuit and perches, but never
+  // strafes, breathes or knocks them about. It can still be FOUGHT: crystals
+  // and the dragon itself take damage exactly as before.
+  const playerTargetable = () =>
+    !stats.dead && !gamemode.creative && player.mode !== 'fly';
   const playerEye = () => {
     const p = player.body.position;
     return { x: p.x, y: p.y + PLAYER.EYE_HEIGHT, z: p.z };

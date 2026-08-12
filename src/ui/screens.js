@@ -40,14 +40,20 @@
 import * as THREE from 'three';
 import { INVENTORY, UI, CRAFTING, ITEMS } from '../config.js';
 import { renderSlotContent } from './icons.js';
+import { gamemode } from '../player/gamemode.js';
 import { createPlayerPreview } from './player_preview.js';
 import { createContainerSections } from './containers.js';
 import { CraftingGrid } from '../systems/crafting.js';
 import { isFuel, smeltResult } from '../systems/smelting.js';
 import { routableInBrewing } from '../systems/brewing.js';
 
+// `openCreative` (Phase 25, wired by main.js -> ui/creative.js) is called by
+// the E key instead of opening the survival inventory while creative mode is
+// on. The creative screen closes itself; this file stays the one owner of
+// "E means inventory".
 export function createScreens({
   inventory, canvas, items, player, camera, onRespawn, onVictoryReturn,
+  openCreative,
 }) {
   const iconPx = Math.round(UI.SCREEN_SLOT_PX * UI.ICON_SCALE);
   let open = false;
@@ -700,7 +706,10 @@ export function createScreens({
         closeScreen();
       } else if (document.pointerLockElement === canvas) {
         e.preventDefault();
-        openScreen('inventory');
+        // Creative replaces the survival inventory with its own catalogue
+        // screen (ui/creative.js) — same key, different screen.
+        if (gamemode.creative && openCreative) openCreative();
+        else openScreen('inventory');
       }
     } else if (e.code === 'Escape' && open) {
       // Esc closes like vanilla (the pointer is already unlocked here)

@@ -8,8 +8,9 @@
 // re-exported here, so every caller since Phase 5 keeps working.
 
 import * as THREE from 'three';
-import { PLAYER, DEBUG } from '../config.js';
+import { PLAYER, DEBUG, CREATIVE } from '../config.js';
 import { PlayerBody, findSpawnPosition } from './body.js';
+import { gamemode } from './gamemode.js';
 
 // Re-exported: main.js and the node harness have imported both from here
 // since Phase 5 (Phase 21 moved the bodies into player/body.js).
@@ -37,6 +38,7 @@ export function createPlayerController({ world, camera, canvas }) {
   let mode = 'walk'; // 'walk' | 'fly' (the old debug camera, behind a toggle)
   let sprintLatch = false;
   let lastForwardTap = -Infinity;
+  let lastJumpTap = -Infinity; // creative: double-tap space toggles flight
   let eyeHeight = PLAYER.EYE_HEIGHT;
   let stepSmooth = 0; // camera offset easing out after an auto-step
   let bobPhase = 0;
@@ -85,12 +87,51 @@ export function createPlayerController({ world, camera, canvas }) {
       if (now - lastForwardTap <= PLAYER.SPRINT_DOUBLE_TAP_SECONDS) sprintLatch = true;
       lastForwardTap = now;
     }
+    // Creative flight (Phase 25): a second space tap inside the window
+    // toggles it, like vanilla. Only a real press counts — the key must
+    // have been released — so holding space to rise never re-toggles.
+    if (
+      e.code === 'Space' && !e.repeat && !keys.has('Space') &&
+      mode === 'walk' && gamemode.creative
+    ) {
+      const now = performance.now() / 1000;
+      if (now - lastJumpTap <= CREATIVE.DOUBLE_TAP_SECONDS) {
+        setFlying(!body.flying);
+        lastJumpTap = -Infinity; // a third tap starts a fresh pair
+      } else {
+        lastJumpTap = now;
+      }
+    }
     keys.add(e.code);
   });
 
   document.addEventListener('keyup', (e) => {
     keys.delete(e.code);
     if (e.code === 'KeyW') sprintLatch = false;
+  });
+
+  // Creative flight on/off. Leaving flight lifts the body clear if the
+  // noclip variant (CREATIVE.FLY_COLLIDES false) parked it inside terrain —
+  // the debug camera's rule, for the same reason.
+  function setFlying(on) {
+    if (body.flying === !!on) return;
+    body.flying = !!on;
+    body.velocity.x = 0;
+    body.velocity.y = 0;
+    body.velocity.z = 0;
+    body.fallDistance = 0;
+    body._fallStartY = body.position.y;
+    if (!body.flying) {
+      let guard = 512;
+      while (body.intersectsSolid() && guard-- > 0) body.position.y += 1;
+      body.onGround = false;
+    }
+  }
+
+  // Leaving creative grounds the player at once: survival has no flight, and
+  // a stranded flier would hang in mid-air until they moved.
+  gamemode.subscribe(() => {
+    if (!gamemode.creative) setFlying(false);
   });
 
   function toggleFly() {
@@ -227,6 +268,12 @@ export function createPlayerController({ world, camera, canvas }) {
       return body.maxBreath;
     },
     toggleFly,
+    // Creative flight (Phase 25): the state and its switch. `flying` also
+    // drives the eye height (a flier stands upright) and the HUD badge.
+    get flying() {
+      return body.flying;
+    },
+    setFlying,
     // The look angles (Phase 18 — the enderman's stare check derives the
     // exact camera-forward vector from them; radians, YXZ like the camera).
     get yaw() {

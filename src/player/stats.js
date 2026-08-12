@@ -29,6 +29,7 @@
 import { PLAYER, STATS, EFFECTS } from '../config.js';
 import { BLOCK, isLava } from '../world/blocks.js';
 import { findSpawnPosition } from './controller.js';
+import { gamemode } from './gamemode.js';
 import { particles } from '../render/particles.js';
 import { audio } from '../systems/audio.js';
 
@@ -104,11 +105,36 @@ export function createStats({ world, player, inventory, items, onDeath }) {
 
   // Every exhaustion gain routes through here: EXHAUSTION_SCALE (Phase 14)
   // runs the whole hunger system at a fraction of the vanilla drain rate.
+  // Creative has no hunger at all, so nothing accrues — which also means a
+  // long creative flight can't hand the player an empty bar the moment they
+  // switch back to survival.
   function gainExhaustion(amount) {
+    if (gamemode.creative) return;
     exhaustion += amount * STATS.EXHAUSTION_SCALE;
   }
 
+  // Entering creative restores the player to full and puts out anything
+  // still burning, so switching back to survival starts from a clean state
+  // rather than from whatever the last survival hit left behind. Leaving
+  // creative changes nothing — the player keeps the full bars.
+  gamemode.subscribe((mode) => {
+    if (mode !== 'creative') return;
+    health = PLAYER.MAX_HEALTH;
+    hunger = PLAYER.MAX_HUNGER;
+    saturation = STATS.RESPAWN_SATURATION;
+    exhaustion = 0;
+    burnSeconds = 0;
+    poisonSeconds = 0;
+    player.body.fallDistance = 0;
+    player.body._fallStartY = player.body.position.y;
+  });
+
   function damage(amount) {
+    // Phase 25 — creative: the player cannot be hurt and cannot die. This is
+    // the SINGLE gate for every damage source in the game (lava, fall,
+    // drowning, the void, cactus, mobs, explosions, the dragon's breath),
+    // because they all arrive here.
+    if (gamemode.creative) return;
     if (amount <= 0 || dead) return;
     // Absorption first (vanilla): the yellow hearts empty before any real
     // health is touched, and whatever they can't cover carries through.
@@ -240,7 +266,7 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   // it here). Never shortens a burn already running; fire resistance still
   // lets the flames show, it only suppresses the damage ticks below.
   function igniteFire(seconds) {
-    if (dead || player.mode === 'fly') return;
+    if (dead || gamemode.creative || player.mode === 'fly') return;
     burnSeconds = Math.max(burnSeconds, seconds);
   }
 
@@ -282,7 +308,12 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     // here again would duplicate fall damage.
     if (dt <= 0) return;
     flash = Math.max(0, flash - dt);
-    if (dead || player.mode === 'fly') {
+    // Creative is exempt from the whole survival loop, exactly like the F4
+    // debug camera: no fall damage, no contact damage, no drowning, no
+    // hunger, no regeneration to run. damage() is gated too, so this is
+    // belt-and-braces — but it also stops the timers from ticking down
+    // pointlessly and stops movement exhaustion accruing across a flight.
+    if (dead || gamemode.creative || player.mode === 'fly') {
       prevX = null; // no movement exhaustion across a fly-mode traversal
       return;
     }
