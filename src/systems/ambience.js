@@ -141,7 +141,21 @@ export function createAmbience({ world, player, dimensions }) {
       if (world.getChunkIfLoaded &&
         !world.getChunkIfLoaded(Math.floor(x / 16), Math.floor(z / 16))) continue;
       const id = world.getBlock(x, y, z);
-      if (id === BLOCK.AIR) continue;
+      if (id === BLOCK.AIR) {
+        // Phase 26 — dust motes in underground light shafts: an air cell
+        // carrying real sky light while sitting well below the generator's
+        // surface is a beam through a cave opening. Only in the overworld
+        // (the fixed-sky dimensions have no shafts), and the cheap rolls
+        // run before the height/light reads so most hits cost nothing.
+        const A26 = PARTICLES.AMBIENT;
+        if (dimensions?.activeKey === 'overworld' && Math.random() < A26.DUST_CHANCE) {
+          if (y <= world.getHeight(x, z) - A26.DUST_MIN_DEPTH) {
+            const light = world.getLight?.(x, y, z);
+            if (light && light.sky >= A26.DUST_MIN_SKY) particles.dust(x, y, z);
+          }
+        }
+        continue;
+      }
       if (isTorch(id)) {
         // The flame sits at the head of the torch's box model — leaned out
         // of the wall for the wall variants (TORCH_LEAN is the same table

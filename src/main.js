@@ -4,9 +4,11 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, BEDS, DRAGON,
+  MOBS, TERRAIN, BEDS, DRAGON, VISUAL,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
+import { createPostPipeline } from './render/post_fx.js';
+import { updateWaterUniforms } from './render/water_fx.js';
 import { loadAtlas } from './render/atlas.js';
 import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
@@ -59,6 +61,10 @@ async function init() {
   const renderer = createRenderer(canvas);
   const camera = createCamera();
   attachResizeHandler(renderer, camera);
+  // Phase 26: the post pipeline — god rays, bloom, colour grading
+  // (render/post_fx.js). Null when disabled: the loop then renders straight
+  // to the canvas exactly as Phase 25 did.
+  const post = VISUAL.POST_ENABLED ? createPostPipeline({ renderer }) : null;
 
   const scene = new THREE.Scene();
   scene.fog = createFog();
@@ -267,10 +273,14 @@ async function init() {
   });
   // Phase 18: thrown eyes of ender fly toward the stronghold's
   // deterministic location (dimensions/stronghold.js — generation itself
-  // arrives next phase at exactly that point).
+  // arrives next phase at exactly that point). Phase 26: the centre is
+  // anchored to the SCANNED plains spawn, captured here at boot while the
+  // overworld generator is guaranteed active — the same column generation
+  // anchors to, whatever dimension an eye is thrown in.
+  const overworldSpawn = world.generator.spawnColumn();
   const enderEyes = createEnderEyes({
     scene, player, items, sfx: combat.sfx,
-    getTarget: () => strongholdCenter(TERRAIN.SEED),
+    getTarget: () => strongholdCenter(TERRAIN.SEED, overworldSpawn),
   });
   // Phase 22: thrown ender pearls — a real projectile that teleports the
   // player where it lands, for 2.5 hearts of fall damage.
@@ -741,7 +751,24 @@ async function init() {
     );
     updateHud(player, stats, paused ? 0 : delta);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
-    renderer.render(scene, camera);
+    // Phase 26: the water surface clock and sky state (ripple freezes with
+    // the pause, the reflection follows the live palette — fog IS the
+    // horizon by the cycle's own contract).
+    updateWaterUniforms(paused ? 0 : delta, {
+      fogColor: scene.fog.color,
+      zenithColor: sky.material.uniforms.zenithColor.value,
+      sunDir: dayNight.sunDirection,
+      sunLevel: dayNight.skyActive ? dayNight.sunLevel : 0,
+    });
+    if (post) {
+      post.render(scene, camera, {
+        sunDir: dayNight.sunDirection,
+        sunLevel: dayNight.sunLevel,
+        skyActive: dayNight.skyActive,
+      });
+    } else {
+      renderer.render(scene, camera);
+    }
     interaction.renderHand(renderer); // hand pass over the finished frame
   });
 }

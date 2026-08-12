@@ -15,6 +15,28 @@ import { CLOUDS, STARS, CELESTIAL } from '../config.js';
 import { mulberry32 } from '../world/noise.js';
 
 // ---------------------------------------------------------------------------
+// Celestial depth (Phase 26)
+// ---------------------------------------------------------------------------
+
+// Pins a material's geometry to the far plane in the vertex shader. The sun,
+// moon and stars are "at infinity": ANY cloud fragment must occlude them. A
+// plain depth test cannot guarantee that — the sun quad sits at
+// CELESTIAL.DISTANCE (820), and a low sun's ray crosses the y=192 cloud deck
+// ~125/sin(elevation) blocks out, which is FARTHER than 820 below ~9° of
+// elevation: exactly the sunset case the "sun renders through clouds" report
+// described. With gl_Position.z forced to w (minus an epsilon so the far
+// clip keeps it), every depth-writing fragment in the scene wins against
+// them, and the cloud deck (depthWrite, below) occludes per pixel.
+export function forceFarDepth(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\n\tgl_Position.z = gl_Position.w * 0.999999;',
+    );
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Clouds
 // ---------------------------------------------------------------------------
 
@@ -173,15 +195,23 @@ export function createClouds() {
     transparent: true,
     opacity: C.OPACITY,
     side: THREE.FrontSide,
-    depthWrite: false,
+    // Phase 26 ("the sun renders through clouds"): the deck WRITES depth
+    // now, and draws BEFORE the stars and sun/moon quads (renderOrder),
+    // which are pinned to the far plane (forceFarDepth above). Anything
+    // above the cloud layer fails the depth test wherever a cloud fragment
+    // landed first — per-pixel occlusion, the vanilla draw order. Terrain
+    // never conflicts: peaks stop at ~140, the deck sits at 192, and the
+    // opaque pass has already depth-written before any of this draws.
+    depthWrite: true,
     fog: false,
     toneMapped: false,
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.matrixAutoUpdate = false;
   mesh.frustumCulled = false;
-  mesh.renderOrder = -1; // over the dome and celestials, under the world's
-                         // transparent passes (which depth-test anyway)
+  mesh.renderOrder = -1.9; // after the dome, BEFORE stars and sun/moon —
+                           // the deck must be in the depth buffer when the
+                           // far-plane celestials test against it
 
   let drift = 0;
   const white = new THREE.Color(1, 1, 1);
@@ -249,9 +279,12 @@ export function createStars(sky) {
     fog: false,
     toneMapped: false,
   });
+  // Phase 26: stars sit at the far plane and depth-test, so the cloud deck
+  // (which now writes depth, above) occludes them per pixel.
+  forceFarDepth(material);
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false;
-  points.renderOrder = -1.5; // after the dome, before sun/moon
+  points.renderOrder = -1.5; // after the dome AND the clouds, before sun/moon
   const group = new THREE.Group();
   group.add(points);
   sky.add(group);
@@ -311,10 +344,13 @@ export function createSunTexture() {
       // Core: 1 inside the disc, easing to 0 over the soft band.
       const core = 1 - Math.min(1, Math.max(0, (d - coreR) / soft));
       // Glow: radial decay from the disc edge, multiplied by a smooth
-      // window that is exactly 0 at the quad rim — no rim, no box.
-      const fall = Math.exp(-Math.max(0, d - coreR) * 6.0);
+      // window that is exactly 0 at the quad rim — no rim, no box. The
+      // strength is config now (Phase 26 raised it for the reference's
+      // big soft halo); the falloff relaxes as the quad grows so the halo
+      // uses the room the larger SUN_GLOW_SCALE gives it.
+      const fall = Math.exp(-Math.max(0, d - coreR) * (6.0 / (CELESTIAL.SUN_GLOW_SCALE / 2.6)));
       const window_ = Math.max(0, 1 - d / RIM);
-      const glow = 0.5 * fall * window_ * window_;
+      const glow = CELESTIAL.SUN_GLOW_STRENGTH * fall * window_ * window_;
       const a = Math.min(1, core + glow);
       const i = (y * W + x) * 4;
       const t = core; // blend the halo hue toward the core's white centre

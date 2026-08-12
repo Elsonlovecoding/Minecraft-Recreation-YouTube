@@ -80,6 +80,11 @@ Nether coordinate ratio: 1 block in the Nether = 8 in the Overworld.
 
 - Perlin/simplex heightmap, sea level 62, hills to ~100, occasional peaks to ~140
 - Biomes: plains, forest, desert, mountains. Blended, not hard-edged.
+  Plains is clearly the most common; forest, desert and mountains appear less
+  often (Phase 26).
+- The player spawns in the middle of a large open plains area — never in
+  forest, on a coastline or on a mountain. Guaranteed by a generator-side
+  scan, not by seed luck (Phase 26).
 - Trees: oak in plains/forest, dense in forest. Cactus in desert.
 - Water fills below sea level. Rivers carve through terrain.
 - Caves: two noise layers producing tunnels and caverns, y=-50 to 60
@@ -318,8 +323,9 @@ activates. Falling in transports to the End.
 
 Throwing an eye of ender: it flies toward the nearest stronghold and either drops
 as an item or shatters (20% chance). Player follows the direction. Strongholds
-generate roughly 1000-2000 blocks from spawn, underground, containing corridors,
-rooms, and one portal room.
+generate roughly 400 blocks from spawn (Phase 26 — reachable without a long
+journey; previously 1000-2000), underground, containing corridors, rooms, and
+one portal room.
 
 ---
 

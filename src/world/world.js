@@ -250,6 +250,14 @@ export class World {
   // One pass over the candidate ring, nearest first. Cheap checks are free;
   // heavy work (generating a chunk, building a mesh) spends the budget. The
   // first heavy task of a pass always runs, so progress is guaranteed.
+  //
+  // Phase 26 — LOD tiers: chunks inside VIEW.LOD.DETAIL_CHUNKS mesh at full
+  // detail (tier 0), everything beyond at the reduced tier 1 (chunks.js
+  // skips cross plants and leaf interiors there). A meshed chunk whose tier
+  // no longer matches its distance remeshes — with HYSTERESIS on the demote
+  // side, so walking along the boundary never remesh-thrashes a ring of
+  // chunks. Nearest-first order means promotions (a visual upgrade close to
+  // the player) naturally run before distant demotions.
   _streamPass(pcx, pcz, budgetMs, meshRadius) {
     const t0 = performance.now();
     const meshR2 = meshRadius * meshRadius;
@@ -258,6 +266,8 @@ export class World {
     const keepR = meshRadius + STREAMING.UNLOAD_MARGIN;
     const keepR2 = keepR * keepR;
     const genR = meshRadius + 1;
+    const detailR2 = VIEW.LOD.DETAIL_CHUNKS ** 2;
+    const demoteR2 = (VIEW.LOD.DETAIL_CHUNKS + VIEW.LOD.HYSTERESIS) ** 2;
     for (const o of this._offsets) {
       const cx = pcx + o.dx;
       const cz = pcz + o.dz;
@@ -268,13 +278,21 @@ export class World {
         this.getChunk(cx, cz); // generates; meshing happens on a later pass
         continue;
       }
+      // The reduced tier is only meaningful under an open sky: its
+      // underground cull keys off baked sky light, which the Nether and
+      // End generators never have (see chunks.js) — those worlds always
+      // mesh at full detail (they are small or fog-bounded anyway).
+      const lod = o.d2 <= detailR2 || this.generator.hasOpenSky !== true ? 0 : 1;
+      const lodStale = chunk.mesh && chunk.mesh.lod !== lod &&
+        // Demotions wait out the hysteresis band; promotions apply at once.
+        (lod === 0 || o.d2 > demoteR2);
       const wantsMesh = o.d2 <= meshR2
-        ? !chunk.mesh || chunk.dirty
-        : o.d2 <= keepR2 && !!chunk.mesh && chunk.dirty;
+        ? !chunk.mesh || chunk.dirty || lodStale
+        : o.d2 <= keepR2 && !!chunk.mesh && (chunk.dirty || lodStale);
       if (!wantsMesh) continue;
       if (!this._neighborsLoaded(cx, cz)) continue;
       if (performance.now() - t0 >= budgetMs) return;
-      this._remesh(chunk);
+      this._remesh(chunk, lod);
     }
   }
 
@@ -289,7 +307,7 @@ export class World {
     return true;
   }
 
-  _remesh(chunk) {
+  _remesh(chunk, lod = 0) {
     if (chunk.mesh) {
       disposeChunkMesh(chunk);
       this.meshedCount--;
@@ -298,6 +316,7 @@ export class World {
       chunk,
       (cx, cz) => this.getChunkIfLoaded(cx, cz),
       this.materials,
+      lod,
     );
     this.scene.add(chunk.mesh.group);
     this.meshedCount++;

@@ -15,13 +15,15 @@
 
 import * as THREE from 'three';
 import {
-  SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK,
+  SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK, VISUAL,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
 // Phase 24: clouds, stars and the generated sun/moon art live in their own
 // module (render/sky_fx.js) per the size cap — this file keeps the CYCLE
 // that drives them.
-import { createStars, createSunTexture, createMoonTextures } from './sky_fx.js';
+import {
+  createStars, createSunTexture, createMoonTextures, forceFarDepth,
+} from './sky_fx.js';
 
 // ---------------------------------------------------------------------------
 // Sky dome
@@ -172,6 +174,13 @@ export const CHUNK_LIGHT_UNIFORMS = {
   // baked sky light is zero everywhere, and without a floor enclosed
   // netherrack would render pitch black). 0 in the overworld.
   uMinSkyLevel: { value: 0 },
+  // Phase 26 — the shadow feel (config VISUAL.SHADOW): daylight shadows
+  // lean slightly cool and carry a faint warm ground bounce. Constants in
+  // uniforms so the whole look stays one config edit away from neutral.
+  uShadowCool: { value: new THREE.Color(VISUAL.SHADOW.COOL_COLOR) },
+  uShadowCoolStrength: { value: VISUAL.SHADOW.COOL_STRENGTH },
+  uBounceColor: { value: new THREE.Color(VISUAL.SHADOW.BOUNCE_COLOR) },
+  uBounceStrength: { value: VISUAL.SHADOW.BOUNCE_STRENGTH },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -214,6 +223,10 @@ export function patchChunkMaterial(material) {
         + 'uniform float uHeldLightLevel;\n'
         + 'uniform vec3 uHeldLightTint;\n'
         + 'uniform float uMinSkyLevel;\n'
+        + 'uniform vec3 uShadowCool;\n'
+        + 'uniform float uShadowCoolStrength;\n'
+        + 'uniform vec3 uBounceColor;\n'
+        + 'uniform float uBounceStrength;\n'
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
@@ -227,7 +240,24 @@ export function patchChunkMaterial(material) {
           // at render time so it costs zero remeshing as the player moves.
           float heldLevel = clamp(uHeldLightLevel - distance(vHeldWorldPos, uHeldLightPos), 0.0, 15.0);
           vec3 heldLum = pow(uLightFalloff, 15.0 - heldLevel) * uHeldLightTint;
-          diffuseColor.rgb *= max(max(skyLum, blockLum), heldLum);
+          vec3 lum = max(max(skyLum, blockLum), heldLum);
+          // Phase 26 — shadow feel, daylight only (config VISUAL.SHADOW).
+          // "Shade" is the baked per-face brightness x AO in the vertex
+          // colour: 0 on a full-lit top face, rising on sides, bottoms and
+          // occluded corners. Those faces take a slight COOL lean (open-sky
+          // shadow is blue-lit) and a small WARM additive bounce (sunlit
+          // ground scatters light back up), both scaled by how much day is
+          // overhead and by the column's sky access, so caves, the night
+          // and the fixed-sky dimensions are untouched.
+          #ifdef USE_COLOR
+            float shade = clamp(1.0 - vColor.r, 0.0, 1.0);
+            float dayF = clamp(1.0 - uSkyDarken / 11.0, 0.0, 1.0) *
+              step(uMinSkyLevel, 0.5); // no bounce under a fixed dimension sky
+            float openSky = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+            lum = mix(lum, lum * uShadowCool, uShadowCoolStrength * shade * dayF);
+            lum += uBounceColor * (uBounceStrength * shade * dayF * openSky);
+          #endif
+          diffuseColor.rgb *= lum;
         }`);
   };
 }
@@ -455,10 +485,16 @@ export function computeLightWindow(nbrs) {
 // terrain still occludes them, and never fogged. Phase 24: the sun is a
 // generated texture — a square core in a soft additive glow, no hard edge —
 // and the moon carries the eight-phase textures, swapped by setMoonPhase.
+// Phase 26 ("the sun renders through clouds"): both quads are pinned to the
+// FAR PLANE (sky_fx.js forceFarDepth) and drawn after the cloud deck, which
+// writes depth now — so clouds occlude the sun and moon per pixel, exactly
+// as terrain always has. Their renderOrder must stay above the clouds' -1.9
+// and the stars' -1.5.
 function createCelestials(sky) {
   const make = (size, material) => {
+    forceFarDepth(material);
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material);
-    mesh.renderOrder = -1;
+    mesh.renderOrder = -1.2;
     mesh.frustumCulled = false;
     sky.add(mesh);
     return mesh;
@@ -515,6 +551,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
     glow: k.GLOW,
     stars: k.STARS ?? 0,
     tint: new THREE.Color(k.TINT ?? 0xffffff),
+    haze: k.HAZE ?? 0, // Phase 26: 0 = clear FOG_NEAR/FAR, 1 = HAZE_NEAR/FAR
   }));
   const celestials = createCelestials(sky);
   const stars = createStars(sky);
@@ -526,6 +563,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
   let time = TIME.START_TIME * TIME.DAY_LENGTH_SECONDS;
   let day = 0; // Phase 24: whole days elapsed — the moon-phase clock
   let lastSkyDarken = 0;
+  let lastSunLevel = 1; // Phase 26: post/water read the sun state per frame
   let dimSky = null; // Phase 15: fixed-sky override while in another dimension
 
   return {
@@ -534,6 +572,21 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
     },
     get dayIndex() {
       return day;
+    },
+    // Phase 26 — read-only sun state for the post pipeline (god rays) and
+    // the water uniforms: the interpolated keyframe sun level and the unit
+    // direction toward the sun. The vector is the cycle's own working
+    // object — copy it, never mutate it.
+    get sunLevel() {
+      return lastSunLevel;
+    },
+    get sunDirection() {
+      return sunDir;
+    },
+    // Whether the normal overworld sky is up (false under a fixed-sky
+    // dimension profile — the Nether's red gloom, the End's purple).
+    get skyActive() {
+      return !dimSky;
     },
     // Current skylight darkening (0 day .. 11 deep night) — the hostile
     // spawner combines it with baked sky light for the effective level.
@@ -596,6 +649,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
       const f = ((t - a.t + 1) % 1) / span;
 
       const sunLevel = a.sunLevel + (b.sunLevel - a.sunLevel) * f;
+      lastSunLevel = sunLevel;
       const skyDarken = a.skyDarken + (b.skyDarken - a.skyDarken) * f;
       const glow = a.glow + (b.glow - a.glow) * f;
       const starAlpha = a.stars + (b.stars - a.stars) * f;
@@ -616,8 +670,15 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
       u.glowStrength.value = glow;
 
       // Fog always matches the horizon, so terrain fades into the sky at
-      // every point of the cycle.
+      // every point of the cycle. Phase 26: its REACH rides the keyframes'
+      // HAZE channel — clear through the middle of the day, heavy warm
+      // atmosphere while the sun is low (the golden-hour reference). The
+      // lava-view override in main.js runs after this and still wins, and
+      // the dimension branch below overwrites both when a fixed sky is up.
       fog.color.copy(horizon);
+      const haze = a.haze + (b.haze - a.haze) * f;
+      fog.near = SKY.FOG_NEAR + (SKY.HAZE_NEAR - SKY.FOG_NEAR) * haze;
+      fog.far = SKY.FOG_FAR + (SKY.HAZE_FAR - SKY.FOG_FAR) * haze;
 
       // Baked-light uniforms. The skylight TINT rides its own keyframe
       // channel now (Phase 24): white at midday, warm through dawn and dusk,

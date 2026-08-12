@@ -13,6 +13,11 @@ import { OVERWORLD, CHUNK, TERRAIN, UNDERGROUND } from '../config.js';
 import { BLOCK } from './blocks.js';
 import { CaveCarver } from './caves.js';
 import { StrongholdGenerator } from '../dimensions/stronghold.js';
+// Phase 26: the guaranteed plains spawn scan (its own file, cycle-free —
+// the generator is passed in as an argument, the shapes.js pattern), and
+// the Phase 24 surface rules, moved out per the size cap the same way.
+import { scanPlainsSpawn } from './spawn_scan.js';
+import { surfaceLayersFor } from './surface_rules.js';
 // Phase 24: the seeded 2D noise machinery (hashes, Simplex2D, fbm,
 // smoothstep) moved verbatim to world/terrain_noise.js per the ARCHITECTURE
 // size cap — deliberately still terrain's OWN copy, independent of
@@ -29,7 +34,7 @@ const SALT_DITHER = 0xd17e;
 const SALT_BEDROCK = 0xbedd;
 const SALT_LEAF = 0x1eaf;
 const SALT_DEEPSLATE = 0xdee9;
-const SALT_GRAVEL_PATCH = 0x64a7;   // Phase 24: beach/riverbed gravel dither
+// (SALT_GRAVEL_PATCH 0x64a7 moved to world/surface_rules.js with its rules)
 const SALT_PLANT = 0x91a7;          // Phase 24: short grass
 const SALT_FLOWER = 0xf10e;         // Phase 24: flower columns
 const SALT_FLOWER_TYPE = 0xf17e;    // Phase 24: dandelion-vs-poppy patches
@@ -51,6 +56,12 @@ function deepslateChance(y) {
 export class TerrainGenerator {
   constructor(seed = TERRAIN.SEED) {
     this.seed = seed | 0;
+    // Phase 26: the overworld has real sky light, so the mesher's distant
+    // LOD tier may cull enclosed underground faces by "baked sky == 0"
+    // (world/chunks.js). The Nether and End generators deliberately lack
+    // this flag — their baked sky is zero everywhere, and the cull would
+    // erase their terrain — so world.js only requests the tier here.
+    this.hasOpenSky = true;
     // Independent permutation tables per field, derived from the world seed.
     const table = (salt) => new Simplex2D(mulberry32(this.seed ^ salt));
     this.continentNoise = table(0x1a2b3c4d);
@@ -90,10 +101,23 @@ export class TerrainGenerator {
     // Phase 9: caves, ravines, ores, stone variants (world/caves.js) — carved
     // after the base column fill, before decorations.
     this.caves = new CaveCarver(this.seed);
+    // Phase 26: the guaranteed plains spawn, scanned lazily and cached —
+    // the player spawn, the eyes of ender and the stronghold anchor all
+    // read this one column.
+    this._spawnColumn = null;
     // Phase 19: the stronghold (dimensions/stronghold.js) — emitted per
     // chunk as the LAST generation pass so structure writes win, exactly
-    // like the Nether's fortress pass (dimensions/nether.js).
-    this.stronghold = new StrongholdGenerator(this.seed);
+    // like the Nether's fortress pass (dimensions/nether.js). Phase 26: its
+    // centre anchors ~400 blocks from the SCANNED spawn (passed as a thunk
+    // so the scan only runs when something actually needs the location).
+    this.stronghold = new StrongholdGenerator(this.seed, () => this.spawnColumn());
+  }
+
+  // The guaranteed plains spawn column (Phase 26) — pure in the seed,
+  // scanned once per generator. See world/spawn_scan.js.
+  spawnColumn() {
+    if (!this._spawnColumn) this._spawnColumn = scanPlainsSpawn(this);
+    return this._spawnColumn;
   }
 
   // --- climate and biome weights -------------------------------------------
@@ -277,102 +301,14 @@ export class TerrainGenerator {
       x, z, height, weights,
       biome: names[0],
       surfaceBiome,
-      surface: this.surfaceLayersFor(x, z, surfaceBiome, height),
+      surface: surfaceLayersFor(this, x, z, surfaceBiome, height),
     };
   }
 
-  // Is (x, z) inside a gravel patch? Beaches and riverbeds take gravel here
-  // instead of sand — a low-frequency field picks the patches, a per-column
-  // hash roughens their edges so they never read as smooth blobs.
-  _gravelPatchAt(x, z) {
-    const G = TERRAIN.SURFACE.GRAVEL;
-    const field = fbm(this.gravelNoise, x * G.SCALE, z * G.SCALE, 2);
-    const jitter = (hash01(this.seed ^ SALT_GRAVEL_PATCH, x, z) - 0.5) * G.EDGE_JITTER;
-    return field + jitter > G.THRESHOLD;
-  }
-
-  // Does this near-sea-level column count as beach? Only when some column
-  // within reach is actually underwater — sand needs water to lap it, so an
-  // inland plain that happens to sit at y 62 stays grass.
-  _nearWater(x, z) {
-    const B = TERRAIN.SURFACE.BEACH;
-    const sea = OVERWORLD.SEA_LEVEL;
-    for (let dz = -B.REACH; dz <= B.REACH; dz++) {
-      for (let dx = -B.REACH; dx <= B.REACH; dx++) {
-        if ((dx !== 0 || dz !== 0) && this._heightCached(x + dx, z + dz) < sea) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  // The Phase 24 mountain surface rule: bare stone only above a noise-jittered
-  // stone line, or on faces so steep grass could not sit (the column stands
-  // STEEP_DROP or more above its lowest 4-neighbour). Everything else grasses.
-  _bareStoneAt(x, z, height) {
-    const S = TERRAIN.SURFACE;
-    const SL = S.STONE_LINE;
-    const line = SL.HEIGHT + fbm(this.stoneLineNoise, x * SL.SCALE, z * SL.SCALE, 2) * SL.JITTER;
-    if (height >= line) return true;
-    const minN = Math.min(
-      this._heightCached(x + 1, z), this._heightCached(x - 1, z),
-      this._heightCached(x, z + 1), this._heightCached(x, z - 1),
-    );
-    return height - minN >= S.STEEP_DROP;
-  }
-
-  // Layer stack for a column: top block, filler under it, sub-layer under
-  // that, stone below. Depths count blocks below the surface block.
-  // Phase 24 rewrote the rules: sand only where water actually is (beaches,
-  // shallow floors) or in deserts; gravel patches on beaches and riverbeds;
-  // mountain stone by stone-line and steepness instead of one fixed height.
-  surfaceLayersFor(x, z, surfaceBiome, height) {
-    const S = TERRAIN.SURFACE;
-    const sea = OVERWORLD.SEA_LEVEL;
-
-    // Underwater floors (oceans, lakes, rivers): sandy in the shallows —
-    // riverbeds live here — with gravel patches throughout; plain dirt with
-    // gravel below the sandy band.
-    if (height < sea) {
-      const gravel = this._gravelPatchAt(x, z);
-      if (sea - height <= S.UNDERWATER_SAND_DEPTH) {
-        return {
-          top: gravel ? BLOCK.GRAVEL : BLOCK.SAND,
-          filler: BLOCK.SAND, fillerDepth: 2, sub: BLOCK.SANDSTONE, subDepth: 1,
-        };
-      }
-      return {
-        top: gravel ? BLOCK.GRAVEL : BLOCK.DIRT,
-        filler: BLOCK.DIRT, fillerDepth: 2, sub: BLOCK.DIRT, subDepth: 0,
-      };
-    }
-
-    if (surfaceBiome === 'desert') {
-      return {
-        top: BLOCK.SAND, filler: BLOCK.SAND, fillerDepth: S.SAND_DEPTH - 1,
-        sub: BLOCK.SANDSTONE, subDepth: S.SANDSTONE_DEPTH,
-      };
-    }
-
-    // Beaches: near-sea columns with real water in reach, gravel-patched.
-    if (height <= sea + S.BEACH.MAX_ABOVE_SEA && this._nearWater(x, z)) {
-      return {
-        top: this._gravelPatchAt(x, z) ? BLOCK.GRAVEL : BLOCK.SAND,
-        filler: BLOCK.SAND, fillerDepth: S.SAND_DEPTH - 1,
-        sub: BLOCK.SANDSTONE, subDepth: 1,
-      };
-    }
-
-    if (surfaceBiome === 'mountains' && this._bareStoneAt(x, z, height)) {
-      return { top: BLOCK.STONE, filler: BLOCK.STONE, fillerDepth: 0, sub: BLOCK.STONE, subDepth: 0 };
-    }
-
-    return {
-      top: BLOCK.GRASS_BLOCK, filler: BLOCK.DIRT, fillerDepth: S.DIRT_DEPTH,
-      sub: BLOCK.DIRT, subDepth: 0,
-    };
-  }
+  // (The Phase 24 surface rules — gravel patches, beach reach, the mountain
+  // stone line, and surfaceLayersFor itself — moved verbatim to
+  // world/surface_rules.js in Phase 26 per the ARCHITECTURE size cap. They
+  // take this generator as an argument, the spawn_scan.js pattern.)
 
   // --- chunk generation -----------------------------------------------------
 
