@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, BEDS, DRAGON, VISUAL,
+  MOBS, TERRAIN, BEDS, DRAGON, VISUAL, CELESTIAL,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
 import { createPostPipeline } from './render/post_fx.js';
@@ -674,6 +674,7 @@ async function init() {
 
   const clock = new THREE.Clock();
   let wasEyeInLava = false;
+  const waterLightDir = new THREE.Vector3(); // the moon's direction at night
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     const paused = isPaused();
@@ -775,13 +776,22 @@ async function init() {
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
     // Phase 26: the water surface clock and sky state (ripple freezes with
     // the pause, the reflection follows the live palette — fog IS the
-    // horizon by the cycle's own contract).
-    updateWaterUniforms(paused ? 0 : delta, {
-      fogColor: scene.fog.color,
-      zenithColor: sky.material.uniforms.zenithColor.value,
-      sunDir: dayNight.sunDirection,
-      sunLevel: dayNight.skyActive ? dayNight.sunLevel : 0,
-    });
+    // horizon by the cycle's own contract). Phase 27 follow-up: after
+    // sunset the MOON takes over the glint — its direction, at a gentle
+    // fixed level, so night water sparkles silver instead of going dead.
+    {
+      const sd = dayNight.sunDirection;
+      const moonNight = sd.y < -0.04;
+      if (moonNight) waterLightDir.copy(sd).negate();
+      updateWaterUniforms(paused ? 0 : delta, {
+        fogColor: scene.fog.color,
+        zenithColor: sky.material.uniforms.zenithColor.value,
+        sunDir: moonNight ? waterLightDir : sd,
+        sunLevel: dayNight.skyActive
+          ? (moonNight ? CELESTIAL.MOON_GLINT_LEVEL : dayNight.sunLevel)
+          : 0,
+      });
+    }
     if (post) {
       post.render(scene, camera, {
         sunDir: dayNight.sunDirection,

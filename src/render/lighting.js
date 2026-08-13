@@ -22,7 +22,8 @@ import { BLOCKS } from '../world/blocks.js';
 // module (render/sky_fx.js) per the size cap — this file keeps the CYCLE
 // that drives them.
 import {
-  createStars, createSunTexture, createMoonTextures, forceFarDepth,
+  createStars, createSunTexture, createMoonTextures, createMoonGlowTexture,
+  forceFarDepth,
 } from './sky_fx.js';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ const SKY_FRAGMENT = /* glsl */ `
   uniform vec3 sunDirection;
   uniform vec3 glowColor;
   uniform float glowStrength;
+  uniform float glowBand;
   varying vec3 vDir;
   void main() {
     vec3 nd = normalize(vDir);
@@ -64,9 +66,12 @@ const SKY_FRAGMENT = /* glsl */ `
     vec3 col = mix(horizonColor, midColor, smoothstep(0.0, midStop, h));
     col = mix(col, zenithColor, smoothstep(midStop, 1.0, h));
     col = mix(belowColor, col, smoothstep(-0.2, 0.0, h));
-    // Sunrise/sunset: warm glow near the horizon, strongest toward the sun
+    // Sunrise/sunset: warm glow near the horizon, strongest toward the sun.
+    // Phase 27 follow-up: the band is a uniform now — by day it hugs the
+    // horizon as always, at night it widens so the same term paints a cool
+    // wash of moonlight around the moon wherever it rides.
     float sunAmount = max(dot(nd, sunDirection), 0.0);
-    float horizonBand = 1.0 - smoothstep(0.0, 0.45, abs(h));
+    float horizonBand = 1.0 - smoothstep(0.0, glowBand, abs(h));
     col = mix(col, glowColor, glowStrength * horizonBand * pow(sunAmount, 6.0));
     // Sub-quantum noise breaks up 8-bit banding rings in the smooth gradient
     // (most visible in the near-black night sky)
@@ -88,6 +93,7 @@ export function createSky() {
       sunDirection: { value: new THREE.Vector3(0, 1, 0) },
       glowColor: { value: new THREE.Color(DAY_NIGHT.GLOW_COLOR) },
       glowStrength: { value: 0 },
+      glowBand: { value: 0.45 }, // day: the glow hugs the horizon
     },
     vertexShader: SKY_VERTEX,
     fragmentShader: SKY_FRAGMENT,
@@ -510,6 +516,21 @@ function createCelestials(sky) {
       depthWrite: false,
     }),
   );
+  // Phase 27 follow-up: the moon hangs in a soft cool HALO — an additive
+  // glow quad drawn just before the pixel moon (and, like it, pinned to
+  // the far plane, so the cloud layer's dense cores occlude both).
+  const moonGlow = make(
+    CELESTIAL.MOON_SIZE * CELESTIAL.MOON_GLOW_SCALE,
+    new THREE.MeshBasicMaterial({
+      map: createMoonGlowTexture(),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      toneMapped: false,
+      depthWrite: false,
+    }),
+  );
+  moonGlow.renderOrder = -1.22; // just under the moon itself
   const moonTextures = createMoonTextures();
   const moon = make(
     CELESTIAL.MOON_SIZE,
@@ -525,6 +546,7 @@ function createCelestials(sky) {
   return {
     sun,
     moon,
+    moonGlow,
     setMoonPhase(phase) {
       const p = ((phase % moonTextures.length) + moonTextures.length) % moonTextures.length;
       if (p === moonPhase) return;
@@ -621,7 +643,8 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
       dimSky = profile ?? null;
       celestials.sun.visible = !dimSky;
       celestials.moon.visible = !dimSky;
-      clouds?.setVisible(!dimSky);      // no cloud deck under a nether roof
+      celestials.moonGlow.visible = !dimSky;
+      clouds?.setVisible(!dimSky);      // no cloud layer under a nether roof
       if (dimSky) stars.setAlpha(0);    // ...and no stars either
       if (!dimSky) {
         fog.near = SKY.FOG_NEAR;
@@ -696,21 +719,41 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
       sun.intensity = LIGHTING.SUN_INTENSITY * sunLevel;
       ambient.intensity = LIGHTING.AMBIENT_INTENSITY * sunLevel;
 
-      // Sun and moon quads ride the dome opposite each other.
+      // Sun and moon quads ride the dome opposite each other; the moon's
+      // halo rides with the moon.
       celestials.sun.position.copy(sunDir).multiplyScalar(CELESTIAL.DISTANCE);
       celestials.sun.lookAt(focus);
       celestials.moon.position.copy(sunDir).multiplyScalar(-CELESTIAL.DISTANCE);
       celestials.moon.lookAt(focus);
+      celestials.moonGlow.position.copy(celestials.moon.position);
+      celestials.moonGlow.lookAt(focus);
+
+      // Phase 27 follow-up — MOONLIGHT on the dome: once the sun is down,
+      // the dome's glow term switches to the moon — a wide, gentle wash of
+      // cool light around it (glowBand relaxes so it works high in the
+      // sky), fading in with the stars so dusk hands over smoothly.
+      const night = sunDir.y < -0.05;
+      if (night && !dimSky) {
+        u.sunDirection.value.copy(sunDir).negate();
+        u.glowStrength.value = Math.max(glow, CELESTIAL.MOON_SKY_GLOW * starAlpha);
+        u.glowColor.value.setHex(CELESTIAL.MOON_SKY_GLOW_COLOR);
+        u.glowBand.value = CELESTIAL.MOON_SKY_GLOW_BAND;
+      } else {
+        u.glowColor.value.setHex(DAY_NIGHT.GLOW_COLOR);
+        u.glowBand.value = 0.45;
+      }
 
       // Phase 24: the star wheel turns with the same orbit and fades with
       // its keyframe channel; the moon wears the day's phase; the cloud
-      // deck drifts and takes the sky's light.
+      // layer drifts, takes the sky's light and (Phase 27 follow-up) the
+      // sun's direction for its self-shading and silver linings.
       stars.setAngle(ang);
       stars.setAlpha(dimSky ? 0 : starAlpha);
       celestials.setMoonPhase(day % CELESTIAL.MOON_PHASES);
       if (!dimSky) {
         clouds?.update(delta, focus);
         clouds?.setLight(sunLevel, horizon);
+        clouds?.setSun?.(sunDir, sunLevel);
       }
 
       // Dimension override (Phase 15): everything above still ran — the

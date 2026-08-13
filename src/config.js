@@ -2092,7 +2092,9 @@ export const LIGHTING = {
   // LIGHT_FALLOFF^(15-L), so level 0 bottoms out near-black, not pure black.
   LIGHT_FALLOFF: 0.8,
   TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
-  NIGHT_SKY_TINT: 0x8fa8e8,       // cool moonlight tint on skylight at night
+  NIGHT_SKY_TINT: 0xa9bef2,       // cool moonlight tint on skylight at night
+                                  // (Phase 27 follow-up: brightened toward
+                                  // silver — moonlit ground should READ)
   // Held-item dynamic light (Phase 14, deliberately beyond vanilla): a torch
   // in the main or off hand lights the world around the player. Applied at
   // render time as a per-fragment distance term in the chunk shader — NEVER
@@ -2192,11 +2194,15 @@ export const DAY_NIGHT = {
     { T: 0.5125, ZENITH: 0x3a3670, MID: 0x8a6a9a, HORIZON: 0xff9a54,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
-    { T: 0.525, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
+    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10 and the tint pushed
+    // toward silver — a full-moon night should read, not swallow the world;
+    // gameplay unchanged: night surfaces sit at effective light 5, still
+    // under the hostile-spawn gate of 7, and torches still protect at 14).
+    { T: 0.525, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
+      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
-    { T: 0.975, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
+    { T: 0.975, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
+      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
     { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
@@ -2231,39 +2237,86 @@ export const CELESTIAL = {
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
+  // Phase 27 follow-up — MOONLIGHT ("moon light should also good"). The
+  // moon keeps its pixel-art square, but it hangs in a soft cool halo now
+  // (an additive glow quad behind it, the sun-glow treatment at night
+  // temperature), the sky dome carries a gentle wash of light around its
+  // position, and the water picks up a moon glint (main.js feeds the water
+  // uniforms the moon's direction after sunset).
+  MOON_GLOW_SCALE: 3.0,           // halo quad as a multiple of the moon
+  MOON_GLOW_STRENGTH: 0.55,       // halo alpha at the moon's edge
+  MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
+  MOON_SKY_GLOW: 0.32,            // the dome's night wash around the moon
+  MOON_SKY_GLOW_COLOR: 0x9db8e8,  // ...and its colour
+  MOON_SKY_GLOW_BAND: 1.6,        // dome-height reach of the wash (the day
+                                  // glow hugs the horizon at 0.45; the moon
+                                  // rides high, so its wash must too)
+  MOON_GLINT_LEVEL: 0.32,         // water sun-level stand-in at night (drives
+                                  // the moon glint + keeps night reflections
+                                  // from going fully dead)
 };
 
-// Phase 24 — clouds. The follow-up ("make clouds more realistic") rebuilt
-// the flat quads into vanilla-fancy VOLUME slabs: every cloud is a box
-// THICKNESS blocks tall with a lit top, a shaded underside and mid-shaded
-// side walls, front-face culled so the volume reads correctly from below
-// AND from creative flight above. The pattern leans harder on its coarse
-// octave and drops isolated single cells, so the deck is drifting cumulus
-// masses rather than confetti. Still one merged mesh built once at boot (a
-// 2x2 tiling of one TILE_CELLS-period pattern re-anchoring in period steps),
-// still drifting along -x, still never fogged (it sits beyond FOG_FAR).
+// Phase 27 follow-up — REALISTIC clouds, by request ("make clouds look
+// realistic, not blocks"). The blocky slab deck is gone: the sky carries a
+// noise-shaded cloud LAYER now — a camera-following plane at HEIGHT whose
+// fragment shader grows soft cumulus out of fbm value noise (a coarse
+// weather-system gate grouping the masses, fake self-shading from the
+// density gradient toward the sun, warm silver linings on thin edges near
+// a low sun) plus a faint high cirrus veil for depth. World-anchored and
+// drifting along -x like the old deck, day/night tinted, dawn-blushed.
+//
+// THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
+// twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
+// is dense (CORE_ALPHA), so the far-plane-pinned sun/moon/stars still fail
+// the depth test behind real cloud, and a COLOUR pass drawn AFTER them, so
+// the soft rims attenuate a star or the moon smoothly instead of alpha-
+// popping. See render/sky_fx.js.
 export const CLOUDS = {
-  HEIGHT: 192,                    // the vanilla cloud deck sits at y=192
-  THICKNESS: 4,                   // slab height (vanilla fancy clouds' 4m)
-  CELL_SIZE: 12,                  // blocks per cloud cell (vanilla's texel)
-  TILE_CELLS: 96,                 // pattern period in cells (1152 blocks)
-  COVER: 0.24,                    // fraction of ALL cells that are cloud
-  WEATHER_SHARE: 0.62,            // fraction of the deck where cloud GROUPS
-                                  // may form at all (the coarse octave's
-                                  // gate); COVER is then met inside those
-                                  // regions by the fine octave, so the sky
-                                  // is fields of distinct puffs with real
-                                  // clear stretches between the fields
-  // Per-face brightness — what makes a slab read as a lit volume: the sun
-  // hits the top, the underside is in its own shadow, the walls sit between.
-  BRIGHTNESS: { TOP: 1.0, BOTTOM: 0.7, SIDE_X: 0.88, SIDE_Z: 0.8 },
-  SPEED: 0.55,                    // drift in blocks per second, along -x
-  OPACITY: 0.78,
-  NIGHT_BRIGHTNESS: 0.16,         // colour scale at deep night (1.0 at noon)
-  HORIZON_TINT: 0.18,             // fraction of the horizon colour mixed in
-                                  // (what makes dawn clouds blush)
-  SEED: 0xc10d5,                  // pattern hash seed (not world-seeded —
-                                  // clouds are weather, not terrain)
+  HEIGHT: 192,                    // cloud base height (the vanilla altitude)
+  PLANE_RADIUS: 1600,             // half-extent of the camera-following plane
+  SPEED: 0.9,                     // drift in blocks per second, along -x
+  SCALE: 1 / 110,                 // noise-space units per block — the size
+                                  // of individual cumulus features (the
+                                  // first cut at 1/260 made one puff-cell
+                                  // 260 blocks wide, so the patch of layer
+                                  // visible overhead held ~one cell and
+                                  // whole vantages rolled cloudless; at 110
+                                  // the dome always carries a field of them)
+  GATE_SCALE: 0.28,               // weather-system field, relative to SCALE —
+                                  // the low-frequency grouping that leaves
+                                  // clear stretches between masses (~390
+                                  // blocks per system at SCALE 1/110; the
+                                  // first cut put the WHOLE visible sky in
+                                  // one gate cell and a low roll meant a
+                                  // permanently empty sky)
+  COVER: 0.66,                    // how much of a weather system fills in
+  SOFTNESS: 0.26,                 // density ramp width (puffy vs crisp edges)
+  OPACITY: 0.94,                  // core opacity
+  CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
+                                  // and OCCLUDES the sun/moon/stars
+  FADE_START: 620,                // thin out toward the horizon so the far
+  FADE_END: 950,                  // plane clip never shows a hard edge
+  LIGHT_EPS: 0.55,                // gradient probe toward the sun (noise units)
+  LIGHT_GAIN: 3.0,                // self-shading contrast
+  LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
+  SHADE_COLOR: 0x9aa8bb,          // ...and its shaded underbelly (sRGB)
+  SILVER: 0.85,                   // silver-lining strength on thin edges
+  SILVER_POWER: 9,                // ...tightness around the sun's direction
+  NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)
+  HORIZON_TINT: 0.45,             // fraction of the horizon colour mixed in
+                                  // (what makes dawn clouds blush gold-pink)
+  SEED: 37.73,                    // noise hash offset (clouds are weather,
+                                  // not terrain — never world-seeded)
+  // The high thin veil above the cumulus: colour-only (never occludes —
+  // the sun THROUGH cirrus is the realistic read), slower features, faster
+  // apparent drift.
+  CIRRUS: {
+    HEIGHT: 252,
+    SCALE: 1 / 540,
+    COVER: 0.50,
+    OPACITY: 0.38,
+    SPEED: 1.6,
+  },
 };
 
 // Phase 24 — the night starfield: small fixed-size points on the celestial
