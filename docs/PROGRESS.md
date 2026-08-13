@@ -169,6 +169,17 @@ bright cotton cumulus over plains):
   RAW field with CORE_ALPHA raised 0.45 -> 0.60 so the occluding core
   stays inside visibly solid cloud. Config CIRRUS / TOP_LIFT /
   CORE_SHADE removed with their consumers.
+- **Two dusk artifacts fixed from a live-play report** ("Clouds
+  shouldn't look like this"): the depth cut was biting a hard
+  cookie-edge silhouette out of the bright moon disc — CORE_ALPHA
+  0.60 -> 0.90, so occlusion only lands behind near-opaque cloud and a
+  bright body dims SMOOTHLY through the alpha blend before the cut can
+  show (the sunset shot now has the sun glowing through a shelf, no hard
+  edge). And the cloud edges showed terraced onion-ring banding — the
+  density curve was steepened TWICE (interior S-curve + the visible
+  dens^2), collapsing the edge ramp into discrete fronts; the interior
+  steepen is gone, SOFTNESS 0.16 -> 0.24, EROSION 0.34, COVER 0.70
+  re-swept (~43% visible / ~28% solid, every vantage >= 28%).
 - **The horizon band**: CLOUDS.FADE 620/950 -> 780/1400 and VIEW.FAR
   1000 -> 1700 (the old far plane was clipping the cloud plane; terrain
   never gets near it — the ring ends at 400, fog at 425). The reference's
