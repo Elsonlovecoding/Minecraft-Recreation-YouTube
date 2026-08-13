@@ -4,9 +4,11 @@
 import * as THREE from 'three';
 import {
   DEBUG, SKY, LAVA_VIEW, ITEMS, LIGHTING, NETHER_SKY, END_SKY, NETHER, END,
-  MOBS, TERRAIN, BEDS, DRAGON,
+  MOBS, TERRAIN, BEDS, DRAGON, VISUAL, CELESTIAL,
 } from './config.js';
 import { createRenderer, createCamera, attachResizeHandler } from './render/renderer.js';
+import { createPostPipeline } from './render/post_fx.js';
+import { updateWaterUniforms } from './render/water_fx.js';
 import { loadAtlas } from './render/atlas.js';
 import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
@@ -18,6 +20,7 @@ import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hu
 import { createScreens } from './ui/screens.js';
 import { createCreativeScreen } from './ui/creative.js';
 import { createMenus } from './ui/menus.js';
+import { createChat } from './ui/chat.js';
 import { gamemode } from './player/gamemode.js';
 import { World } from './world/world.js';
 import {
@@ -48,6 +51,7 @@ import { createEnderEyes } from './entities/ender_eye.js';
 import { createEnderPearls } from './entities/ender_pearl.js';
 import { createDragonFight } from './entities/dragon.js';
 import { createSmeltingSystem } from './systems/smelting.js';
+import { createCommands } from './systems/commands.js';
 import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat, rayAABB } from './systems/combat.js';
 import { createAmbience } from './systems/ambience.js';
@@ -59,6 +63,10 @@ async function init() {
   const renderer = createRenderer(canvas);
   const camera = createCamera();
   attachResizeHandler(renderer, camera);
+  // Phase 26: the post pipeline — god rays, bloom, colour grading
+  // (render/post_fx.js). Null when disabled: the loop then renders straight
+  // to the canvas exactly as Phase 25 did.
+  const post = VISUAL.POST_ENABLED ? createPostPipeline({ renderer }) : null;
 
   const scene = new THREE.Scene();
   scene.fog = createFog();
@@ -267,10 +275,14 @@ async function init() {
   });
   // Phase 18: thrown eyes of ender fly toward the stronghold's
   // deterministic location (dimensions/stronghold.js — generation itself
-  // arrives next phase at exactly that point).
+  // arrives next phase at exactly that point). Phase 26: the centre is
+  // anchored to the SCANNED plains spawn, captured here at boot while the
+  // overworld generator is guaranteed active — the same column generation
+  // anchors to, whatever dimension an eye is thrown in.
+  const overworldSpawn = world.generator.spawnColumn();
   const enderEyes = createEnderEyes({
     scene, player, items, sfx: combat.sfx,
-    getTarget: () => strongholdCenter(TERRAIN.SEED),
+    getTarget: () => strongholdCenter(TERRAIN.SEED, overworldSpawn),
   });
   // Phase 22: thrown ender pearls — a real projectile that teleports the
   // player where it lands, for 2.5 hearts of fall damage.
@@ -578,6 +590,26 @@ async function init() {
   window.__menus = menus;
   window.__gamemode = gamemode;
 
+  // --- chat + commands (Phase 27) -------------------------------------------
+
+  // The chat bar (ui/chat.js) collects lines; systems/commands.js decides
+  // what they do (/tp with a safe landing). showToast is injected so the
+  // command system never imports UI (the dependency-direction rule).
+  const commands = createCommands({ world, player, dimensions, notify: showToast });
+  const chat = createChat({
+    canvas,
+    onCommand: commands.handle,
+    // Chat opens only while actually playing: a mode chosen, the pointer
+    // locked (or the harness override), and no other screen or text entry
+    // holding the input.
+    canOpen: () => gamemode.chosen &&
+      (document.pointerLockElement === canvas || player.inputOverridden) &&
+      !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
+      !creativeScreen.isOpen && !signs.isEditing,
+  });
+  window.__chat = chat;
+  window.__commands = commands;
+
   // Pickups go to the inventory (existing stacks first, then the first empty
   // slot); the return value tells the item manager how many were accepted.
   // A dropped worn tool carries its durability back in via addStack.
@@ -628,7 +660,7 @@ async function init() {
     document.pointerLockElement !== canvas &&
     !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
     !creativeScreen.isOpen &&
-    !signs.isEditing && !player.inputOverridden;
+    !signs.isEditing && !chat.isOpen && !player.inputOverridden;
   // Esc while paused resumes, like vanilla. The lock request can reject
   // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
   // up and a click resumes instead (same swallow as the click path).
@@ -642,6 +674,7 @@ async function init() {
 
   const clock = new THREE.Clock();
   let wasEyeInLava = false;
+  const waterLightDir = new THREE.Vector3(); // the moon's direction at night
   renderer.setAnimationLoop(() => {
     const delta = Math.min(clock.getDelta(), DEBUG.MAX_DELTA);
     const paused = isPaused();
@@ -741,7 +774,33 @@ async function init() {
     );
     updateHud(player, stats, paused ? 0 : delta);
     updateDebug(delta, camera, world.streamStats(), dayNight.timeOfDay);
-    renderer.render(scene, camera);
+    // Phase 26: the water surface clock and sky state (ripple freezes with
+    // the pause, the reflection follows the live palette — fog IS the
+    // horizon by the cycle's own contract). Phase 27 follow-up: after
+    // sunset the MOON takes over the glint — its direction, at a gentle
+    // fixed level, so night water sparkles silver instead of going dead.
+    {
+      const sd = dayNight.sunDirection;
+      const moonNight = sd.y < -0.04;
+      if (moonNight) waterLightDir.copy(sd).negate();
+      updateWaterUniforms(paused ? 0 : delta, {
+        fogColor: scene.fog.color,
+        zenithColor: sky.material.uniforms.zenithColor.value,
+        sunDir: moonNight ? waterLightDir : sd,
+        sunLevel: dayNight.skyActive
+          ? (moonNight ? CELESTIAL.MOON_GLINT_LEVEL : dayNight.sunLevel)
+          : 0,
+      });
+    }
+    if (post) {
+      post.render(scene, camera, {
+        sunDir: dayNight.sunDirection,
+        sunLevel: dayNight.sunLevel,
+        skyActive: dayNight.skyActive,
+      });
+    } else {
+      renderer.render(scene, camera);
+    }
     interaction.renderHand(renderer); // hand pass over the finished frame
   });
 }

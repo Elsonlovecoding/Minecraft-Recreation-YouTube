@@ -1,6 +1,6 @@
 // render/sky_fx.js — the Phase 24 sky furniture: the cloud layer, the night
-// starfield, and the generated sun/moon textures (a square sun inside a soft
-// atmospheric glow; the eight-phase square moon). Split out of
+// starfield, and the generated sun/moon textures (a round sun disc inside a
+// soft atmospheric glow; the eight-phase round moon). Split out of
 // render/lighting.js per the ARCHITECTURE size cap — lighting.js keeps the
 // light propagation and the day/night CYCLE (which drives everything here);
 // this module only builds the objects and exposes small update hooks.
@@ -12,205 +12,336 @@
 
 import * as THREE from 'three';
 import { CLOUDS, STARS, CELESTIAL } from '../config.js';
-import { mulberry32 } from '../world/noise.js';
+import { mulberry32 } from '../world/noise.js'; // the starfield's seeded RNG
 
 // ---------------------------------------------------------------------------
-// Clouds
+// Celestial depth (Phase 26)
 // ---------------------------------------------------------------------------
 
-// Wrapping value noise on the cloud-cell lattice: bilinear between hashed
-// lattice corners, period `cells / step` — so the pattern tiles seamlessly
-// and the 2x2-tiled mesh can re-anchor in period steps without a visible jump.
-function cloudField(cells, seed) {
-  const lattice = (step) => {
-    const n = cells / step;
-    const rng = mulberry32(seed ^ step);
-    const grid = new Float64Array(n * n);
-    for (let i = 0; i < n * n; i++) grid[i] = rng();
-    return (cx, cz) => {
-      const fx = cx / step;
-      const fz = cz / step;
-      const x0 = Math.floor(fx) % n;
-      const z0 = Math.floor(fz) % n;
-      const x1 = (x0 + 1) % n;
-      const z1 = (z0 + 1) % n;
-      const tx = fx - Math.floor(fx);
-      const tz = fz - Math.floor(fz);
-      const a = grid[z0 * n + x0] * (1 - tx) + grid[z0 * n + x1] * tx;
-      const b = grid[z1 * n + x0] * (1 - tx) + grid[z1 * n + x1] * tx;
-      return a * (1 - tz) + b * tz;
-    };
-  };
-  return {
-    coarse: lattice(16), // big weather systems (192-block features)
-    fine: lattice(4),    // individual puffs (48-block features)
+// Pins a material's geometry to the far plane in the vertex shader. The sun,
+// moon and stars are "at infinity": ANY cloud fragment must occlude them. A
+// plain depth test cannot guarantee that — the sun quad sits at
+// CELESTIAL.DISTANCE (820), and a low sun's ray crosses the y=192 cloud deck
+// ~125/sin(elevation) blocks out, which is FARTHER than 820 below ~9° of
+// elevation: exactly the sunset case the "sun renders through clouds" report
+// described. With gl_Position.z forced to w (minus an epsilon so the far
+// clip keeps it), every depth-writing fragment in the scene wins against
+// them, and the cloud deck (depthWrite, below) occludes per pixel.
+export function forceFarDepth(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\n\tgl_Position.z = gl_Position.w * 0.999999;',
+    );
   };
 }
 
-// One merged mesh of cloud VOLUMES (the follow-up rebuild): every cloud is a
-// slab CLOUDS.THICKNESS tall — a greedy row-merged top and bottom, plus side
-// walls wherever a cell borders open sky — with per-face brightness baked as
-// vertex colours (lit top, shadowed underside, mid walls), which is what
-// makes the deck read as three-dimensional cumulus instead of paper.
-// Front-face culled: from below you see undersides and far walls, from
-// creative flight above you see tops, and the faces never alpha-stack
-// against each other inside one slab.
+// ---------------------------------------------------------------------------
+// Clouds (Phase 27 follow-up — REALISTIC, by request; the blocky slab deck
+// this file carried since Phase 24 is gone)
+// ---------------------------------------------------------------------------
+//
+// A noise-shaded cloud LAYER: a camera-following plane at CLOUDS.HEIGHT whose
+// fragment shader grows soft cumulus from domain-warped fbm value noise — a
+// very-low-frequency weather gate groups the masses with real clear sky
+// between, detail noise erodes the thin edges into the curdled cauliflower
+// rim, self-shading is PSEUDO-VOLUME (density read as the height of a dome,
+// rotated relief bumps keeping the interior dappled, a real N.L against the
+// 3D sun — the moon after dark), and thin edges catch a warm silver lining
+// when they sit near a low sun. A second, faint cirrus plane rides higher
+// for depth (FLAT_SHEET: it skips the gradient taps). The pattern lives in
+// WORLD space (the plane follows the camera but the noise is sampled at
+// world coordinates plus the drift offset), so flying never slides the sky.
+//
+// THE OCCLUSION CONTRACT (Phase 26): the sun, moon and stars are pinned to
+// the far plane and must vanish behind real cloud. Soft alpha and a single
+// depth-writing pass cannot both hold — a rim fragment that writes depth
+// blacks out the star behind an almost-invisible pixel. So the cumulus
+// layer draws TWICE:
+//   pass 1  DEPTH ONLY (renderOrder -1.95, colorWrite false): fragments
+//           survive only where alpha >= CORE_ALPHA — dense cloud writes
+//           depth, so the celestials behind it fail their depth test.
+//   pass 2  COLOUR (renderOrder -1.1, no depth write), drawn AFTER the
+//           stars (-1.5) and sun/moon (-1.2): the soft rims BLEND over
+//           them, attenuating smoothly right up to the opaque core.
+// Terrain still occludes both passes through the ordinary depth test, and
+// the cirrus veil is colour-only — the sun showing THROUGH cirrus is the
+// realistic read.
+
+const CLOUD_VERT = /* glsl */ `
+  varying vec3 vWorld;
+  void main() {
+    vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+// Density + shading shared by both passes and the cirrus (via defines).
+const CLOUD_FRAG = /* glsl */ `
+  uniform vec2 uOffset;      // drift, in noise units (wrapped)
+  uniform vec3 uLit;         // sunlit cloud colour (linear, day/night applied)
+  uniform vec3 uShade;       // shaded underbelly colour (linear)
+  uniform vec3 uSilverColor; // silver-lining tint (linear, sun-level scaled)
+  uniform vec3 uSunDir;
+  uniform float uCover;
+  varying vec3 vWorld;
+
+  float chash(vec2 c) {
+    c = mod(c, 512.0);
+    return fract(sin(dot(c, vec2(127.1, 311.7)) + CLOUD_SEED) * 43758.5453);
+  }
+  float cnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(chash(i), chash(i + vec2(1.0, 0.0)), u.x),
+               mix(chash(i + vec2(0.0, 1.0)), chash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
+  float cfbm(vec2 p) {
+    float a = 0.5;
+    float s = 0.0;
+    for (int i = 0; i < 5; i++) {
+      s += a * cnoise(p);
+      p = p * 2.03 + 17.7;
+      a *= 0.5;
+    }
+    return s * 1.032; // 5-octave sum renormalised toward 0..1 — the fifth
+                      // octave is what keeps a puff's INTERIOR curdled
+                      // (erosion only works the edges), and the dome
+                      // normals turn it into dappled self-shading
+  }
+  // Relief bumps for the dome normal: two octaves on a ROTATED grid —
+  // bare value noise shows its axis-aligned lattice when it drives
+  // lighting (the first cut of the bumps read as a quilted blanket).
+  float crelief(vec2 p) {
+    vec2 r = vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+    return cnoise(r * RELIEF_SCALE) * 0.65
+         + cnoise(r.yx * RELIEF_SCALE * 2.3 + 31.7) * 0.35;
+  }
+  // Cloud density 0..1 at a noise-space point: a domain-warped fbm body
+  // thresholded inside the weather gate, its edges eroded by detail noise.
+  float cloudDensity(vec2 np) {
+    // Domain warp first — pure fbm puffs are round and samey; bending the
+    // sample space gives every mass its own drawn-out, organic outline.
+    np += (vec2(cnoise(np * 0.55 + 13.1), cnoise(np * 0.55 + 71.7)) - 0.5) * WARP;
+    // The gate MODULATES coverage rather than zeroing it — a low weather
+    // cell thins the sky out, it never empties it entirely.
+    float gate = smoothstep(0.30, 0.72,
+      cnoise(np * GATE_SCALE) * 0.65 + cnoise(np * GATE_SCALE * 2.63 + 41.3) * 0.35);
+    float t = 1.0 - uCover * (0.58 + 0.42 * gate);
+    float body = smoothstep(t, t + SOFTNESS, cfbm(np));
+    // Cauliflower erosion: high-frequency detail eats at the THIN parts
+    // (weighted by 1-body, so cores keep their mass) — the crisp curdled
+    // rim real cumulus have, instead of one smooth blurred contour.
+    float detail = cnoise(np * DETAIL_SCALE) * 0.65
+                 + cnoise(np * DETAIL_SCALE * 2.13 + 7.7) * 0.35;
+    body = clamp(body - (1.0 - body) * detail * EROSION, 0.0, 1.0);
+    // Steepen the interior: cores saturate to solid cloud while the outer
+    // ramp keeps its feathered edge — the puffy-cumulus read.
+    return body * body * (3.0 - 2.0 * body);
+  }
+  void main() {
+    vec2 np = vWorld.xz * NOISE_SCALE + uOffset;
+    float dens = cloudDensity(np);
+    // Horizon fade: thin out before the far-plane clip ever shows an edge.
+    float dist = distance(vWorld.xz, cameraPosition.xz);
+    float fade = 1.0 - smoothstep(FADE_START, FADE_END, dist);
+    float alpha = dens * OPACITY * fade;
+    #ifdef DEPTH_PASS
+      // Dense core only — this pass exists to occlude the celestials.
+      if (alpha < CORE_ALPHA) discard;
+      gl_FragColor = vec4(0.0);
+    #else
+      if (alpha < 0.004) discard;
+      // Pseudo-volume: treat density as the height of a dome and light it
+      // with a real N.L against the 3D sun — sun-facing swells brighten,
+      // the far sides fall into shade, which is what makes a flat plane
+      // read as a field of solid puffs. (At night uSunDir is the moon.)
+      // A high-frequency RELIEF term rides on top of the body height,
+      // weighted by density so it lives on the cloud and not the clear
+      // sky: the body ramp saturates to 1 inside a puff (gradient zero),
+      // and without the bumps a big cloud shades only at its rim and
+      // reads flat overhead. With them the base stays dappled.
+      #ifdef FLAT_SHEET
+        // The cirrus veil is a sheet, not puffs — skip the six gradient
+        // taps and light it like a horizontal plane.
+        float ndl = clamp(uSunDir.y, 0.0, 1.0);
+      #else
+        vec2 npR = np + vec2(NORMAL_EPS, 0.0);
+        vec2 npF = np + vec2(0.0, NORMAL_EPS);
+        float dR = cloudDensity(npR);
+        float dF = cloudDensity(npF);
+        float hC = dens + crelief(np) * RELIEF * dens;
+        float hR = dR + crelief(npR) * RELIEF * dR;
+        float hF = dF + crelief(npF) * RELIEF * dF;
+        vec3 nrm = normalize(vec3((hC - hR) * DOME_GAIN, NORMAL_EPS,
+                                  (hC - hF) * DOME_GAIN));
+        float ndl = clamp(dot(nrm, uSunDir), 0.0, 1.0);
+      #endif
+      float lit = AMBIENT + (1.0 - AMBIENT) * ndl;
+      // Thin cloud reads brighter (light passes through it).
+      lit = clamp(lit + (1.0 - dens) * THIN_LIFT, 0.0, 1.0);
+      vec3 col = mix(uShade, uLit, lit);
+      // Optical depth: the deepest cores keep a flat grey belly no matter
+      // where the sun sits — thick cumulus never read paper-white all over.
+      col = mix(col, uShade, smoothstep(0.6, 1.0, dens) * CORE_SHADE);
+      // Silver lining: thin edges glow toward the sun's direction.
+      vec3 viewDir = normalize(vWorld - cameraPosition);
+      float rim = pow(max(dot(viewDir, uSunDir), 0.0), SILVER_POWER);
+      col += uSilverColor * (rim * (1.0 - dens));
+      gl_FragColor = vec4(col, alpha);
+    #endif
+  }
+`;
+
 export function createClouds() {
   const C = CLOUDS;
-  const cells = C.TILE_CELLS;
-  const { coarse, fine } = cloudField(cells, C.SEED);
-  // Two-stage pattern (the "more realistic" rework): the coarse octave is a
-  // WEATHER GATE — only its top WEATHER_SHARE of the deck may hold cloud at
-  // all — and inside those regions the fine octave is thresholded to hit the
-  // requested global coverage. Requiring BOTH breaks the old merged blend's
-  // continent-sized sheet into groups of distinct cumulus puffs with real
-  // clear sky between the groups. Both thresholds are read off the sampled
-  // distributions rather than assumed — neither field is uniform.
-  const coarseSamples = [];
-  const fineSamples = [];
-  for (let z = 0; z < cells; z++) {
-    for (let x = 0; x < cells; x++) {
-      coarseSamples.push(coarse(x, z));
-      fineSamples.push(fine(x, z));
-    }
-  }
-  const at = (arr, cx, cz) =>
-    arr[((cz % cells) + cells) % cells * cells + (((cx % cells) + cells) % cells)];
-  const sortedCoarse = [...coarseSamples].sort((a, b) => b - a);
-  const weatherT = sortedCoarse[Math.floor(C.WEATHER_SHARE * sortedCoarse.length)];
-  // Fine threshold from the distribution INSIDE weather regions, so COVER
-  // means the same fraction of the whole deck whatever the gate admits.
-  const inWeather = [];
-  for (let i = 0; i < coarseSamples.length; i++) {
-    if (coarseSamples[i] > weatherT) inWeather.push(fineSamples[i]);
-  }
-  inWeather.sort((a, b) => b - a);
-  const wantOn = Math.floor(C.COVER * coarseSamples.length);
-  const fineT = inWeather[Math.min(inWeather.length - 1, wantOn)] ?? Infinity;
-  const rawOn = (cx, cz) =>
-    at(coarseSamples, cx, cz) > weatherT && at(fineSamples, cx, cz) > fineT;
-  // A lone cell with no orthogonal neighbour is confetti, not a cloud.
-  const on = (cx, cz) =>
-    rawOn(cx, cz) && (
-      rawOn(cx - 1, cz) || rawOn(cx + 1, cz) || rawOn(cx, cz - 1) || rawOn(cx, cz + 1)
-    );
-
-  const span = cells * C.CELL_SIZE;
-  const S = C.CELL_SIZE;
-  const H = C.THICKNESS;
-  // The BRIGHTNESS numbers are what the faces should LOOK like — convert to
-  // linear for the vertex-colour multiply, or 0.7 renders as ~0.85 (the
-  // sRGB/linear trap that bit the particle colours, the cloud night tint
-  // and the stars before this).
-  const srgb = (v) => new THREE.Color(v, v, v).convertSRGBToLinear().r;
-  const B = {
-    TOP: srgb(C.BRIGHTNESS.TOP),
-    BOTTOM: srgb(C.BRIGHTNESS.BOTTOM),
-    SIDE_X: srgb(C.BRIGHTNESS.SIDE_X),
-    SIDE_Z: srgb(C.BRIGHTNESS.SIDE_Z),
-  };
-  const positions = [];
-  const colors = [];
-  const indices = [];
-  let count = 0;
-  // A quad from four corners with a known outward normal; the winding is
-  // corrected against the normal so front-face culling always keeps the
-  // outside. `b` is the face's baked brightness (multiplied by the
-  // day/night material colour at render time).
-  const va = new THREE.Vector3();
-  const vb = new THREE.Vector3();
-  const quad = (a, bq, c, d, normal, b) => {
-    va.set(bq[0] - a[0], bq[1] - a[1], bq[2] - a[2]);
-    vb.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
-    va.cross(vb);
-    const flip = va.x * normal[0] + va.y * normal[1] + va.z * normal[2] < 0;
-    const [p1, p3] = flip ? [d, bq] : [bq, d];
-    positions.push(...a, ...p1, ...c, ...p3);
-    for (let i = 0; i < 4; i++) colors.push(b, b, b);
-    indices.push(count, count + 1, count + 2, count, count + 2, count + 3);
-    count += 4;
-  };
-  // 2x2 tiles of the period, so a mesh anchored within one period step of
-  // the camera always covers at least half a period in every direction.
-  for (let cz = 0; cz < cells * 2; cz++) {
-    let runStart = -1;
-    for (let cx = 0; cx <= cells * 2; cx++) {
-      const isOn = cx < cells * 2 && on(cx, cz);
-      if (isOn && runStart < 0) runStart = cx;
-      if (!isOn && runStart >= 0) {
-        const x0 = runStart * S;
-        const x1 = cx * S;
-        const z0 = cz * S;
-        const z1 = (cz + 1) * S;
-        // Top and bottom span the whole merged run.
-        quad([x0, H, z0], [x1, H, z0], [x1, H, z1], [x0, H, z1], [0, 1, 0], B.TOP);
-        quad([x0, 0, z0], [x1, 0, z0], [x1, 0, z1], [x0, 0, z1], [0, -1, 0], B.BOTTOM);
-        // Run end caps (the -x/+x walls of the whole run).
-        quad([x0, 0, z0], [x0, H, z0], [x0, H, z1], [x0, 0, z1], [-1, 0, 0], B.SIDE_X);
-        quad([x1, 0, z0], [x1, H, z0], [x1, H, z1], [x1, 0, z1], [1, 0, 0], B.SIDE_X);
-        // z walls per cell, only where the neighbouring row is open sky.
-        for (let cc = runStart; cc < cx; cc++) {
-          const wx0 = cc * S;
-          const wx1 = (cc + 1) * S;
-          if (!on(cc, cz - 1)) {
-            quad([wx0, 0, z0], [wx1, 0, z0], [wx1, H, z0], [wx0, H, z0], [0, 0, -1], B.SIDE_Z);
-          }
-          if (!on(cc, cz + 1)) {
-            quad([wx0, 0, z1], [wx1, 0, z1], [wx1, H, z1], [wx0, H, z1], [0, 0, 1], B.SIDE_Z);
-          }
-        }
-        runStart = -1;
-      }
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    vertexColors: true,
+  // RAW sRGB components (the numeric Color constructor never converts; a
+  // setHex WOULD, under r160's colour management) — the per-frame maths
+  // below runs in sRGB and converts to linear once, the deck's old rule.
+  const hexToSrgb = (hex) => new THREE.Color(
+    ((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255,
+  );
+  const litBase = hexToSrgb(C.LIT_COLOR);
+  const shadeBase = hexToSrgb(C.SHADE_COLOR);
+  const makeUniforms = () => ({
+    uOffset: { value: new THREE.Vector2(0, 0) },
+    uLit: { value: new THREE.Color(C.LIT_COLOR) },
+    uShade: { value: new THREE.Color(C.SHADE_COLOR) },
+    uSilverColor: { value: new THREE.Color(0, 0, 0) },
+    uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+    uCover: { value: C.COVER },
+  });
+  const defines = (extra) => Object.assign({
+    NOISE_SCALE: C.SCALE.toFixed(8),
+    GATE_SCALE: C.GATE_SCALE.toFixed(5),
+    SOFTNESS: C.SOFTNESS.toFixed(4),
+    OPACITY: C.OPACITY.toFixed(4),
+    CORE_ALPHA: C.CORE_ALPHA.toFixed(4),
+    FADE_START: C.FADE_START.toFixed(1),
+    FADE_END: C.FADE_END.toFixed(1),
+    WARP: C.WARP.toFixed(4),
+    DETAIL_SCALE: C.DETAIL_SCALE.toFixed(4),
+    EROSION: C.EROSION.toFixed(4),
+    NORMAL_EPS: C.NORMAL_EPS.toFixed(4),
+    DOME_GAIN: C.DOME_GAIN.toFixed(4),
+    RELIEF: C.RELIEF.toFixed(4),
+    RELIEF_SCALE: C.RELIEF_SCALE.toFixed(4),
+    AMBIENT: C.AMBIENT.toFixed(4),
+    THIN_LIFT: C.THIN_LIFT.toFixed(4),
+    CORE_SHADE: C.CORE_SHADE.toFixed(4),
+    SILVER_POWER: C.SILVER_POWER.toFixed(1),
+    CLOUD_SEED: C.SEED.toFixed(4),
+  }, extra);
+  const makeMaterial = (opts, extraDefines) => new THREE.ShaderMaterial({
+    vertexShader: CLOUD_VERT,
+    fragmentShader: CLOUD_FRAG,
+    uniforms: makeUniforms(),
+    defines: defines(extraDefines),
     transparent: true,
-    opacity: C.OPACITY,
-    side: THREE.FrontSide,
-    depthWrite: false,
     fog: false,
     toneMapped: false,
+    side: THREE.DoubleSide, // the layer must read from creative flight too
+    ...opts,
   });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.matrixAutoUpdate = false;
-  mesh.frustumCulled = false;
-  mesh.renderOrder = -1; // over the dome and celestials, under the world's
-                         // transparent passes (which depth-test anyway)
 
+  const geometry = new THREE.PlaneGeometry(C.PLANE_RADIUS * 2, C.PLANE_RADIUS * 2);
+  geometry.rotateX(-Math.PI / 2); // horizontal
+
+  // Pass 1 — the occluder. Colour never writes; depth only where dense.
+  const depthMat = makeMaterial(
+    { colorWrite: false, depthWrite: true },
+    { DEPTH_PASS: 1 },
+  );
+  const depthMesh = new THREE.Mesh(geometry, depthMat);
+  depthMesh.renderOrder = -1.95;
+
+  // Pass 2 — the visible layer, after the stars and sun/moon.
+  const colorMat = makeMaterial({ depthWrite: false });
+  const colorMesh = new THREE.Mesh(geometry, colorMat);
+  colorMesh.renderOrder = -1.1;
+
+  // The cirrus veil: colour-only, its own scale/coverage, never occludes.
+  const cirrusMat = makeMaterial({ depthWrite: false }, {
+    NOISE_SCALE: C.CIRRUS.SCALE.toFixed(8),
+    OPACITY: C.CIRRUS.OPACITY.toFixed(4),
+    SOFTNESS: '0.34',
+    FLAT_SHEET: 1, // the high veil skips the dome-normal taps entirely
+    CLOUD_SEED: (C.SEED + 111.1).toFixed(4),
+  });
+  cirrusMat.uniforms.uCover.value = C.CIRRUS.COVER;
+  const cirrusMesh = new THREE.Mesh(geometry, cirrusMat);
+  cirrusMesh.renderOrder = -1.12;
+
+  const group = new THREE.Group();
+  group.add(depthMesh);
+  group.add(colorMesh);
+  group.add(cirrusMesh);
+  for (const m of [depthMesh, colorMesh, cirrusMesh]) m.frustumCulled = false;
+
+  const mats = [depthMat, colorMat, cirrusMat];
+  // The drift wrap bounds float precision through arbitrarily long days.
+  // It is NOT seamless: only cfbm's first octave shares the hash lattice's
+  // 512 period — every scaled/rotated sampling (gate, higher octaves,
+  // warp, detail, relief) lands elsewhere on the lattice after a wrap, so
+  // the whole sky re-rolls to a fresh layout when one hits. That takes
+  // ~17h of continuous play (48h for cirrus), both passes pop coherently
+  // (same drift, same density code — occlusion holds), and clouds are
+  // weather, so the once-a-real-day reshuffle is accepted rather than
+  // paying for a true common period or a cross-fade.
+  const NOISE_PERIOD = 512; // the hash lattice wrap (see chash)
   let drift = 0;
+  let cirrusDrift = 0;
   const white = new THREE.Color(1, 1, 1);
   const tinted = new THREE.Color();
+  const silver = new THREE.Color();
+
   return {
-    mesh,
-    // Steady drift along -x; the mesh re-anchors to the pattern lattice in
-    // whole periods around the camera, so coverage always reaches at least
-    // span/2 (= 576 blocks) past the player in every direction.
+    mesh: group,
+    // The planes follow the camera; the PATTERN stays world-anchored
+    // because the shader samples world position plus a bounded drift
+    // offset (wrapped — see NOISE_PERIOD above).
     update(delta, focus) {
-      drift = (drift + delta * C.SPEED) % span;
-      const ox = -drift + span * Math.round((focus.x + drift - span) / span);
-      const oz = span * Math.round((focus.z - span) / span);
-      mesh.position.set(ox, C.HEIGHT, oz);
-      mesh.updateMatrix();
+      drift = (drift + delta * C.SPEED * C.SCALE) % NOISE_PERIOD;
+      cirrusDrift = (cirrusDrift + delta * C.CIRRUS.SPEED * C.CIRRUS.SCALE) % NOISE_PERIOD;
+      depthMesh.position.set(focus.x, C.HEIGHT, focus.z);
+      colorMesh.position.set(focus.x, C.HEIGHT, focus.z);
+      cirrusMesh.position.set(focus.x, C.CIRRUS.HEIGHT, focus.z);
+      depthMat.uniforms.uOffset.value.set(drift, 0);
+      colorMat.uniforms.uOffset.value.set(drift, 0);
+      cirrusMat.uniforms.uOffset.value.set(cirrusDrift, 0);
     },
-    // Day/night: clouds darken with the sky and blush toward the horizon
-    // colour at dawn/dusk. The maths runs in sRGB so the brightness scale
-    // means what it looks like — three stores material colours LINEAR and
-    // the renderer converts on output, which would otherwise lift a 0.28
-    // night grey to a 0.57 sheet (it did, in the first night screenshot).
+    // Day/night: the lit/shade pair scales with the sun and blushes toward
+    // the horizon colour at dawn/dusk. Maths in sRGB (the trap that bit the
+    // old deck, the particles and the stars — three stores colours linear),
+    // converted once at the end.
     setLight(sunLevel, horizonColor) {
       const b = C.NIGHT_BRIGHTNESS + (1 - C.NIGHT_BRIGHTNESS) * sunLevel;
       tinted.copy(horizonColor).convertLinearToSRGB();
-      tinted.lerpColors(white, tinted, C.HORIZON_TINT).multiplyScalar(b);
-      material.color.copy(tinted.convertSRGBToLinear());
+      tinted.lerpColors(white, tinted, C.HORIZON_TINT);
+      for (const m of mats) {
+        m.uniforms.uLit.value.copy(litBase)
+          .multiply(tinted).multiplyScalar(b).convertSRGBToLinear();
+        m.uniforms.uShade.value.copy(shadeBase)
+          .multiply(tinted).multiplyScalar(b).convertSRGBToLinear();
+      }
+    },
+    // The sun feeds the self-shading direction and the silver lining —
+    // strongest when the sun is LOW (the golden-hour look), fading to a
+    // trace of moon-silver at night (the direction flips to the moon).
+    setSun(sunDir, sunLevel) {
+      const lowSun = THREE.MathUtils.clamp(1.6 - Math.abs(sunDir.y) * 4.0, 0.35, 1);
+      silver.setRGB(1, 1, 1)
+        .multiplyScalar(C.SILVER * lowSun * Math.max(0.12, sunLevel))
+        .convertSRGBToLinear();
+      for (const m of mats) {
+        m.uniforms.uSunDir.value.copy(sunDir);
+        if (sunDir.y < 0) m.uniforms.uSunDir.value.negate(); // the moon takes over
+        m.uniforms.uSilverColor.value.copy(silver);
+      }
     },
     setVisible(v) {
-      mesh.visible = v;
+      group.visible = v;
     },
   };
 }
@@ -249,9 +380,12 @@ export function createStars(sky) {
     fog: false,
     toneMapped: false,
   });
+  // Phase 26: stars sit at the far plane and depth-test, so the cloud deck
+  // (which now writes depth, above) occludes them per pixel.
+  forceFarDepth(material);
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false;
-  points.renderOrder = -1.5; // after the dome, before sun/moon
+  points.renderOrder = -1.5; // after the dome AND the clouds, before sun/moon
   const group = new THREE.Group();
   group.add(points);
   sky.add(group);
@@ -272,14 +406,6 @@ export function createStars(sky) {
 // Sun and moon textures
 // ---------------------------------------------------------------------------
 
-function canvasTexture(canvas) {
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  return texture;
-}
-
 const hexRgb = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 
 // The sun: a bright ROUND disc with a soft radial glow — rendered additively
@@ -289,8 +415,8 @@ const hexRgb = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 // before the quad rim (the old exponential still carried alpha ~16/255 at
 // the edge, which additive blending drew as a faint square against the
 // sky), and the texture filters LINEARLY (Nearest magnification turned the
-// smooth gradient into visible stair-stepped blocks). The moon keeps its
-// pixel-art Nearest filtering — that one is meant to look blocky.
+// smooth gradient into visible stair-stepped blocks). The moon follows the
+// same two rules now that it is a round disc.
 export function createSunTexture() {
   const W = 256;
   const canvas = document.createElement('canvas');
@@ -311,10 +437,13 @@ export function createSunTexture() {
       // Core: 1 inside the disc, easing to 0 over the soft band.
       const core = 1 - Math.min(1, Math.max(0, (d - coreR) / soft));
       // Glow: radial decay from the disc edge, multiplied by a smooth
-      // window that is exactly 0 at the quad rim — no rim, no box.
-      const fall = Math.exp(-Math.max(0, d - coreR) * 6.0);
+      // window that is exactly 0 at the quad rim — no rim, no box. The
+      // strength is config now (Phase 26 raised it for the reference's
+      // big soft halo); the falloff relaxes as the quad grows so the halo
+      // uses the room the larger SUN_GLOW_SCALE gives it.
+      const fall = Math.exp(-Math.max(0, d - coreR) * (6.0 / (CELESTIAL.SUN_GLOW_SCALE / 2.6)));
       const window_ = Math.max(0, 1 - d / RIM);
-      const glow = 0.5 * fall * window_ * window_;
+      const glow = CELESTIAL.SUN_GLOW_STRENGTH * fall * window_ * window_;
       const a = Math.min(1, core + glow);
       const i = (y * W + x) * 4;
       const t = core; // blend the halo hue toward the core's white centre
@@ -332,14 +461,86 @@ export function createSunTexture() {
   return texture;
 }
 
-// The eight moon phases as separate small textures — the vanilla square
-// moon, its unlit part left as a faint disc. Phase 0 is full; the
-// terminator is the classic ellipse, waning through new (4) and waxing back.
+// The moon's halo (Phase 27 follow-up — "moon light should also good"): a
+// soft cool radial glow on an additive quad behind the round moon disc,
+// built by the sun-glow rules — windowed to exactly zero before the quad
+// rim (no box) and linear-filtered (a gradient, not pixel art).
+export function createMoonGlowTexture() {
+  const W = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = W;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(W, W);
+  const [gr, gg, gb] = [
+    (CELESTIAL.MOON_GLOW_COLOR >> 16) & 255,
+    (CELESTIAL.MOON_GLOW_COLOR >> 8) & 255,
+    CELESTIAL.MOON_GLOW_COLOR & 255,
+  ];
+  for (let y = 0; y < W; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = (x + 0.5) / W - 0.5;
+      const v = (y + 0.5) / W - 0.5;
+      const d = Math.hypot(u, v);
+      const fall = Math.exp(-d * 5.5);
+      const window_ = Math.max(0, 1 - d / 0.5);
+      const a = CELESTIAL.MOON_GLOW_STRENGTH * fall * window_ * window_;
+      const i = (y * W + x) * 4;
+      img.data[i] = gr;
+      img.data[i + 1] = gg;
+      img.data[i + 2] = gb;
+      img.data[i + 3] = Math.round(Math.min(1, a) * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+// The eight moon phases as separate textures — a ROUND moon now (the
+// Phase 27 second follow-up; the vanilla pixel square is gone): an
+// anti-aliased disc carrying maria and craters generated ONCE from a
+// seeded RNG (every phase shows the same face, like the real thing), a
+// soft elliptical terminator, and the unlit part left as faint cool
+// earthshine. Phase 0 is full, waning through new (4) and waxing back.
+// Linear-filtered — a round rim, not pixel art.
 export function createMoonTextures() {
-  const P = 32;
+  const P = 128;
+  const R = 0.94;          // disc radius in normalised (-1..1) coords
+  const AA = 2.5 / (P / 2); // anti-alias band, ~2.5px
+  const TERM = 0.09;        // terminator softness, normalised units
   const phases = [];
   const [lr, lg, lb] = hexRgb(CELESTIAL.MOON_LIT_COLOR);
-  const darkAlpha = Math.round(CELESTIAL.MOON_DARK_ALPHA * 255);
+  const smooth = (v) => v * v * (3 - 2 * v);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  // One moon, eight lightings: the surface features come from a fixed
+  // seeded RNG OUTSIDE the phase loop.
+  const rng = mulberry32(9241);
+  const maria = [];
+  for (let i = 0; i < 4; i++) {
+    maria.push({ x: (rng() * 2 - 1) * 0.5, y: (rng() * 2 - 1) * 0.5,
+                 r: 0.25 + rng() * 0.3, d: 0.07 + rng() * 0.07 });
+  }
+  const craters = [];
+  for (let i = 0; i < 24; i++) {
+    craters.push({ x: (rng() * 2 - 1) * 0.8, y: (rng() * 2 - 1) * 0.8,
+                   r: 0.035 + rng() * 0.085, d: 0.1 + rng() * 0.15 });
+  }
+  const surface = (xn, yn) => {
+    let m = 1;
+    for (const c of maria) {
+      const dd = Math.hypot(xn - c.x, yn - c.y);
+      if (dd < c.r) m -= c.d * smooth(1 - dd / c.r); // broad soft dark seas
+    }
+    for (const c of craters) {
+      const dd = Math.hypot(xn - c.x, yn - c.y);
+      if (dd < c.r) m -= c.d * (1 - (dd / c.r) ** 2); // small dished pits
+    }
+    return m;
+  };
   for (let phase = 0; phase < CELESTIAL.MOON_PHASES; phase++) {
     const canvas = document.createElement('canvas');
     canvas.width = P;
@@ -350,32 +551,50 @@ export function createMoonTextures() {
       for (let x = 0; x < P; x++) {
         const xn = ((x + 0.5) / P) * 2 - 1;
         const yn = ((y + 0.5) / P) * 2 - 1;
-        const bulge = Math.sqrt(Math.max(0, 1 - yn * yn));
-        let lit;
-        if (phase === 0) lit = true;
-        else if (phase === 4) lit = false;
-        else if (phase < 4) lit = xn < Math.cos((Math.PI * phase) / 4) * bulge;
-        else lit = xn > -Math.cos((Math.PI * (8 - phase)) / 4) * bulge;
+        const d = Math.hypot(xn, yn);
+        const i = (y * P + x) * 4;
+        const cov = clamp01((R - d) / AA); // disc edge coverage
+        if (cov <= 0) { img.data[i + 3] = 0; continue; }
+        // The terminator: signed distance to the phase ellipse, eased over
+        // TERM — real shadow edges on the moon are soft, not pixel steps.
+        // The ellipse lives on the ACTUAL R-disc (semi-axes R.cos, R), so
+        // crescent tips taper to points at the limb — the unit-disc bulge
+        // of the old square moon left them truncated 4px short of the
+        // poles (adversarial-review catch).
+        const bulge = Math.sqrt(Math.max(0, R * R - yn * yn));
+        let litAmt;
+        if (phase === 0) litAmt = 1;
+        else if (phase === 4) litAmt = 0;
+        else if (phase < 4) {
+          litAmt = clamp01((Math.cos((Math.PI * phase) / 4) * bulge - xn) / TERM + 0.5);
+        } else {
+          litAmt = clamp01((xn + Math.cos((Math.PI * (8 - phase)) / 4) * bulge) / TERM + 0.5);
+        }
         // A hashed speckle keeps the face from reading as flat plastic.
         let h = (Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1)) | 0;
         h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-        const grain = 0.88 + ((h >>> 8) & 0xff) / 255 * 0.12;
-        const i = (y * P + x) * 4;
-        if (lit) {
-          img.data[i] = Math.round(lr * grain);
-          img.data[i + 1] = Math.round(lg * grain);
-          img.data[i + 2] = Math.round(lb * grain);
-          img.data[i + 3] = 255;
-        } else {
-          img.data[i] = 24;
-          img.data[i + 1] = 28;
-          img.data[i + 2] = 44;
-          img.data[i + 3] = darkAlpha;
-        }
+        const grain = 0.92 + ((h >>> 8) & 0xff) / 255 * 0.08;
+        // Maria + craters + a whisper of limb darkening (the real moon is
+        // nearly flat-lit; keep it subtle or the disc reads like a ball).
+        const limb = 0.9 + 0.1 * Math.sqrt(Math.max(0, 1 - (d / R) ** 2));
+        const shade = surface(xn, yn) * grain * limb;
+        // Earthshine: the unlit part is a faint cool grey-blue ghost.
+        const er = 30 * (shade + 0.4);
+        const eg = 35 * (shade + 0.4);
+        const eb = 54 * (shade + 0.4);
+        img.data[i] = Math.round(er + (lr * shade - er) * litAmt);
+        img.data[i + 1] = Math.round(eg + (lg * shade - eg) * litAmt);
+        img.data[i + 2] = Math.round(eb + (lb * shade - eb) * litAmt);
+        img.data[i + 3] = Math.round(cov * 255 *
+          (CELESTIAL.MOON_DARK_ALPHA + (1 - CELESTIAL.MOON_DARK_ALPHA) * litAmt));
       }
     }
     ctx.putImageData(img, 0, 0);
-    phases.push(canvasTexture(canvas));
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.LinearFilter; // a disc, not pixel art
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    phases.push(texture);
   }
   return phases;
 }

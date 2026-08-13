@@ -43,6 +43,21 @@ src/
                          split out of terrain.js per the size cap, moved
                          verbatim; deliberately independent of noise.js so
                          the two seed streams never couple)
+    spawn_scan.js        the GUARANTEED plains spawn (Phase 26): candidate
+                         centres spiral out from the origin, each scored
+                         over a sampled disc (plains fraction, water,
+                         relief), first to clear every TERRAIN.SPAWN_SCAN
+                         threshold wins — with a best-seen fallback so it
+                         ALWAYS returns a column. Takes the generator as an
+                         argument (the shapes.js pattern, cycle-free); the
+                         player spawn, the eyes of ender and the stronghold
+                         anchor all read the one cached result
+    surface_rules.js     the Phase 24 surface rules (gravel patches, beach
+                         reach, the mountain stone line, surfaceLayersFor)
+                         — Phase 26 split out of terrain.js per the size
+                         cap, moved verbatim (A/B: byte-identical chunks);
+                         takes the generator as an argument like
+                         spawn_scan.js, so the pair is cycle-free
     plants.js            the Phase 24 cross-plane plant registrations
                          (short grass, dandelion, poppy, dead bush) and
                          their soil rules — the shapes.js pattern: blocks.js
@@ -106,18 +121,48 @@ src/
                          backing-store swap (Phase 15)
 
   render/
-    renderer.js          Three.js setup, tone mapping, shadows, post
+    renderer.js          Three.js setup, tone mapping, shadows, resize
+    post_fx.js           the Phase 26 post pipeline: the scene renders into
+                         a linear half-float target (MSAA, depth texture),
+                         then screen-space god rays (depth-masked radial
+                         blur toward the low sun — terrain AND the
+                         depth-writing cloud deck carve the shafts), subtle
+                         bloom (soft threshold following the sun level +
+                         warm/violet emissive detectors for lava/glowstone/
+                         torches/portals, sky masked out), and the grading
+                         composite (richer greens, warmer sun, cooler
+                         shadows, the one linear->sRGB encode + dither).
+                         All tunables in config VISUAL; POST_ENABLED false
+                         restores the direct Phase 25 render path
+    water_fx.js          the Phase 26 water surface: a patch layered on the
+                         lit chunk material — world-space vertex ripple
+                         (render-only; physics never sees it), analytic
+                         ripple normals, fresnel reflection mixing sky
+                         colour with a dark terrain tone by the baked sky
+                         access (the "suggestion of nearby terrain"), and a
+                         sun glint. WATER_UNIFORMS written per frame from
+                         main.js (the CHUNK_LIGHT_UNIFORMS pattern)
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night (the cycle drives
                          the Phase 24 sky furniture below)
-    sky_fx.js            the sky furniture (Phase 24; reworked in the Phase
-                         25 follow-up): the cloud deck as VOLUME slabs (one
-                         merged mesh — lit tops, shaded undersides, side
-                         walls, front-face culled; a coarse weather gate
-                         intersected with a fine puff octave), the
-                         starfield, and the generated sun (round disc in a
-                         rim-windowed additive glow, linear-filtered) and
-                         eight-phase moon textures — split from lighting.js
+    sky_fx.js            the sky furniture (Phase 24; clouds rebuilt
+                         REALISTIC in the Phase 27 follow-ups): the cloud
+                         layer as a camera-following plane whose fragment
+                         shader grows soft cumulus from domain-warped
+                         5-octave fbm value noise (weather-gate grouping,
+                         detail-noise edge erosion, pseudo-volume dome
+                         lighting — density-as-height normals with rotated
+                         relief bumps, N.L against the real sun/moon —
+                         silver linings, plus a faint higher cirrus veil
+                         that skips the normal taps via FLAT_SHEET) —
+                         drawn TWICE for the Phase 26 occlusion contract,
+                         a depth-only core pass then a soft colour pass;
+                         the starfield; the generated sun (round disc in a
+                         rim-windowed additive glow, linear-filtered), the
+                         moon's cool halo glow, and the eight-phase ROUND
+                         moon (AA disc, seeded maria + craters shared by
+                         every phase, soft elliptical terminator, faint
+                         earthshine dark side) — split from lighting.js
                          per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
@@ -251,6 +296,15 @@ src/
                          end-portal swirls + hum), the looping water/lava
                          ambience beds and the rare underground cave tone.
                          Purely reactive — it reads state, never writes it
+    commands.js          chat commands (Phase 27, split out of main.js at
+                         birth per the size cap): /tp <x> <z> lands the
+                         player at a SAFE spot — the surface in open-sky
+                         worlds (floated to the sea surface over deep
+                         water), a scanned interior spot under the Nether
+                         ceiling, a refusal over the End's void — and
+                         /tp <x> <y> <z> goes exactly there. `notify` is
+                         injected (hud's showToast) so the dependency
+                         direction stays downward
     crafting.js          recipes, grid matching
     smelting.js          furnace logic, fuel
     brewing.js           brewing stand (Phase 18): the 5-slot BrewingStand
@@ -322,6 +376,15 @@ src/
                          other). The pause overlay is pointer-events: none
                          except for its panel, so a click anywhere else still
                          falls through to the canvas and resumes play
+    chat.js              the Phase 27 CHAT BAR: T (or '/', pre-filled)
+                         opens a single-line input at vanilla's chat spot;
+                         the game KEEPS RUNNING while it is open (the
+                         sign-editor rule — pointer releases, main.js's
+                         pause verdict consults isOpen), Enter hands the
+                         line to systems/commands.js, Escape cancels,
+                         ArrowUp recalls history, either way the pointer
+                         relocks. Owns only the DOM and key routing —
+                         never a game rule. Tunables in config CHAT
     creative.js          the Phase 25 CREATIVE INVENTORY: the tabbed
                          catalogue of every block and item (building blocks,
                          decoration, tools, combat, food, materials,
@@ -367,7 +430,25 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 25 added THREE new files rather than growing any
+in this document. Phase 27 added TWO new files (`ui/chat.js` 129,
+`systems/commands.js` 95 — the command logic split out of main.js AT BIRTH:
+the chat wiring had taken main to 875, and moving /tp into its own system
+brought it back to 802, sitting right on the tilde; **if main.js grows
+again, the beds block — trySleep/updateSleep — is its next natural cut**).
+`world/world.js` is 426 after the streaming idle/resume work and
+`world/chunks.js` 627 after the light-data tier gate, both comfortably
+under. Phase 26 added FOUR new files (`world/spawn_scan.js` 130,
+`world/surface_rules.js` 112, `render/post_fx.js` 354, `render/water_fx.js`
+152) and made ONE cut the same session: the spawn scan and LOD additions took
+`world/terrain.js` 792 → 814, so the Phase 24 surface rules moved verbatim to
+`world/surface_rules.js` (terrain is 728 now; the A/B generated byte-identical
+chunks). Every other file Phase 26 touched stayed under: `world/chunks.js`
+617, `world/world.js` 365, `render/lighting.js` 735, `render/sky_fx.js` 417,
+`render/particles.js` 670, `systems/ambience.js` 301, `player/body.js` 784,
+`src/main.js` 780, `dimensions/stronghold.js` 630. The three standing
+over-cap debts are unchanged — `entities/dragon.js` (884, the rig cut),
+`world/emitters.js` (829, the small-box emitters) and `world/blocks.js`
+(915, the lookups tail) — and none of them was touched. Phase 25 added THREE new files rather than growing any
 (`player/gamemode.js` 96, `ui/menus.js` 242, `ui/creative.js` 528) and left
 every file it edited under the cap: `ui/hud.js` 777 (mode badge + the
 survival-bar gate), `ui/screens.js` 752 (the E route), `player/interaction.js`

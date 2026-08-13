@@ -739,7 +739,16 @@ export class PlayerBody {
 // ---------------------------------------------------------------------------
 
 export function findSpawnPosition(world, overrides = {}) {
-  const { X, Z, SEARCH_RADIUS } = { ...PLAYER.SPAWN, ...overrides };
+  // Phase 26: the overworld generator scans for a guaranteed plains spawn
+  // column (world/spawn_scan.js) — that column is the search centre now.
+  // Config PLAYER.SPAWN remains the fallback for generators without a scan
+  // (and for the bare node-test worlds this file must keep working with).
+  const scanned = world.generator?.spawnColumn?.();
+  const { X, Z, SEARCH_RADIUS } = {
+    ...PLAYER.SPAWN,
+    ...(scanned ? { X: scanned.x, Z: scanned.z } : null),
+    ...overrides,
+  };
   for (let r = 0; r <= SEARCH_RADIUS; r++) {
     for (const [x, z] of ringCells(X, Z, r)) {
       const y = world.getHighestSolidY(x, z);

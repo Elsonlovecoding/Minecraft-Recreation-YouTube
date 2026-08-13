@@ -555,6 +555,21 @@ class ParticleSystem {
     });
   }
 
+  // Phase 26: an ambient dust mote — a tiny slow speck drifting down through
+  // a shaft of light underground (systems/ambience.js finds the shafts).
+  // Spawn-time light tint means a mote in the bright core of the shaft
+  // glows while one at its edge dims, which is what sells the beam.
+  dust(x, y, z) {
+    const C = PARTICLES.DUST;
+    this._spawn(x + Math.random(), y + Math.random(), z + Math.random(), {
+      vx: rand(-C.DRIFT, C.DRIFT), vy: -C.SINK * rand(0.5, 1.4),
+      vz: rand(-C.DRIFT, C.DRIFT),
+      life: pick(C.LIFE), size: C.SIZE * rand(0.7, 1.3),
+      gravity: 0, drag: 0.4, color: C.COLOR, flicker: true,
+      tint: this.lightTint(x + 0.5, y + 0.5, z + 0.5),
+    });
+  }
+
   // Expanding smoke + debris: creepers, ghast fireballs, end crystals.
   explosion(x, y, z, radius = 3) {
     const C = PARTICLES.EXPLOSION;

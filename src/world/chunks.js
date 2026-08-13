@@ -20,6 +20,7 @@ import {
 import { BLOCK, BLOCKS, TORCH_LEAN, HAS_SHAPE } from './blocks.js';
 import { TILE } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
+import { patchWaterMaterial } from '../render/water_fx.js';
 import {
   PASS_NONE, PASS_OPAQUE, PASS_CUTOUT, PASS_WATER, PASS_LAVA, PASS_PORTAL,
   PASS_WATER_FLOW, PASS_COUNT,
@@ -209,7 +210,11 @@ export function createChunkMaterials(atlasTexture) {
   let portalClock = 0;
   patchChunkMaterial(opaque);
   patchChunkMaterial(cutout);
-  patchChunkMaterial(water);
+  // Phase 26: the STILL water pass carries the surface behaviour — ripple,
+  // fresnel sky reflection, sun glint (render/water_fx.js, layered on the
+  // same chunk patch). Flowing water keeps the plain patch: it animates by
+  // texture scroll and its cells sit at seven heights.
+  patchWaterMaterial(water);
   patchChunkMaterial(lava);
   patchChunkMaterial(waterFlow);
   return {
@@ -252,9 +257,16 @@ function newBucket() {
 // already-generated Chunk for every coordinate in the 3x3 neighbourhood —
 // world.js only meshes chunks whose neighbours all exist, so culling, AO and
 // light read identical data no matter which chunk meshes first.
-// Returns { group, geometries }; positions are chunk-local in x/z (the group
-// is placed at the chunk origin) and world-space in y.
-export function buildChunkMesh(chunk, getChunkAt, materials) {
+// Returns { group, geometries, lod }; positions are chunk-local in x/z (the
+// group is placed at the chunk origin) and world-space in y.
+//
+// `lod` (Phase 26): 0 = full detail; 1 = the distant tier — cross-plane
+// plants are skipped entirely and leaves self-cull their same-id interior
+// planes (both invisible past VIEW.LOD.DETAIL_CHUNKS, and together most of
+// a far chunk's excess triangles). Every other block meshes identically at
+// both tiers, so the boundary has nothing visible to pop. world.js decides
+// the tier from distance and remeshes on tier changes (with hysteresis).
+export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
   const nbrs = [];
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
@@ -283,17 +295,27 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   // Phase 12: keep the centre chunk's computed light for cheap point
   // queries (world.getLight — the mob spawner's light checks). Packed
   // sky << 4 | block per cell, refreshed on every remesh.
-  let lightData = chunk.lightData;
-  if (!lightData) {
-    lightData = new Uint8Array(SIZE * SIZE * HEIGHT);
-    chunk.lightData = lightData;
-  }
-  for (let lz = 0; lz < SIZE; lz++) {
-    for (let lx = 0; lx < SIZE; lx++) {
-      const src = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT;
-      const dst = (lz * SIZE + lx) * HEIGHT;
-      for (let iy = 0; iy < HEIGHT; iy++) {
-        lightData[dst + iy] = (wSky[src + iy] << 4) | wBlk[src + iy];
+  // Phase 27: FULL-DETAIL chunks only. Every getLight consumer lives well
+  // inside VIEW.LOD.DETAIL_CHUNKS — mob spawning reaches 96 blocks (6
+  // chunks), the ambient dust tick 10 blocks, the cave tone reads the
+  // player's own cell — and spawning already treats missing light as
+  // "no spawn". At 98KB per chunk this was the single biggest memory line
+  // of the r=40 ring (~660MB across ~6700 far chunks), all of it unread.
+  // A demoted chunk keeps its stale copy (harmless: nothing consults it
+  // out there) and refreshes it on promotion.
+  if (lod === 0) {
+    let lightData = chunk.lightData;
+    if (!lightData) {
+      lightData = new Uint8Array(SIZE * SIZE * HEIGHT);
+      chunk.lightData = lightData;
+    }
+    for (let lz = 0; lz < SIZE; lz++) {
+      for (let lx = 0; lx < SIZE; lx++) {
+        const src = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT;
+        const dst = (lz * SIZE + lx) * HEIGHT;
+        for (let iy = 0; iy < HEIGHT; iy++) {
+          lightData[dst + iy] = (wSky[src + iy] << 4) | wBlk[src + iy];
+        }
       }
     }
   }
@@ -339,6 +361,26 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
       for (let iy = 0; iy < HEIGHT; iy++) {
         const id = blocks[colBase + iy];
         if (id === 0) continue;
+        // Phase 26 — the distant tier's UNDERGROUND CULL, specials half:
+        // a non-cube block sitting in a cell with zero baked SKY light is
+        // enclosed underground (sky access, not time of day — a surface
+        // torch at night keeps sky 15), and nothing enclosed can be seen
+        // from past VIEW.LOD.DETAIL_CHUNKS. The cube path below applies
+        // the same rule per face, against the cell the face fronts.
+        // FLUID FLOWS probe the cell ABOVE themselves instead: lava flows
+        // register opacity 15, so their OWN cell bakes sky 0 even in open
+        // noon sun (the review caught the first cut erasing every distant
+        // lava fall, surface ones included) — but a sky-exposed flow always
+        // has lit air above it, while a cave fall's above-cell is more
+        // fall, sky 0, so the underground cull still wins where it should.
+        const special = TORCH_LEAN_OF[id] !== null || IS_FLUID_FLOW[id] ||
+          HAS_SHAPE[id] || WART_HEIGHT[id] > 0;
+        if (lod > 0 && special) {
+          const probeY = IS_FLUID_FLOW[id] ? Math.min(iy + 1, HEIGHT - 1) : iy;
+          if (wSky[((lz + SIZE) * W + (lx + SIZE)) * HEIGHT + probeY] === 0) {
+            continue;
+          }
+        }
         const lean = TORCH_LEAN_OF[id];
         if (lean !== null) {
           emitTorch(lx, iy, lz, lean);
@@ -366,9 +408,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
         }
         // Phase 24: cross-plane plants — dispatched before the generic cube
         // path so their registry tiles (kept for particles/item art) never
-        // emit cube faces.
+        // emit cube faces. Phase 26: the distant LOD tier skips them — a
+        // 1-block sprite past 224 blocks is under ~5px at 1080p.
         if (CROSS_TILE[id] >= 0) {
-          emitCross(lx, iy, lz, id);
+          if (lod === 0) emitCross(lx, iy, lz, id);
           continue;
         }
         // Phase 19 specials: the brewing stand box model, iron-bar panes,
@@ -414,9 +457,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
           // Inset side faces (cactus) sit inside their own cell — nothing can
           // occlude or z-fight with them, so they skip culling entirely.
           const insetSide = inset > 0 && d[1] === 0;
+          let nid = BLOCK.AIR; // fronting block id (stays AIR for inset sides)
           if (!insetSide) {
             // Face culling: emit only against air or a transparent block.
-            const nid = getId(lx + d[0], ny, lz + d[2]);
+            nid = getId(lx + d[0], ny, lz + d[2]);
             if (!IS_TRANSPARENT[nid]) continue;
             if (nid === id) {
               // Same-id transparent runs merge into one surface (water,
@@ -424,7 +468,12 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
               // cactus tops), whose interior planes DO render: exactly one
               // DoubleSide quad per shared plane, from the positive face,
               // so canopies read dense with no coplanar z-fight pairs.
+              // Phase 26: the distant LOD tier culls leaf interiors like
+              // any other same-id run — the dense-canopy read needs to
+              // survive to ~50 blocks, not 224+, and interior leaf planes
+              // are the biggest triangle sink a forest chunk has.
               if (SELF_CULL[id]) continue;
+              if (lod > 0 && id === BLOCK.OAK_LEAVES) continue;
               if (d[0] + d[1] + d[2] < 0) continue;
             } else if (
               nid !== BLOCK.AIR && IS_TRANSPARENT[id] && id > nid &&
@@ -453,6 +502,21 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
             const fIdx = ((lz + d[2] + SIZE) * W + (lx + d[0] + SIZE)) * HEIGHT + fy;
             fSky = wSky[fIdx];
             fBlk = wBlk[fIdx];
+          }
+
+          // Phase 26 — the distant tier's UNDERGROUND CULL: a face fronting
+          // AIR with zero baked sky light is enclosed (sky light reaches 15
+          // cells from any opening, so zero means the cell is deeper into
+          // the dark than any line of sight from 224+ blocks away can
+          // follow). This is where the far tier's real savings are — the
+          // whole cave network stops emitting walls. Faces fronting WATER
+          // keep emitting (a deep lake floor must not become a hole in the
+          // world), as do sky-lit ravines, cavern mouths and overhangs.
+          // world.js only requests lod > 0 from generators with open sky —
+          // the Nether's baked sky is zero EVERYWHERE under its bedrock
+          // ceiling, and this rule would erase its horizon.
+          if (lod > 0 && fSky === 0 && !insetSide && nid === BLOCK.AIR) {
+            continue;
           }
 
           // Vertex AO and smooth light from the three cells around each
@@ -529,6 +593,11 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
     geometry.setAttribute('light', new THREE.Float32BufferAttribute(bucket.lig, 2));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uv, 2));
     geometry.setIndex(bucket.idx);
+    // Phase 26: the bounding sphere feeds three.js's per-mesh FRUSTUM
+    // CULLING (frustumCulled defaults true on every chunk mesh — a 70°
+    // lens draws roughly a quarter of the r=30 ring). Computed here, inside
+    // the streaming budget, instead of lazily during the next render pass.
+    geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.matrixAutoUpdate = false;
     group.add(mesh);
@@ -542,7 +611,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials) {
   addMesh(buckets[PASS_LAVA], materials.lava);
   addMesh(buckets[PASS_PORTAL], materials.portal);
 
-  return { group, geometries };
+  return { group, geometries, lod };
 }
 
 // Removes a chunk's meshes from the scene and frees their GPU buffers.

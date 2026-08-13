@@ -225,10 +225,52 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 30,    // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 40,    // chunks loaded/rendered around the player
+                          // (Phase 27: 30 -> 40, 640 blocks, by request —
+                          // affordable because the LOD tier does the heavy
+                          // lifting and far chunks stopped storing light
+                          // data; measured numbers in the LOD note below)
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
+
+  // Phase 26 — LEVEL OF DETAIL, so the 30-chunk ring doesn't cost 30 chunks
+  // of full geometry. Chunks beyond DETAIL_CHUNKS mesh at a reduced tier:
+  // cross-plane plants are skipped (a grass sprite at 224+ blocks is under
+  // ~5px at 1080p), leaves stop emitting their same-id interior planes (the
+  // Phase 7 dense-canopy rule — invisible from that far), and — the real
+  // saving — faces fronting pitch-dark air are culled: baked sky light 0
+  // means enclosed underground, and the entire hidden cave network stops
+  // emitting walls (water-covered floors, ravines and cave mouths keep
+  // theirs; see chunks.js). Surface terrain, trees, water, structures and
+  // player builds mesh identically at both tiers, so the boundary has
+  // nothing visible to pop. HYSTERESIS keeps a chunk's tier sticky for 2
+  // chunks of movement so walking along the boundary never remesh-thrashes.
+  // Measured over the full ring (node, real generator + mesher):
+  //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
+  //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
+  //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
+  //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
+  // -59% at r=40 — the shipped 40-chunk ring carries fewer triangles than
+  // the old fully-detailed r=20 ring drew per its own measurements, and
+  // far chunks stopped storing their 98KB light arrays on top (only
+  // full-detail chunks keep them; ~420 MB saved at r=40 — see chunks.js).
+  // Per-mesh frustum culling (three.js bounding spheres, precomputed at
+  // build) then trims the drawn set to the lens — a 70° view draws roughly
+  // a quarter of it.
+  LOD: {
+    DETAIL_CHUNKS: 14,    // full-detail radius (chunks) around the player
+    HYSTERESIS: 3,        // extra chunks a promoted chunk keeps its tier
+                          // (Phase 27: 2 -> 3 — walking along the boundary
+                          // re-tiers fewer chunks per border crossing)
+    RETIER_PER_PASS: 2,   // tier-change remeshes allowed per streaming pass
+                          // (Phase 27): crossing a chunk border wants a
+                          // whole arc of promotions at once, and letting
+                          // them all compete for the frame budget was a
+                          // visible hitch while moving — they trickle now,
+                          // capped, while missing/dirty meshes keep full
+                          // priority
+  },
 };
 
 // Chunk streaming: how terrain loads in around the player without stutter.
@@ -236,7 +278,10 @@ export const VIEW = {
 // every meshed chunk has all 8 neighbours available for culling and AO.
 export const STREAMING = {
   INITIAL_RADIUS: 3,      // chunks fully generated+meshed synchronously at boot
-  FRAME_BUDGET_MS: 8,     // max main-thread ms per frame spent generating/meshing
+  FRAME_BUDGET_MS: 6,     // max main-thread ms per frame spent generating/meshing
+                          // (Phase 27: 8 -> 6 — 8ms on top of the render left
+                          // moving through unbuilt terrain visibly hitchy at
+                          // 60fps; the ring fills a touch slower instead)
   UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
 };
 
@@ -493,13 +538,40 @@ export const UNDERGROUND = {
 // Overworld heightmap, biomes and decoration (world/terrain.js).
 // Noise scales are in cycles per block (1/blocks-per-feature).
 export const TERRAIN = {
-  // A NEW world, twice. Phase 25 replaced the original 1337 spawn (a
-  // forested coast hemmed in by mountains) with 2163; the follow-up asked
-  // for a PLAINS spawn under the re-rebalanced biome rules, and 3200 was
-  // picked by scanning seeds for the most even spawn area that starts the
-  // player on plains: within 260 blocks the land is plains 25% / forest 26%
-  // / desert 27% / mountains 22%, 13% water, spawning on grass at y68.
+  // The seed's history: 1337 (original) -> 2163 (Phase 25, an even spawn
+  // area under those weights) -> 3200 (the Phase 25 follow-up's hand-picked
+  // plains spawn — its quoted percentages were measured under the PHASE 25
+  // biome weights and no longer hold). As of Phase 26 the seed no longer
+  // determines the spawn at all: SPAWN_SCAN below finds the nearest large
+  // open plains area for ANY seed (for 3200 that is column (-96, 160) at
+  // y69), so the seed is just the world's identity again.
   SEED: 3200,
+
+  // Phase 26 — the GUARANTEED plains spawn (world/spawn_scan.js). Instead of
+  // hand-picking seeds and hoping, the generator SCANS for the nearest large
+  // open plains area and spawns the player in the middle of it: candidate
+  // centres spiral out from the origin on a coarse grid, each scored over a
+  // sampled disc — fraction of plains-dominant columns, fraction underwater,
+  // height relief — and the first candidate meeting every threshold wins.
+  // If none does within MAX_RADIUS (no seed under the current biome weights
+  // gets anywhere near that), the best-scoring candidate stands, so the scan
+  // ALWAYS returns a column. Pure in (seed), cached per generator — the eyes
+  // of ender and the stronghold anchor read the same result.
+  SPAWN_SCAN: {
+    CAND_STEP: 16,             // candidate-centre grid spacing (blocks)
+    MAX_RADIUS: 3072,          // give up spiralling out past this (fallback:
+                               // best candidate seen — the guarantee)
+    AREA_RADIUS: 56,           // the disc each candidate is scored over —
+                               // "the middle of a LARGE open plains area"
+    SAMPLE_STEP: 8,            // disc sampling grid (blocks)
+    MIN_PLAINS: 0.94,          // fraction of disc samples that must be
+                               // plains-dominant land
+    MAX_WATER: 0.0,            // fraction of disc samples allowed underwater
+                               // (0 — not on a coastline, not beside a lake)
+    MAX_RELIEF: 9,             // max height spread across the disc (open and
+                               // level, not a hillside)
+    MAX_HEIGHT_ABOVE_SEA: 26,  // centre column must sit in the lowland band
+  },
 
   // Extra columns computed around a chunk during generation so trees whose
   // canopy crosses a chunk border come out identical from both sides
@@ -539,10 +611,10 @@ export const TERRAIN = {
   MOUNTAINS: {
     REGION_SCALE: 1 / 560,
     REGION_OCTAVES: 2,
-    // Phase 25: 0.12 -> 0.30. Mountains took a quarter of all land and
-    // nearly half of it near the old spawn, crowding out the lowland
-    // biomes; they are a fifth of it now and still form coherent ranges.
-    WEIGHT_START: 0.25,        // region noise where mountains begin to blend in
+    // Phase 25: 0.12 -> 0.25 (mountains took a quarter of all land).
+    // Phase 26: 0.25 -> 0.30 — plains must be the clear majority biome, so
+    // mountains hand back another slice while still forming coherent ranges.
+    WEIGHT_START: 0.30,        // region noise where mountains begin to blend in
     WEIGHT_FULL: 0.60,         // region noise where mountains fully dominate
     RIDGE_SCALE: 1 / 260,
     RIDGE_OCTAVES: 3,
@@ -553,21 +625,24 @@ export const TERRAIN = {
 
   // Per-biome height contribution (OFFSET above the continent base plus
   // hill noise * HILL_AMPLITUDE) and tree density (trees per column).
-  // Phase 25 rebalanced the three lowland biomes; the follow-up evened
-  // plains and forest out ("same amount of plains as forest"): BASE_WEIGHT
-  // 0.38 -> 0.25 and the forest moisture gate opened a touch. Measured over
-  // 2000x2000: plains 31% / forest 29% / desert 21% / mountains 19% of land.
+  // Phase 26 ("plains should be the most common biome, with forest, desert
+  // and mountains appearing less often"): plains is the DEFAULT biome now —
+  // BASE_WEIGHT 0.25 -> 0.55, the forest moisture gate needs genuinely wet
+  // air (0.02 -> 0.10) and desert genuinely hot air (-0.06 -> 0.02), and
+  // mountains give up a slice of land below. Measured over 2000x2000 of
+  // land: plains 55.7% / forest 17.8% / desert 10.8% / mountains 15.6% —
+  // a clear plains majority with all four biomes keeping real presence.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.25, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
-      MOISTURE_START: 0.02,    // moisture where forest starts blending in
-      MOISTURE_FULL: 0.40,     // moisture where forest weight saturates
+      MOISTURE_START: 0.10,    // moisture where forest starts blending in
+      MOISTURE_FULL: 0.46,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
-      HEAT_START: -0.06,       // temperature where desert starts blending in
-      HEAT_FULL: 0.30,
+      HEAT_START: 0.02,        // temperature where desert starts blending in
+      HEAT_FULL: 0.36,
       DRY_START: -0.32,        // below this moisture the air is fully dry
       DRY_FULL: 0.30,          // above this moisture desert weight is zero
     },
@@ -1879,6 +1954,29 @@ export const UI = {
 };
 
 // ---------------------------------------------------------------------------
+// Chat / commands (ui/chat.js — Phase 27). T opens the chat bar, '/' opens
+// it with the slash already typed (vanilla). The game KEEPS RUNNING while
+// chat is open (the sign-entry rule — pointer lock releases, nothing
+// pauses); Enter submits, Escape cancels, either way the pointer relocks.
+// Commands are parsed in main.js; /tp is the one that ships.
+// ---------------------------------------------------------------------------
+
+export const CHAT = {
+  OPEN_KEY: 'KeyT',        // opens the chat bar
+  COMMAND_KEY: 'Slash',    // opens it with '/' already typed (vanilla)
+  MAX_LENGTH: 96,          // input length cap
+  HISTORY: 16,             // submitted lines ArrowUp/ArrowDown recall
+  WIDTH_PX: 440,           // bar width
+  FONT_PX: 15,             // input font size
+  BOTTOM_PX: 88,           // above the hotbar, vanilla's chat spot
+  LEFT_PX: 12,
+  TELEPORT_LIMIT: 100000,  // /tp clamps |x| and |z| to this — far enough
+                           // for anything sane, small enough that a typo
+                           // can't strand the player at float-breaking
+                           // coordinates
+};
+
+// ---------------------------------------------------------------------------
 // Block interaction (break / place / outline / hand)
 // ---------------------------------------------------------------------------
 
@@ -1986,12 +2084,17 @@ export const LIGHTING = {
   GLOWSTONE_LIGHT: 15,
   // Per-face brightness multipliers (the Minecraft look)
   FACE_BRIGHTNESS: { top: 1.0, side: 0.8, bottom: 0.5 },
-  AO_STRENGTH: 0.45,              // ambient occlusion darkening at corners
+  AO_STRENGTH: 0.40,              // ambient occlusion darkening at corners
+                                  // (Phase 26: 0.45 -> 0.40 — softer corner
+                                  // shadows, paired with VISUAL.SHADOW's
+                                  // warm bounce and cool lean)
   // Brightness multiplier per missing light level: level L renders at
   // LIGHT_FALLOFF^(15-L), so level 0 bottoms out near-black, not pure black.
   LIGHT_FALLOFF: 0.8,
   TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
-  NIGHT_SKY_TINT: 0x8fa8e8,       // cool moonlight tint on skylight at night
+  NIGHT_SKY_TINT: 0xa9bef2,       // cool moonlight tint on skylight at night
+                                  // (Phase 27 follow-up: brightened toward
+                                  // silver — moonlit ground should READ)
   // Held-item dynamic light (Phase 14, deliberately beyond vanilla): a torch
   // in the main or off hand lights the world around the player. Applied at
   // render time as a per-fragment distance term in the chunk shader — NEVER
@@ -2029,8 +2132,19 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 340,
-  FOG_FAR: 510,
+  // Phase 27 (view 480 -> 640 blocks): pushed out at the same fractions of
+  // the view — clear to ~72%, the ring edge sitting at ~80% haze so pop-in
+  // stays invisible.
+  FOG_NEAR: 460,
+  FOG_FAR: 680,
+  // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
+  // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
+  // heavy bounds) and the cycle lerps fog.near/far between them every
+  // frame — so a low sun drowns distant terrain in warm haze while midday
+  // keeps the Phase 25 clarity ("don't make the far places blurry" holds
+  // where it was asked for: full day).
+  HAZE_NEAR: 40,
+  HAZE_FAR: 430,
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
@@ -2051,28 +2165,52 @@ export const SKY = {
 // dusk and out through dawn) and TINT (the skylight tint uniform — white at
 // midday, warm at dawn/dusk, cool at night — which is what keeps the LIGHT
 // on the terrain in agreement with the sky it stands under).
+// Phase 26 (the golden-hour reference image): the day gains a GOLDEN HOUR at
+// each end — while the sun is low the sky runs a purple-to-gold gradient
+// (periwinkle zenith through violet-pink to a gold horizon), terrain light
+// warms, and the new HAZE channel (0 clear .. 1 = SKY.HAZE_NEAR/FAR) drowns
+// distant terrain in warm atmosphere. Full blue day still holds the middle
+// (t 0.05-0.45), the sun is still above the horizon for exactly t 0-0.5,
+// and full darkness still holds 0.525-0.975 — the Phase 25 half-and-half
+// clock is untouched; only the look at the day's edges changed.
 export const DAY_NIGHT = {
   KEYFRAMES: [
-    { T: 0.000, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+    // Dawn golden hour: the sun rises into purple-gold and clears by 0.05.
+    { T: 0.000, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
+      BELOW: 0xb08a68, SUN_LEVEL: 0.8, SKY_DARKEN: 1, GLOW: 1.0,
+      STARS: 0, TINT: 0xffd2a4, HAZE: 0.85 },
+    { T: 0.050, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
-      STARS: 0, TINT: 0xffffff },
-    { T: 0.500, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
+      STARS: 0, TINT: 0xffffff, HAZE: 0.15 },
+    // The full blue day (the Phase 25 clarity request holds here: HAZE low).
+    { T: 0.450, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
-      STARS: 0, TINT: 0xffffff },
-    { T: 0.5125, ZENITH: 0x2b3866, MID: 0x86688a, HORIZON: 0xff9354,
+      STARS: 0, TINT: 0xffffff, HAZE: 0.15 },
+    // Evening golden hour peaks as the sun touches the horizon: the
+    // reference's periwinkle-to-violet-to-gold sky, heavy warm haze.
+    { T: 0.500, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
+      BELOW: 0xb08a68, SUN_LEVEL: 0.85, SKY_DARKEN: 1, GLOW: 1.0,
+      STARS: 0, TINT: 0xffd2a4, HAZE: 0.9 },
+    { T: 0.5125, ZENITH: 0x3a3670, MID: 0x8a6a9a, HORIZON: 0xff9a54,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
-      STARS: 0.25, TINT: 0xffd9b0 },
-    { T: 0.525, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
-      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
-    { T: 0.975, ZENITH: 0x050914, MID: 0x0a1226, HORIZON: 0x16203a,
-      BELOW: 0x0b101e, SUN_LEVEL: 0.15, SKY_DARKEN: 11, GLOW: 0,
-      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT },
+      STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
+    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10 and the tint pushed
+    // toward silver — a full-moon night should read, not swallow the world;
+    // gameplay unchanged: night surfaces sit at effective light 5, still
+    // under the hostile-spawn gate of 7, and torches still protect at 14).
+    { T: 0.525, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
+      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
+    { T: 0.975, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
+      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+      STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
     { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
-      STARS: 0.25, TINT: 0xffd9b0 },
+      STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
   ],
-  GLOW_COLOR: 0xff8a3c,           // sunrise/sunset horizon glow
+  GLOW_COLOR: 0xffb04a,           // sunrise/sunset horizon glow — gold, so
+                                  // the sun's side of the sky turns golden
+                                  // while the horizon base stays violet-pink
 };
 
 // The visible sun and moon riding the sky dome. Phase 24 shipped a square
@@ -2082,52 +2220,129 @@ export const DAY_NIGHT = {
 // additive blending paints as a faint square boundary against the sky, and
 // the texture was Nearest-filtered, so the magnified gradient stair-stepped.
 // The glow is windowed to reach EXACTLY zero before the rim now, the sun
-// texture filters linearly, and the core is a disc. The moon stays the
-// vanilla pixel square — nobody reported the moon.
+// texture filters linearly, and the core is a disc. The moon followed in
+// the second Phase 27 follow-up ("make moon round"): an anti-aliased
+// disc with seeded maria + craters, a soft terminator and an earthshine
+// dark side — the same two rules (windowed, linear-filtered).
 export const CELESTIAL = {
   DISTANCE: 820,                  // from the camera; inside the sky dome radius
   SUN_SIZE: 150,                  // the disc's diameter, in dome units
-  SUN_GLOW_SCALE: 2.6,            // quad size as a multiple of the core —
+  SUN_GLOW_SCALE: 3.4,            // quad size as a multiple of the core —
                                   // the glow needs room to fade to nothing
+                                  // (Phase 26: 2.6 -> 3.4, the reference's
+                                  // big soft halo around a low sun)
+  SUN_GLOW_STRENGTH: 0.72,        // glow alpha at the disc edge (was a
+                                  // hardcoded 0.5 in sky_fx.js)
   SUN_CORE_COLOR: 0xfffbe8,       // the square itself
   SUN_GLOW_COLOR: 0xffd9a0,       // the atmospheric halo around it
-  MOON_SIZE: 95,
+  MOON_SIZE: 104,                 // the round disc is inscribed in the quad
+                                  // (0.94 of it), so the quad grew a touch
+                                  // to keep the old apparent diameter
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
+  // Phase 27 follow-up — MOONLIGHT ("moon light should also good"). The
+  // round moon disc hangs in a soft cool halo (an additive glow quad
+  // behind it, the sun-glow treatment at night temperature), the sky dome
+  // carries a gentle wash of light around its position, and the water
+  // picks up a moon glint (main.js feeds the water uniforms the moon's
+  // direction after sunset).
+  MOON_GLOW_SCALE: 3.0,           // halo quad as a multiple of the moon
+  MOON_GLOW_STRENGTH: 0.55,       // halo alpha at the moon's edge
+  MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
+  MOON_SKY_GLOW: 0.32,            // the dome's night wash around the moon
+  MOON_SKY_GLOW_COLOR: 0x9db8e8,  // ...and its colour
+  MOON_SKY_GLOW_BAND: 1.6,        // dome-height reach of the wash (the day
+                                  // glow hugs the horizon at 0.45; the moon
+                                  // rides high, so its wash must too)
+  MOON_GLINT_LEVEL: 0.32,         // water sun-level stand-in at night (drives
+                                  // the moon glint + keeps night reflections
+                                  // from going fully dead)
 };
 
-// Phase 24 — clouds. The follow-up ("make clouds more realistic") rebuilt
-// the flat quads into vanilla-fancy VOLUME slabs: every cloud is a box
-// THICKNESS blocks tall with a lit top, a shaded underside and mid-shaded
-// side walls, front-face culled so the volume reads correctly from below
-// AND from creative flight above. The pattern leans harder on its coarse
-// octave and drops isolated single cells, so the deck is drifting cumulus
-// masses rather than confetti. Still one merged mesh built once at boot (a
-// 2x2 tiling of one TILE_CELLS-period pattern re-anchoring in period steps),
-// still drifting along -x, still never fogged (it sits beyond FOG_FAR).
+// Phase 27 follow-up — REALISTIC clouds, by request ("make clouds look
+// realistic, not blocks"). The blocky slab deck is gone: the sky carries a
+// noise-shaded cloud LAYER now — a camera-following plane at HEIGHT whose
+// fragment shader grows soft cumulus out of domain-warped fbm value noise
+// (a coarse weather-system gate grouping the masses, detail-noise erosion
+// curdling the thin edges, pseudo-volume dome lighting — density read as
+// height, relief-bumped normals, N.L against the sun or the night's moon —
+// and warm silver linings on thin edges near a low sun) plus a faint high
+// cirrus veil for depth. World-anchored and drifting along -x like the old
+// deck, day/night tinted, dawn-blushed.
+//
+// THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
+// twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
+// is dense (CORE_ALPHA), so the far-plane-pinned sun/moon/stars still fail
+// the depth test behind real cloud, and a COLOUR pass drawn AFTER them, so
+// the soft rims attenuate a star or the moon smoothly instead of alpha-
+// popping. See render/sky_fx.js.
 export const CLOUDS = {
-  HEIGHT: 192,                    // the vanilla cloud deck sits at y=192
-  THICKNESS: 4,                   // slab height (vanilla fancy clouds' 4m)
-  CELL_SIZE: 12,                  // blocks per cloud cell (vanilla's texel)
-  TILE_CELLS: 96,                 // pattern period in cells (1152 blocks)
-  COVER: 0.24,                    // fraction of ALL cells that are cloud
-  WEATHER_SHARE: 0.62,            // fraction of the deck where cloud GROUPS
-                                  // may form at all (the coarse octave's
-                                  // gate); COVER is then met inside those
-                                  // regions by the fine octave, so the sky
-                                  // is fields of distinct puffs with real
-                                  // clear stretches between the fields
-  // Per-face brightness — what makes a slab read as a lit volume: the sun
-  // hits the top, the underside is in its own shadow, the walls sit between.
-  BRIGHTNESS: { TOP: 1.0, BOTTOM: 0.7, SIDE_X: 0.88, SIDE_Z: 0.8 },
-  SPEED: 0.55,                    // drift in blocks per second, along -x
-  OPACITY: 0.78,
-  NIGHT_BRIGHTNESS: 0.16,         // colour scale at deep night (1.0 at noon)
-  HORIZON_TINT: 0.18,             // fraction of the horizon colour mixed in
-                                  // (what makes dawn clouds blush)
-  SEED: 0xc10d5,                  // pattern hash seed (not world-seeded —
-                                  // clouds are weather, not terrain)
+  HEIGHT: 192,                    // cloud base height (the vanilla altitude)
+  PLANE_RADIUS: 1600,             // half-extent of the camera-following plane
+  SPEED: 0.9,                     // drift in blocks per second, along -x
+  SCALE: 1 / 110,                 // noise-space units per block — the size
+                                  // of individual cumulus features (the
+                                  // first cut at 1/260 made one puff-cell
+                                  // 260 blocks wide, so the patch of layer
+                                  // visible overhead held ~one cell and
+                                  // whole vantages rolled cloudless; at 110
+                                  // the dome always carries a field of them)
+  GATE_SCALE: 0.28,               // weather-system field, relative to SCALE —
+                                  // the low-frequency grouping that leaves
+                                  // clear stretches between masses (~390
+                                  // blocks per system at SCALE 1/110; the
+                                  // first cut put the WHOLE visible sky in
+                                  // one gate cell and a low roll meant a
+                                  // permanently empty sky)
+  COVER: 0.68,                    // how much of a weather system fills in
+                                  // (retuned when the erosion landed —
+                                  // detail noise eats some area back; node
+                                  // sweep holds ~40% visible / ~30% solid)
+  SOFTNESS: 0.22,                 // density ramp width (puffy vs crisp edges)
+  OPACITY: 0.94,                  // core opacity
+  CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
+                                  // and OCCLUDES the sun/moon/stars
+  FADE_START: 620,                // thin out toward the horizon so the far
+  FADE_END: 950,                  // plane clip never shows a hard edge
+  WARP: 0.7,                      // domain-warp strength (noise units) —
+                                  // bends the sample space so puffs stop
+                                  // being round fbm blobs
+  DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
+  EROSION: 0.42,                  // how hard detail noise eats thin edges
+                                  // (the cauliflower rim; cores keep mass)
+  NORMAL_EPS: 0.05,               // gradient step for the dome normal —
+                                  // small enough not to alias the relief
+  DOME_GAIN: 1.0,                 // density-as-height slope: how strongly
+                                  // the fake dome tilts into/away from sun
+  RELIEF: 0.4,                    // interior bump height (fraction of the
+                                  // body): the dappled underbelly cells
+  RELIEF_SCALE: 2.6,              // bump frequency, x base scale (~42
+                                  // blocks per cell at SCALE 1/110)
+  AMBIENT: 0.42,                  // shading floor — sky light on the side
+                                  // the sun never touches
+  THIN_LIFT: 0.3,                 // thin cloud reads brighter (translucent)
+  CORE_SHADE: 0.32,               // flat grey belly held by the deepest
+                                  // cores regardless of sun angle
+  LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
+  SHADE_COLOR: 0x9aa8bb,          // ...and its shaded underbelly (sRGB)
+  SILVER: 0.85,                   // silver-lining strength on thin edges
+  SILVER_POWER: 9,                // ...tightness around the sun's direction
+  NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)
+  HORIZON_TINT: 0.45,             // fraction of the horizon colour mixed in
+                                  // (what makes dawn clouds blush gold-pink)
+  SEED: 37.73,                    // noise hash offset (clouds are weather,
+                                  // not terrain — never world-seeded)
+  // The high thin veil above the cumulus: colour-only (never occludes —
+  // the sun THROUGH cirrus is the realistic read), slower features, faster
+  // apparent drift.
+  CIRRUS: {
+    HEIGHT: 252,
+    SCALE: 1 / 540,
+    COVER: 0.50,
+    OPACITY: 0.38,
+    SPEED: 1.6,
+  },
 };
 
 // Phase 24 — the night starfield: small fixed-size points on the celestial
@@ -2191,6 +2406,132 @@ export const END_SKY = {
 };
 
 // ---------------------------------------------------------------------------
+// The Phase 26 visual pass (render/post_fx.js, render/water_fx.js, and the
+// shadow tint/bounce terms in render/lighting.js). Everything here is a
+// LOOK, not a mechanic: the whole block can be neutralised (POST_ENABLED
+// false, strengths 0) and the game is exactly Phase 25 again. The guiding
+// rule from the brief: richer than vanilla, still unmistakably Minecraft —
+// every strength below is deliberately subtle.
+// ---------------------------------------------------------------------------
+
+export const VISUAL = {
+  // Master switch for the post pipeline (god rays, bloom, grading). With it
+  // false the renderer draws straight to the canvas, Phase 25 style, and
+  // only the water/shadow material patches remain (their strengths can be
+  // zeroed individually below).
+  POST_ENABLED: true,
+  // The scene target's multisampling — rendering into a target loses the
+  // canvas's built-in antialiasing, so the target carries its own (three
+  // r160 resolves MSAA colour AND depth into the attached textures). 4 is
+  // the standard; 0 disables if a GPU chokes on multisampled half-float.
+  MSAA_SAMPLES: 4,
+
+  // Subtle bloom on light sources: lava, glowstone, torches, portals. The
+  // bright pass runs at 1/DOWNSCALE resolution and is masked to NON-SKY
+  // pixels (the sun already carries its own glow). Sources are picked out
+  // two ways: a soft luminance threshold that follows the time of day
+  // (torch-lit surfaces must pop at night without daylight sand glowing at
+  // noon), plus warm/violet EMISSIVE detectors — lava and glowstone are
+  // saturated warm, portals saturated violet, while daylight terrain is
+  // near-neutral, which is what keeps the bloom on the light sources
+  // instead of on every bright block.
+  BLOOM: {
+    STRENGTH: 0.20,          // additive weight of the blurred bright pass
+    THRESHOLD_DAY: 0.62,     // linear-luminance floor at full daylight...
+    THRESHOLD_NIGHT: 0.17,   // ...and at deep night
+    SOFT_KNEE: 0.5,          // soft shoulder under the threshold
+    WARM_BOOST: 0.55,        // emissive detector gain: warm saturation
+    WARM_FLOOR: 0.18,        // ...ignored below this (wood, sand, dirt)
+    VIOLET_BOOST: 0.5,       // ...and violet saturation (portal swirl)
+    VIOLET_FLOOR: 0.14,
+    DOWNSCALE: 4,            // bright+blur passes at quarter resolution
+    BLUR_SPREAD: 1.6,        // gaussian tap spacing in downscaled texels
+  },
+
+  // Soft god rays from the sun when it is low in the sky: a screen-space
+  // radial blur of the sky's brightness around the sun's screen position,
+  // masked by depth — terrain and the (depth-writing, Phase 26) cloud deck
+  // carve the shafts, so a cloud in front of the sun kills its rays exactly
+  // like a ridge does. Strength ramps in as the sun drops below
+  // MAX_ELEVATION (sun-direction y), peaks at FULL_ELEVATION, and fades
+  // with the sun itself through sunset; a high noon sun casts none.
+  GODRAYS: {
+    STRENGTH: 0.44,          // composite weight at full effect (0.34 at
+                             // first; the reference wants soft but present)
+    MAX_ELEVATION: 0.40,     // rays begin as the sun sinks below this
+    FULL_ELEVATION: 0.14,    // ...full strength from here down
+    TAPS: 14,                // radial samples per pass
+    PASSES: 2,               // blur passes (TAPS^PASSES effective reach)
+    DECAY: 0.93,             // per-tap falloff along the ray
+    DENSITY: 0.42,           // fraction of the ray to the sun each pass spans
+    SUN_RADIUS: 0.55,        // screen-space radius of the source window
+    DOWNSCALE: 2,            // ray passes at half resolution
+    TINT: 0xffdda6,          // warm shaft colour (multiplies the mask)
+    RISE_START: -0.05,       // rays fade in from this sun elevation...
+    RISE_FULL: 0.04,         // ...fully risen here (the sun clears the rim)
+    FACING_START: 0.05,      // camera-forward · sunDir where rays begin...
+    FACING_FULL: 0.30,       // ...and reach full weight (looking sunward)
+  },
+
+  // Slight colour grading, applied last in the composite: richer greens,
+  // warmer sunlight, cooler shadows. All three are gentle pushes — the
+  // palette must stay recognisably Minecraft's.
+  GRADING: {
+    EXPOSURE: 1.0,           // linear gain before grading
+    SATURATION: 1.06,        // global saturation
+    GREEN_GAIN: 1.06,        // extra gain on green-dominant pixels (foliage)
+    WARMTH: 0.045,           // warm white-balance push, scaled by sun level
+    SHADOW_COOL_COLOR: 0x4a66a8, // the tone shadows lean toward...
+    SHADOW_COOL: 0.12,       // ...and how far the darkest tones lean
+    DITHER: 1 / 255,         // composite output dither (kills sky banding)
+  },
+
+  // The water surface (render/water_fx.js — a patch on the same lit chunk
+  // material water has always used). A gentle world-space ripple displaces
+  // surface vertices (render-only; physics and raycasts never see it), the
+  // same wave function's gradient perturbs the per-fragment normal, and a
+  // fresnel term mixes in a reflection: sky colour where the surface is
+  // open to the sky, falling back to a dark terrain tone where the baked
+  // sky light says the water sits under canopy or cliff — the "suggestion
+  // of nearby terrain". A tight sun glint rides the ripple normals.
+  WATER: {
+    RIPPLE_AMPLITUDE: 0.06, // vertex ripple height (blocks)
+    RIPPLE_SCALE: 0.55,      // primary wave frequency (radians per block)
+    RIPPLE_SCALE_2: 1.35,    // second octave frequency
+    RIPPLE_SPEED: 0.9,       // primary phase speed (radians per second)
+    RIPPLE_SPEED_2: 1.7,     // second octave phase speed
+    NORMAL_STRENGTH: 0.9,   // how strongly the ripple tilts the normal
+    REFLECTION: 0.45,        // fresnel reflection mix at grazing angles
+    BASE_REFLECT: 0.06,      // reflection floor looking straight down
+    FRESNEL_POWER: 4.0,
+    SHADE_COLOR: 0x24382e,   // reflection tone under canopy/cliff (low sky)
+    OPEN_SKY_LIGHT: 0.85,    // vLight.x above this reflects pure sky
+    SHADE_SKY_LIGHT: 0.45,   // ...below this, pure terrain tone
+    GLINT_STRENGTH: 0.6,     // sun sparkle amplitude
+    GLINT_POWER: 180,        // sparkle tightness
+    GLINT_COLOR: 0xfff2d9,   // the sparkle's warm-white tint
+    OPACITY_BOOST: 0.35,     // extra alpha at grazing angles (the mirror
+                             // look); 0 restores Phase 25 translucency
+    NIGHT_REFLECT_FLOOR: 0.25, // fraction of the terrain-tone reflection
+                             // that survives deep night
+  },
+
+  // Shadow feel (render/lighting.js patchChunkMaterial): a subtle warm
+  // bounce lifted into shaded faces by day (sunlit ground scatters warm
+  // light back up), and a slight cool lean on those same faces (open-sky
+  // shadow is blue-lit). Both scale with the face's baked shade (per-face
+  // brightness x AO), the daylight level, and the column's sky access, so
+  // caves and night are untouched. AO_STRENGTH 0.45 -> 0.40 beside these
+  // softens the corner darkening a touch (the "improved shadow softness").
+  SHADOW: {
+    BOUNCE_COLOR: 0xffc088,  // warm bounce tone
+    BOUNCE_STRENGTH: 0.10,   // added light at full shade in full day
+    COOL_COLOR: 0x8fa8d8,    // the cool lean of daylight shadows
+    COOL_STRENGTH: 0.14,
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
@@ -2244,8 +2585,12 @@ export const PORTALS = {
     CLEARANCE: 5,                 // air cells needed above a natural floor
   },
   EYE_SHATTER_CHANCE: 0.2,
-  STRONGHOLD_MIN_DISTANCE: 1000,
-  STRONGHOLD_MAX_DISTANCE: 2000,
+  // Phase 26: "roughly 400 blocks from spawn instead of 1000-2000, so it
+  // can be reached without a long journey." Measured from the ACTUAL
+  // scanned plains spawn column (world/spawn_scan.js), not the config
+  // origin — strongholdCenter takes the spawn as an anchor now.
+  STRONGHOLD_MIN_DISTANCE: 340,
+  STRONGHOLD_MAX_DISTANCE: 460,
   END_PORTAL_FRAME_COUNT: 12,
 
   // The stronghold itself (Phase 19 — dimensions/stronghold.js). One per
@@ -2516,6 +2861,10 @@ export const PARTICLES = {
            PER_HIT: 2 },
   SPARKLE: { SIZE: 0.085, RISE: 0.1, LIFE: [0.5, 1.0], COLOR: 0xfff0b0 },
   BREATH: { SIZE: 0.5, LIFE: [0.6, 1.2], COLOR: 0xc060ff },
+  // Phase 26: ambient dust motes in underground light shafts — tiny, slow,
+  // long-lived specks that catch the light where a cave opens to the sky.
+  DUST: { SIZE: 0.035, SINK: 0.16, DRIFT: 0.05, LIFE: [2.5, 5.0],
+          COLOR: 0xd8ccae },
 
   // The random "display tick" that finds torches, lava, glowstone and end
   // portals near the player (systems/ambience.js — vanilla's randomDisplayTick).
@@ -2532,6 +2881,13 @@ export const PARTICLES = {
     LAVA_CHANCE: 0.55,
     LAVA_POP_CHANCE: 0.02,
     GLOWSTONE_CHANCE: 0.35,
+    // Phase 26 — dust motes in underground light shafts: an AIR cell hit by
+    // the random tick spawns one when it carries real sky light (a shaft)
+    // while sitting well below the generator's surface (a cave, not a
+    // valley at dusk). The chance keeps a handful alive in a typical shaft.
+    DUST_CHANCE: 0.05,            // per eligible air-cell hit
+    DUST_MIN_SKY: 6,              // baked sky light that counts as a shaft
+    DUST_MIN_DEPTH: 5,            // cell at least this far under the surface
   },
 };
 

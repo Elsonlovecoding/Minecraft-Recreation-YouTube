@@ -10,7 +10,307 @@ Updated at the end of every session. Read at the start of every session.
 
 **THE PROJECT IS COMPLETE.**
 
-**Phase 25 was the last phase. The game is finished and shippable.** It loads
+Phase last completed: **Phase 27 — RENDER DISTANCE 40, SMOOTH STREAMING,
+CHAT + /tp** (follow-up in the same session: REALISTIC CLOUDS + MOONLIGHT).
+
+### Phase 27 — more distance, less hitching, and a chat bar
+
+**RENDER DISTANCE 30 -> 40 chunks (640 blocks),** with the cost curve bent
+so it stays playable:
+- Measured over the full ring (node, real generator + mesher): full detail
+  would be 25.09M tris / 2058 MB of geometry; **with the LOD tiers it is
+  10.22M tris / 838 MB (-59%)** — fewer triangles than the old
+  fully-detailed r=20 ring drew. Fog pushed out to match (460/680, the
+  same clear fraction of the view); the golden-hour haze bounds unchanged.
+- **Far chunks stopped storing light data** (`chunks.js`): the 98KB
+  per-chunk packed light array now exists only for full-detail chunks.
+  Every consumer lives well inside the detail radius (mob spawning reaches
+  96 blocks, the dust tick 10, the cave tone 0) and spawning already
+  treats missing light as "no spawn". ~420 MB saved at r=40, and every
+  far mesh skips a 98K-cell copy loop.
+
+**"Don't be laggy when I move around"** — the streaming hitches came from
+four places, each addressed (`world/world.js`, config STREAMING/VIEW.LOD):
+- **The idle scan is GONE.** A full pass that finds nothing to do parks
+  the streamer; any setBlock (the one dirty-path), a chunk-border crossing
+  or a dimension swap wakes it. A parked frame costs 0.0004 ms (measured);
+  before, every frame walked the whole candidate ring — 6889 string-keyed
+  Map lookups at r=40 — for nothing.
+- **Passes resume where they left off.** Work is nearest-first, so the
+  completed near region only grows; the scan starts at the first offset
+  the previous pass left incomplete instead of re-checking thousands of
+  finished chunks (reset on edits/movement, when work can appear behind it).
+- **Tier remeshes trickle.** Crossing a chunk border wants a whole arc of
+  LOD promotions at once; they're capped at RETIER_PER_PASS (2) per pass
+  now — missing and dirty meshes keep the full budget — and HYSTERESIS
+  went 2 -> 3 so the boundary re-tiers fewer chunks per crossing.
+- **The per-frame budget dropped 8 -> 6 ms** — 8ms of meshing on top of
+  the render was itself a visible hitch at 60fps; the ring fills a touch
+  slower instead.
+  Verified in node with the real World: ring settles to idle, an edit
+  wakes it and it re-settles in a handful of frames, a 10-chunk move
+  re-tiers and settles, tiers land on the right side of the hysteresis
+  band; and in the browser the whole session runs with zero game console
+  errors.
+
+**CHAT + /tp** (`ui/chat.js` + `systems/commands.js`, config CHAT):
+- **T opens the chat bar** ('/' opens it with the slash already typed) at
+  vanilla's bottom-left spot. The game KEEPS RUNNING while it is open —
+  the sign-editor rule: pointer lock releases, main.js's pause verdict
+  consults `chat.isOpen`, keys never leak into the game (stopPropagation),
+  Enter submits, Escape cancels, ArrowUp/Down recall history, and the
+  pointer relocks on close. Chat only opens while actually playing (mode
+  chosen, pointer locked, no screen/sign/death/victory holding the input).
+- **`/tp <x> <z>`** teleports to a SAFE spot at that column: the surface
+  in open-sky worlds, floated to the sea surface over deep water (a lake
+  teleport swims instead of drowning in the dark), a scanned interior spot
+  under the Nether's bedrock ceiling (the top-of-column rule would land ON
+  the roof), and a refusal over the End's void. **`/tp <x> <y> <z>`** goes
+  exactly there. Coordinates clamp to CHAT.TELEPORT_LIMIT, junk input gets
+  a usage toast, unknown commands and plain text get gentle pointers.
+  Velocity zeroes on arrival; the destination chunk generates
+  synchronously and the ring re-centres around it on the next frame.
+- Browser-verified end to end: T and '/' openers, surface landing exactly
+  on ground+1 at (300, -500), the exact-y form, junk-input safety, Escape
+  cancelling an armed command, history recall, and a 4.7km teleport into
+  ungenerated terrain landing on the real surface — zero game console
+  errors throughout.
+
+**FOLLOW-UP (same session): realistic clouds + moonlight** ("make clouds
+look realistic, not blocks. moon light should also good"):
+- **The blocky slab deck is gone.** `sky_fx.js createClouds()` is a
+  camera-following plane at CLOUDS.HEIGHT whose fragment shader grows soft
+  cumulus from 5-octave fbm value noise: a low-frequency weather gate
+  groups the masses and leaves real clear sky (it MODULATES coverage —
+  a low cell thins the sky, never empties it), an extra smoothstep
+  steepens the interior so cores read solid while edges stay feathered,
+  self-shading probes the density gradient toward the sun, thin cloud
+  reads brighter, and thin edges catch a silver lining near a low sun.
+  A faint cirrus veil rides higher at its own scale. The pattern lives in
+  world space (drift wrapped at the noise lattice period), so flying never
+  slides the sky. All knobs in config CLOUDS.
+- **The Phase 26 occlusion contract holds with soft alpha** by drawing the
+  cumulus twice: a depth-only pass (renderOrder -1.95, colorWrite false,
+  fragments survive only at alpha >= CORE_ALPHA) occludes the far-plane
+  sun/moon/stars per pixel; the colour pass (-1.1, no depth write) blends
+  the soft rims over them. Cirrus never occludes — the sun THROUGH cirrus
+  is the realistic read.
+- **Tuning was measured, not eyeballed**: a node port of the shader math
+  swept COVER — shipped 0.66 = 40% of the visible layer disc carrying
+  cloud, 25% solid, and 0 near-empty vantages in 24 sampled (the first cut
+  at feature scale 1/260 rolled whole vantages cloudless — one noise cell
+  covered the entire overhead-visible patch).
+- **Moonlight**: a cool additive halo quad behind the pixel moon
+  (`createMoonGlowTexture` — rim-windowed so no quad box, linear-filtered),
+  a wide moonlit dome wash opposite the hidden sun via the sky shader's new
+  glowBand uniform (CELESTIAL.MOON_SKY_GLOW_*), the night palette
+  brightened to silver-blue (LIGHTING.NIGHT_SKY_TINT 0xa9bef2, night
+  SKY_DARKEN 11 -> 10) and a moon glint lane on water
+  (CELESTIAL.MOON_GLINT_LEVEL, main.js flips the water light direction to
+  the moon after sunset).
+- Screenshot-verified at 1920x1080: day cumulus field, straight-up puff,
+  sunset silver linings, moon halo among silhouetted clouds, moonlit
+  ground — zero game console errors. main.js is 812 now (the beds block
+  is still its mandated next cut); sky_fx.js 493, lighting.js 778.
+
+**SECOND FOLLOW-UP: cloud realism v2 + the round moon** ("Cloud more
+realistic, plus make moon round"):
+- **Cloud shapes**: a domain warp bends the fbm sample space so masses
+  stop being round blobs, and high-frequency detail noise ERODES the thin
+  edges (weighted by 1-body, cores keep their mass) — the curdled
+  cauliflower rim. COVER retuned 0.66 -> 0.68 in the node sweep to hold
+  ~40% visible / ~30% solid over the visible disc.
+- **Cloud lighting went pseudo-volume**: density is treated as the height
+  of a dome and lit with a real N.L against the 3D sun (the moon after
+  dark). Rotated-grid two-octave RELIEF bumps ride on the body height so
+  the interior stays dappled after the density ramp saturates — without
+  them a big puff shaded only at its rim and read flat overhead (and the
+  first bump cut, un-rotated single-octave value noise, read as a quilted
+  blanket — value noise shows its lattice when it drives lighting). Config:
+  WARP / DETAIL_SCALE / EROSION / NORMAL_EPS / DOME_GAIN / RELIEF /
+  RELIEF_SCALE / AMBIENT / THIN_LIFT / CORE_SHADE replace the old
+  LIGHT_EPS/LIGHT_GAIN probe pair. The look was iterated in an OFFLINE
+  node render of the exact shader math (render_clouds.mjs pattern —
+  top-down PNG at two sun angles) instead of 3-minute browser cycles.
+- **The cirrus veil got FLAT_SHEET**: it is a sheet, not puffs, so its
+  material skips the six gradient taps and lights as a horizontal plane —
+  the v2 lighting costs nothing on the layer that covers the whole sky.
+- **The moon is ROUND**: `createMoonTextures()` now draws a 128px
+  anti-aliased disc (R 0.94, linear-filtered — the sun-texture rules)
+  with maria and craters from a seeded RNG OUTSIDE the phase loop (all
+  eight phases show the same face, like the real thing), a soft
+  elliptical terminator, subtle limb darkening, and the unlit part as
+  faint cool earthshine. MOON_SIZE 95 -> 104 keeps the apparent diameter.
+- Screenshot-verified at 1920x1080 across day / straight-up / sunset (sun
+  half-sunk BEHIND a grey cloud bank — the occlusion contract visible) /
+  moon-with-halo / moonlit ground; zero game console errors every run.
+
+The previous phase: **Phase 26 — VISUAL AND WORLD POLISH.** No new
+systems; the game Phase 25 finished, made richer to look at and friendlier to
+start. Everything below the Phase 26 entry describes the finished game it
+polished.
+
+### Phase 26 — visual and world polish
+
+**WORLD GENERATION.**
+- **Plains is the most common biome now, by a wide margin.** BASE_WEIGHT
+  0.25 -> 0.55, forest's moisture gate and desert's heat gate both tightened,
+  mountains handed back a slice (WEIGHT_START 0.30). Measured over 2000x2000
+  of land: **plains 55.7% / forest 17.8% / desert 10.8% / mountains 15.6%**
+  (was 31/29/21/19) — a clear majority with all four biomes keeping real
+  presence. Water unchanged at 9% of all columns.
+- **The plains spawn is GUARANTEED, not seed luck.** `world/spawn_scan.js`
+  (new): candidate centres spiral out from the origin on a 16-block grid,
+  each scored over a 56-radius sampled disc — fraction plains-dominant,
+  fraction underwater, height relief — and the first to clear every
+  `TERRAIN.SPAWN_SCAN` threshold wins, with a best-seen fallback so the scan
+  ALWAYS returns a column. Pure in the seed, cached on the generator; the
+  player spawn (body.js), the eyes of ender and the stronghold anchor all
+  read the same column. Measured across 12 arbitrary seeds: every spawn disc
+  is 94-100% plains, 0% water, relief <= 12, found in 5-90 ms. On the
+  shipped seed the player spawns at (-96, 160), on grass at y69, plains 92%
+  within 64 blocks — verified in the running game (`biomeAt(spawn)` ===
+  'plains').
+- **The stronghold is ~400 blocks from spawn** (SPEC updated; was
+  1000-2000). `STRONGHOLD_MIN/MAX_DISTANCE` 340-460, and the centre is
+  anchored to the ACTUAL scanned spawn — `strongholdCenter(seed, spawn)`,
+  with the generator holding ONE cached anchored centre that blueprint(),
+  emitChunk()'s early-out and entryPoint() all share. Measured: centre 348
+  blocks from spawn, 3091 stone bricks and exactly 12 end-portal frames
+  generated there, eye-of-ender target identical to the generated position.
+  (The adversarial review caught the first cut recomputing an UNanchored
+  centre in emitChunk's early-out — the structure would never have emitted.
+  A node census now proves generation at the anchored centre.)
+
+**RENDER DISTANCE.** Still 30 chunks (480 blocks, the follow-up's number,
+exposed in `VIEW.DISTANCE_CHUNKS`) — but it no longer costs 30 chunks of
+full geometry:
+- **LOD tiers** (`VIEW.LOD`, chunks.js + world.js): beyond DETAIL_CHUNKS
+  (14) a chunk meshes at a reduced tier — cross-plane plants skipped (a
+  grass sprite at 224+ blocks is under ~5px), leaf same-id interior planes
+  culled (the dense-canopy read needs ~50 blocks, not 224), and the real
+  win: **faces fronting pitch-dark air are culled** — baked sky light 0
+  means enclosed underground, so the entire hidden cave network stops
+  emitting walls. Faces fronting water keep emitting (no holes under
+  lakes), sky-lit ravines and cave mouths keep theirs, fluid flows probe
+  the cell above themselves (lava flows bake sky 0 by their own opacity —
+  the review caught the first cut erasing every distant lava fall), and
+  the Nether/End opt out via `generator.hasOpenSky` (their baked sky is 0
+  everywhere). Tier changes remesh with 2 chunks of hysteresis so walking
+  the boundary never thrashes. Measured over the full r=30 ring (node,
+  real generator + mesher):
+      full detail   2821 meshed  6634 draws  14.25M tris  1168 MB geometry
+      with LOD      2821 meshed  5908 draws   6.87M tris   563 MB geometry
+  **-52% triangles and geometry memory** — r=30 now costs less than the old
+  fully-detailed r=20 ring (6.44M tris) while looking identical at eye
+  level.
+- **Frustum culling** was already on (three.js per-mesh bounding spheres);
+  the spheres are precomputed at mesh build now, inside the streaming
+  budget. A 70° lens draws roughly a quarter of the ring.
+
+**THE VISUAL PASS** — richer than vanilla, still unmistakably Minecraft.
+All tunables in the new `config.js VISUAL` block; `POST_ENABLED: false`
+restores the exact Phase 25 render path.
+- **The post pipeline** (`render/post_fx.js`, new): the scene renders into
+  a linear half-float target (4x MSAA, depth texture — three r160 keeps fog
+  uniforms in the working space for render targets, checked against the
+  three source, so the fog-equals-horizon contract survives; the composite
+  applies the ONE linear->sRGB encode plus the sky dome's own anti-banding
+  dither). From it: **soft god rays** when the sun is low (depth-masked
+  radial blur toward the sun — terrain ridges and the now-depth-writing
+  cloud deck carve real shafts; elevation-ramped, none at noon, none in the
+  fixed-sky dimensions), **subtle bloom on light sources** (soft threshold
+  following the sun level so torches halo at night without daylight sand
+  glowing, plus warm/violet emissive detectors that pick out lava,
+  glowstone, torch flames and the portals; sky masked by depth — the sun
+  keeps its own glow), and **colour grading** (saturation 1.06, extra gain
+  on green-dominant pixels, warm white balance scaled by sun level, the
+  darkest tones leaning toward a cool blue).
+- **Water** (`render/water_fx.js`, new — layered on the same lit chunk
+  material): a gentle world-space ripple displaces surface vertices
+  (render-only; physics, raycasts and floating items never see it; shared
+  corner vertices displace identically so the surface stays watertight),
+  the same wave's analytic gradient perturbs the per-fragment normal, and
+  a fresnel term mixes in what the surface would mirror — the sky gradient
+  where the column is open to the sky, easing to a dark terrain tone where
+  the baked sky access says canopy or cliff hangs over it (the "suggestion
+  of nearby terrain") — plus a tight sun glint riding the ripple. Flowing
+  water keeps the plain pass (it animates by texture scroll at seven
+  heights). Verified with an exaggerated-settings screenshot (waves,
+  reflection bands and glints all present, zero seams), then dialled back
+  to the shipped subtlety.
+- **Shadow feel** (`render/lighting.js` + config VISUAL.SHADOW):
+  AO_STRENGTH 0.45 -> 0.40, and shaded faces (per-face brightness x AO in
+  the vertex colour) take a slight cool lean plus a faint warm bounce by
+  day, both scaled by daylight and sky access so caves, night and the
+  fixed-sky dimensions are untouched.
+- **Dust motes** (`render/particles.js` dust emitter + the random display
+  tick in `systems/ambience.js`): an air cell carrying real sky light (>=6)
+  while sitting 5+ blocks under the generator surface is a shaft through a
+  cave roof — tiny slow specks drift down through it, tinted by the light
+  they hang in. Overworld only. Verified in a dug shaft in the running
+  game (33 live particles, visible in the screenshot).
+- **THE GOLDEN HOUR** (the reference-image request, mid-session): while
+  the sun is low the sky runs a purple-to-gold gradient — periwinkle
+  zenith through violet-pink to a gold horizon — the sun wears a much
+  larger soft halo (SUN_GLOW_SCALE 2.6 -> 3.4, strength now config), god
+  rays strengthen, terrain light warms (the TINT channel), and a new
+  **HAZE keyframe channel** pulls the fog in (SKY.HAZE_NEAR/FAR 40/430 vs
+  the clear 340/510) so distant terrain drowns in warm atmosphere. Full
+  blue day still holds t 0.05-0.45 with near-Phase-25 clarity (HAZE 0.15),
+  the sun is still up for exactly half the cycle, and full darkness still
+  holds 9 of the night's 10 minutes — only the look at the day's edges
+  changed. Screenshot-matched against the reference: gradient, glow, haze
+  and shafts all present; block textures untouched (lighting and post
+  only).
+
+**THE BUG — clouds occlude the sun, moon and stars now.** It was a draw-
+order tie: sun/moon quads and the cloud deck all sat at renderOrder -1 with
+no depth writes, so the additive sun drew over any cloud. And a plain depth
+test could not fix it — the sun quad sits 820 blocks out while a low sun's
+sight line crosses the y=192 deck ~124/sin(elevation) blocks out, i.e.
+FARTHER than the quad below ~9° of elevation, exactly the sunset case the
+report described. The deck **writes depth** now and draws first
+(renderOrder -1.9), and the sun, moon and stars are **pinned to the far
+plane** in their vertex shaders (`sky_fx.js forceFarDepth`) — anything
+above the cloud layer fails the depth test wherever a cloud fragment
+landed, per pixel. Screenshot-verified three ways: a slab clipping the sun
+disc exactly at its edge, night clouds blanking the stars behind them, and
+a noon cloud occluding the overhead sun with the glow spilling around it.
+
+**THE ADVERSARIAL REVIEW.** A 20-agent review/verify pass over the full
+diff (5 finder dimensions, every finding independently re-verified against
+the code and the three r160 source; several reproduced empirically in
+node). All 15 confirmed findings fixed, among them: the CRITICAL unanchored
+stronghold early-out above; the LOD gate erasing all distant flowing lava
+(lava flows bake sky 0 by their own opacity — flows probe the cell above
+now); the god-ray sky-depth threshold classifying everything past ~667
+blocks as sky, so the cloud deck could not carve rays exactly when they
+are strongest (0.99995 -> 0.999999, derived from the far-plane pin and the
+24-bit depth step); bloom threshold tracking the invisible overworld sun
+inside the Nether/End (skyActive-gated now); MSAA leaking into the
+downscaled post targets (a resolve blit per pass for nothing); and
+`world/terrain.js` crossing the size cap (814), cut the same session —
+the Phase 24 surface rules moved verbatim to `world/surface_rules.js`
+(A/B: byte-identical chunks over 5 test chunks).
+
+**Verification.** The game boots in Chromium with the whole phase active —
+the only console error is the browser's own /favicon.ico 404. Spawn checks,
+stronghold census, biome mix, LOD costs and spawn-scan determinism all
+measured in node against the real generators; the visual effects
+screenshot-verified in the running game (noon vista, god rays through a
+canopy, golden hour at three angles, cloud-clipped sun, night torch bloom,
+shaft dust, exaggerated-water proof). Framerate remains unmeasurable in
+this sandbox (software GL, 11-17 fps whatever the settings — the standing
+caveat); the 60fps-at-1080p claim rests on the measured geometry: with LOD
+the full ring carries HALF the triangles of the old r=20 setting that was
+already shipped, frustum culling draws about a quarter of it, and the post
+pipeline adds ~8 small screen-space passes.
+
+---
+
+**Phase 25 was the previous phase. The game was finished and shippable
+then.** It loads
 from a static file server, offers SURVIVAL or CREATIVE on a start screen, and
 either one is a whole game.
 
@@ -29,7 +329,7 @@ searchable catalogue of every block and item in the game.
 Nothing temporary remains in the build. There is no test chest, no debug kit,
 no half-wired feature behind a flag.
 
-Phase last completed: **Phase 25 — SURVIVAL AND CREATIVE MODES (final).**
+That phase was: **Phase 25 — SURVIVAL AND CREATIVE MODES.**
 
 **Phase 25 follow-up (same session series): seven visual/world reports.**
 All landed and measured; the game remains complete and shippable.
@@ -730,6 +1030,102 @@ request for End-fight testing, and are now gone for good.
 
 ## Working
 
+- **Phase 27 chat + commands** — `ui/chat.js` `createChat({ canvas,
+  onCommand, canOpen })` -> `{ open(prefill), close(relock), isOpen }`;
+  main.js's pause verdict includes `!chat.isOpen` (the signs.isEditing
+  slot). `systems/commands.js` `createCommands({ world, player, dimensions,
+  notify })` -> `{ handle(line), teleportTo(x, z, y?) }` — notify injected
+  (showToast) so systems never import UI. Adding a command = one branch in
+  `handle`. Config CHAT.
+- **Phase 27 streaming idle/resume** — `world._streamIdle` (a completed
+  no-work pass parks the streamer; setBlock, border crossings and
+  swapState wake it — anything that dirties a chunk MUST go through
+  setBlock, which has always been the rule) and `world._scanFrom` (passes
+  resume at the first incomplete offset; reset wherever work can appear
+  behind it). prebuild explicitly un-parks — its small ring "completes".
+  Tier remeshes capped per pass (VIEW.LOD.RETIER_PER_PASS).
+- **Phase 27 far-chunk light** — `chunk.lightData` is written only by
+  tier-0 meshes now; `world.getLight` returns null out there (it always
+  could — unmeshed chunks never had data) and every consumer already
+  handles null. Do not add a getLight consumer that reaches past
+  VIEW.LOD.DETAIL_CHUNKS without revisiting chunks.js.
+- **Phase 26 plains spawn** — `world/spawn_scan.js` `scanPlainsSpawn(gen)`
+  (the generator passed as an argument, cycle-free) +
+  `TerrainGenerator.spawnColumn()` (cached). `findSpawnPosition` centres its
+  search on the scanned column; `strongholdCenter(seed, spawn)` and the eyes
+  of ender anchor to the same one via `StrongholdGenerator.center()` (ONE
+  cached anchored centre — blueprint, emitChunk early-out and entryPoint all
+  share it; never call `strongholdCenter(seed)` bare for this world).
+  Tunables in `TERRAIN.SPAWN_SCAN`.
+- **Phase 26 LOD** — `buildChunkMesh(chunk, getChunkAt, materials, lod)`;
+  `chunk.mesh.lod` records the built tier; `world.js _streamPass` picks the
+  tier from distance (VIEW.LOD, hysteresis on demotion) and only when
+  `generator.hasOpenSky` (overworld). Tier 1 skips cross plants, culls leaf
+  interiors, and culls faces fronting sky-0 air (fluid flows probe the cell
+  above). Geometry bounding spheres precomputed at build for frustum culling.
+- **Phase 26 post pipeline** — `render/post_fx.js`
+  `createPostPipeline({ renderer })` -> `{ render(scene, camera, state) }`;
+  state = `{ sunDir, sunLevel, skyActive }` read off the day/night cycle
+  (which now exposes `sunLevel` / `sunDirection` / `skyActive` getters).
+  Linear half-float scene target (MSAA + depth), god rays / bloom /
+  grading composite, ONE sRGB encode at the end. main.js falls back to the
+  plain `renderer.render` when `VISUAL.POST_ENABLED` is false; the hand
+  pass still draws straight to the canvas after the composite.
+- **Phase 26 water surface** — `render/water_fx.js`
+  `patchWaterMaterial(material)` (layered on `patchChunkMaterial`; the
+  STILL pass only) + `WATER_UNIFORMS` + `updateWaterUniforms(delta, sky)`
+  called per frame from main.js (delta 0 while paused). Ripple is
+  render-only; physics and raycasts read the unmoved cells.
+- **Phase 26 shadow feel** — `CHUNK_LIGHT_UNIFORMS` gained
+  uShadowCool/uShadowCoolStrength/uBounceColor/uBounceStrength (config
+  VISUAL.SHADOW), applied in the chunk shader from the vertex-colour shade,
+  daylight and sky access.
+- **Phase 26 golden hour + haze** — `DAY_NIGHT.KEYFRAMES` gained golden-hour
+  frames at both day edges and a HAZE channel (0 = SKY.FOG_NEAR/FAR, 1 =
+  SKY.HAZE_NEAR/FAR); the cycle writes fog near/far every frame now (the
+  lava-view override in main.js still runs after it and wins; the fixed-sky
+  dimensions still override both). Sun glow: CELESTIAL.SUN_GLOW_SCALE 3.4 +
+  SUN_GLOW_STRENGTH 0.72.
+- **Phase 26 celestial occlusion** (reworked with the Phase 27 realistic
+  clouds) — stars (-1.5) and sun/moon (-1.2) are pinned to the far plane by
+  `sky_fx.js forceFarDepth`; the cumulus layer draws TWICE: a depth-only
+  pass at renderOrder -1.95 (colorWrite false, fragments survive only where
+  alpha >= CLOUDS.CORE_ALPHA — dense cloud occludes the celestials per
+  pixel) and the soft colour pass at -1.1 (no depth write, blends over
+  their rims). The cirrus veil is colour-only — the sun THROUGH cirrus is
+  the intended read. Terrain never conflicts (peaks ~140 vs layer 192).
+- **Phase 27 follow-up: realistic clouds + moonlight** — the blocky slab
+  deck is gone; `sky_fx.js createClouds()` is now a camera-following plane
+  at CLOUDS.HEIGHT whose fragment shader grows soft cumulus from
+  domain-warped 5-octave fbm value noise (world-anchored pattern + wrapped
+  drift, weather-gate grouping with real clear sky, detail-noise edge
+  erosion for the curdled rim, thin-edge brightening, silver linings near
+  a low sun) plus a faint higher cirrus plane; all knobs in CLOUDS.
+  Self-shading is PSEUDO-VOLUME (the second follow-up): density is treated
+  as the height of a dome, rotated-grid relief bumps keep the interior
+  dappled after the body saturates, and the normal takes a real N.L
+  against the 3D sun — the moon after dark (setSun negates the direction
+  below the horizon). The cirrus veil skips the six gradient taps via its
+  FLAT_SHEET define. Moonlight: a cool additive halo quad behind the moon
+  (`createMoonGlowTexture`, CELESTIAL.MOON_GLOW_*), a wide moonlit dome
+  wash through the sky shader's glowBand uniform (MOON_SKY_GLOW_*), a
+  brighter silver-blue night (LIGHTING.NIGHT_SKY_TINT, night SKY_DARKEN
+  10) and a moon glint lane on water (CELESTIAL.MOON_GLINT_LEVEL wired in
+  main.js).
+- **Phase 27 follow-up: the ROUND moon** — `createMoonTextures()` draws an
+  anti-aliased disc (R 0.94 of the quad, ~2.5px AA band, linear-filtered)
+  instead of the vanilla pixel square: maria and craters generated ONCE
+  from a seeded RNG so all eight phases show the same face, a soft
+  elliptical terminator (TERM 0.09), a whisper of limb darkening, and the
+  unlit part left as faint cool earthshine (MOON_DARK_ALPHA). MOON_SIZE
+  95 -> 104 keeps the old apparent diameter with the disc inscribed.
+- **Phase 26 dust motes** — `particles.dust(x, y, z)` + the air-cell branch
+  of the random display tick (`systems/ambience.js`): sky >= DUST_MIN_SKY
+  at DUST_MIN_DEPTH under the generator surface, overworld only. Tunables
+  in PARTICLES.DUST / PARTICLES.AMBIENT.DUST_*.
+- **Phase 26 surface rules** — `world/surface_rules.js` (the Phase 24 rules
+  moved verbatim per the size cap; generator passed as argument;
+  A/B-verified byte-identical chunks).
 - **Phase 25 game modes** — `player/gamemode.js`: the `gamemode` module
   singleton (`current` / `creative` / `survival` / `other` / `label` /
   `chosen`, `set(mode)`, `toggle()`, `subscribe(fn)`). Import it and ask it;
@@ -780,13 +1176,15 @@ request for End-fight testing, and are now gone for good.
   listener, placeable on grass/dirt (bush also sand), replaceable by
   placement and buckets, sprite items via `ATLAS_SPRITE_ITEMS`, grass
   sound group. Meshing measured at baseline cost.
-- **Phase 24 sky** — `render/sky_fx.js`: `createClouds` (merged blocky
-  deck, period re-anchoring, drift, sRGB-correct day/night light),
+- **Phase 24 sky** — `render/sky_fx.js`: `createClouds` (rebuilt as the
+  Phase 27 shader cumulus layer, see the Phase 27 follow-up entries above;
+  drift and sRGB-correct day/night light survive from the deck era),
   `createStars` (keyframed alpha, orbit-wheeled), `createSunTexture`
-  (square core + additive glow), `createMoonTextures` (8 phases).
-  `createDayNightCycle` gained a day counter (`dayIndex`), the STARS and
-  TINT keyframe channels, and drives all of it; both hide under the
-  fixed-sky dimensions. Fog stays horizon-matched.
+  (round disc + windowed additive glow since the Phase 26 follow-up),
+  `createMoonTextures` (8 phases, ROUND discs since the second Phase 27
+  follow-up). `createDayNightCycle` gained a day counter (`dayIndex`), the
+  STARS and TINT keyframe channels, and drives all of it; both hide under
+  the fixed-sky dimensions. Fog stays horizon-matched.
 - **Phase 23 deepslate** — `world/terrain.js` `deepslateChance` +
   `UNDERGROUND.DEEPSLATE`, blocks 163-169, atlas 58-64. Below `TOP_Y` (0) the
   column fill's stone becomes deepslate, blended over the band to `FULL_Y`
@@ -4308,7 +4706,27 @@ suites + the reviewers' own probes), zero console errors.
 
 ## Known broken
 
-_Nothing known broken._ The five Phase 24 follow-up reports are all closed
+_Nothing known broken._
+
+The standing caveat Phases 23-26 recorded still bites: **framerate is
+unmeasured** — Chromium in this sandbox has no GPU and runs the game at
+11-17 fps under swiftshader whatever the settings, so the 60fps-at-1080p
+target rests on measured GEOMETRY rather than a measured frame rate: the
+LOD tiers hold the Phase 27 r=40 ring to 10.22M triangles / 838 MB (-59%
+against full detail, and fewer triangles than the previously-shipped
+fully-detailed r=20 ring), far chunks carry no light arrays, frustum
+culling draws ~a quarter of the ring per frame, the streamer costs an idle
+frame nothing, and the post pipeline adds ~8 small screen-space passes
+(the scene pass itself unchanged). If a real machine still disagrees, the
+knobs are one config edit each: VIEW.DISTANCE_CHUNKS,
+VIEW.LOD.DETAIL_CHUNKS (lower = cheaper), VISUAL.MSAA_SAMPLES,
+VISUAL.POST_ENABLED. Also honest: the swiftshader
+chunk-ring stall documented in Phase 25 (the streamer is frame-rate-bound
+in this sandbox and never fills past ~50 meshed chunks) is unchanged and
+made every Phase 26 screenshot a near-field one; the LOD/full-ring numbers
+come from the node harness, which meshes the real ring without a GPU.
+
+The five Phase 24 follow-up reports are all closed
 and all measured (see the Phase 25 status entry): render distance raised
 with the geometry and memory numbers written into config beside it; the
 biome mix rebalanced to plains 40 / forest 23 / desert 19 / mountains 18 and
@@ -4423,7 +4841,7 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-**There is no next session — Phase 25 was the last one, and the project is
+**There is no next session — Phase 27 was the last one, and the project is
 complete.** What follows is kept as a maintainer's handbook: if anyone picks
 this up again, these are the things that were expensive to learn.
 
@@ -4515,3 +4933,5 @@ unfreezes the loop without real pointer lock.
 | 23 | **Polish: deepslate and the underground.** Deepslate below y=0 (`world/terrain.js`), blended over the band to y=-8 by a per-block hash roll so the transition is speckled rather than a plane — hardness 3.0 (2x stone), dropping cobbled deepslate, with all five ores taking their deepslate variant in it (blocks 163-169, atlas 58-64) and cobbled deepslate accepted as a stone crafting material (furnace, brewing stand, the five stone tools). **GREAT CAVERNS** (`world/caverns.js` — new): the fourth attempt at big caves and the first that works, because it stops sampling noise and PLACES them — 224-block regions, 72% each, hashed centre/radii/height, a superellipsoid body (y exponent 3.2 = a room, not a lens) warped by a 3D field, a mid-level shelf slab for the ledges and drops, and two climbing connector bores into the tunnel network. Verified: 5 chambers per 512x512 (one per ~229 blocks), 32-56 across and 20-40 tall, 5/5 reachable by flood fill from open sky, 38x51x36 of open space measured in the running game. Lava above -54 rebuilt as placed pools (a few seeded sites per chunk flooding ≤8 floor cells below y=-12, plus rare wall springs) after the Phase 10 mask flooded whole cave floors: 464 → 27 cells per 100x100 columns. Underground water springs and puddles, waterfalls down cavern walls, gravel/clay banks beside them (clay's tile generated at boot, like the item art; the frame-with-eye tile moved to 69 since the new atlas overwrote 58). Ore distribution re-measured PER SOLID BLOCK inside each SPEC band — coal 3.49 / iron 3.15 / redstone 1.79 / gold 1.14 / diamond 0.67 per 1000 — and diamond is 1 per 572 at y-59..-50, about 6 exposed in 10 minutes of strip mining even at deepslate's doubled hardness. The three reported bugs: footsteps rebuilt as pure noise with halved decays and no sprint volume boost (the 150→90 Hz sine glide under every step WAS the "strange, unnatural" sprint noise), a `lowpass` on `tone()` taming every sawtooth/square voice, a dedicated landing sound; `audio.setPaused()` suspending the whole AudioContext on pause (verified running→suspended→running, sounds refused while paused); the potion indicator doubled to 48px with a 20px countdown. Two ARCHITECTURE cuts, one of them the long-mandated `world/fluid_families.js` out of blocks.js (901 now — under the cap for the first time since Phase 21). 69-module import smoke + 33 registry/crafting/fluid checks + the generation survey + a Chromium end-to-end run, zero console errors. | Rivers (the last unbuilt SPEC feature); `entities/dragon.js` (878) is now the only file over the cap, its rig cut still mandated; `world/caves.js` at 786 has no room left (ore/vein passes are its next cut); framerate UNMEASURED this phase (no GPU in the sandbox — generation cost was measured directly and is unchanged); the atlas's four new plant tiles (65-68) are unused, no ground plants were added |
 | 24 | **Polish: terrain, sky and ground vegetation.** RIVERS (the last unbuilt SPEC feature): zero-contours of a low-frequency field press the heightmap below sea level (parabolic bed, eased banks, width varied along the run) so every channel is continuous and joins open water by construction — verified on a 768x768 surface map rendered from the real generator. Surface rules rewritten: beach sand only within reach of actual water, underwater floors sandy-then-dirt with gravel patches (riverbeds and beaches both), mountain bare stone only above a noise-jittered stone line or on ≥3-block cliff faces (measured 57% grass / 26% stone on mountain surfaces), domain-warped biome sampling (±34 blocks) + a wider dither band for irregular edges, tree density/height FIELDS for glades, thickets and groves, and occasional closed-basin surface lava pools in mountains/deserts. SKY: the vanilla blocky cloud deck at y=192 (one merged mesh, hashed blob pattern, period re-anchoring, steady -x drift, sRGB-correct day/night light), the sun rebuilt as a square core in a soft additive glow, the moon given the eight phases from generated textures (the cycle counts days now; sleeping advances the phase), a starfield wheeling on the sun's orbit fading through dusk/dawn on its own keyframe channel, and a keyframed skylight TINT (white noon / warm dawn-dusk / cool night) so terrain light agrees with the sky; fog stays horizon-matched. GROUND VEGETATION (atlas 65-68, finally used): short grass, dandelions, poppies, dead bushes as CROSS-PLANE blocks — a new mesher path (two DoubleSide X-quads, cutout pass, width-true diagonals, per-position nudge), no collision, no light attenuation, never culled; grass in per-biome noise patches, flowers rarer and clustered by colour, bushes on desert sand; instant break (seeds 1/8 from grass only), popped when their soil goes, placeable on grass/dirt, replaceable by blocks and buckets, flat sprite items. The TWO reported bugs: shallow lava was REAL — Phase 23 measured generated cells but the settle scan grew every open-rimmed pool into an apron; pools are now recessed erosion-verified basins (148 contained cells + 8 springs per 256x256, ZERO leak adjacencies). Deepslate was measured correct everywhere including the live browser game (9188/9188 deepslate-family cells at spawn depth; 100.00% purity below y=-9 across three seeds) — the report matches a stale cached build, with a console check recorded in Known broken. Splits: world/ores.js (caves.js's mandated vein cut, byte-identical streams), world/terrain_noise.js, world/plants.js, render/sky_fx.js. Generation 4.5 ms/chunk, meshing 13.9 vs 13.7 baseline, boots in Chromium with zero console errors, screenshot-verified through the full day cycle. | emitters.js (829) and blocks.js (915) over the cap with cuts mandated (small-box emitters; the lookups tail); dragon.js rig cut still outstanding; framerate unmeasured again (no GPU — generation/meshing measured directly instead); flowing water stops at plant cells instead of washing them away; the crack overlay and target outline are full-cube on plants (torch precedent); clouds are flat quads, not the fancy 4-thick boxes |
 | 25 | **THE FINAL PHASE — survival and creative modes; the game is complete.** A START SCREEN on load offers Survival or Creative and holds the world frozen until one is chosen; Esc brings up a PAUSE MENU naming the current mode with a button to switch to the other; the mode shows as a small badge in the HUD corner. Switching is live and lossless because `player/gamemode.js` is a module singleton (the third, beside `particles` and `audio`) whose `set()` flips ONE flag: no reload, no regeneration, no teleport, inventory identical across the switch in both directions (verified by serialising it). Every creative rule is a single gate in the system that already owns it — `stats.damage` (invulnerable), `stats.gainExhaustion` (no hunger), `miningPlan` (instant break, no drops, unbreakables still unbreakable), `inventory.consume*`/`damage*` (infinite stacks, no tool wear), `mobs.playerTargetable` + the same in `dragon.js` (hostiles ignore you), `hud.updateHud` (no bars), `screens.js` (E routes elsewhere). CREATIVE FLIGHT (`body._stepFlight`): double-tap Space toggles, Space up, Shift down, sprint doubles it, 10.9 b/s measured against walking's 4.3, landing ends it, no fall damage, and the move still goes through the same swept collision as walking (`CREATIVE.FLY_COLLIDES`). CREATIVE INVENTORY (`ui/creative.js`): 188 entries over seven tabs with a search that spans all of them, click for a full stack / right-click for one / drag into a slot / drop outside to destroy, infinite by construction (every gesture builds a new stack, nothing is ever removed) — verified 0 blank icons and 0 craftable names missing. The TEST CHEST and its config flag are GONE; survival starts empty in an unmodified world. The five reported bugs: render distance 8 -> 12 chunks with fog to match and the geometry/memory numbers written into config (441 meshed / 973 draws / 2.03M tris / ~320 MB at r=12); biomes rebalanced to plains 40 / forest 23 / desert 19 / mountains 18 with moisture given its own domain warp (and the forest-hugs-coast claim measured to be absent from the generator, 26.0% vs 22.6%, and 26.2% vs 26.1% before any change); a new seed 2163 whose spawn area is 29/25/22/24 across the four biomes; the mountain stone line moved 108 -> 128 with STEEP_DROP 3 -> 4, taking mountains from 60% grass to 91%; great caverns raised in RATE (region 224 -> 128, chance 0.72 -> 0.88, 3 connectors) until 5.4% of all open cave air is big-room and 67% of random cave cells are within 60 blocks of walking of one, 6/6 reachable from open sky. THE FINAL PASS: a survival run from a fresh world to the victory screen driven through the game's own systems in Chromium, 16/16 green, plus a 30/30 mode harness, zero game console errors. Three new files, nothing over the size cap that was not already. | Nothing. The project is finished. The three standing ARCHITECTURE size cuts (`entities/dragon.js` rig, `world/emitters.js` small-box emitters, `world/blocks.js` lookups tail) are the only debt, and only bind if someone grows those files again. |
+| 26 | **Polish: the visual and world pass; the game remains complete.** WORLD: plains made the clear majority biome (55.7% of land, measured over 2000x2000, vs forest 17.8 / desert 10.8 / mountains 15.6); the plains spawn GUARANTEED by a generator-side scan (`world/spawn_scan.js` — nearest large open plains disc wins, best-seen fallback, pure per seed; 12 seeds measured at 94-100% plains, 0% water) instead of seed luck; the stronghold moved to ~400 blocks from the SCANNED spawn (340-460 config, 348 measured, 12 frames + 3091 bricks censused at the anchored centre, eye target identical). RENDER: r=30 kept but tiered — beyond 14 chunks the mesher skips cross plants, culls leaf interiors and drops faces fronting sky-0 air (the enclosed cave network), cutting the ring 14.25M -> 6.87M tris and 1168 -> 563 MB (-52%), under the old r=20 full-detail cost; frustum culling fed by build-time bounding spheres. VISUAL (config VISUAL, all of it): a linear half-float post pipeline (`render/post_fx.js`) with depth-masked god rays at low sun, soft-thresholded warm/violet-detector bloom on lava/glowstone/torches/portals, and gentle grading (richer greens, warm sun, cool shadows); the water surface rippled, fresnel-reflective and sun-glinted (`render/water_fx.js`, render-only, still pass only); AO softened with a warm bounce + cool lean on shaded faces; dust motes in underground light shafts; and the GOLDEN HOUR (reference-image request): purple-to-gold sky keyframes at both day edges, a 3.4x soft sun halo, and a HAZE keyframe channel drowning distant terrain in warm atmosphere while midday keeps its clarity. BUG: clouds occlude the sun, moon and stars per pixel now (deck writes depth, celestials pinned to the far plane — a depth test alone fails below ~9° of sun elevation, where the deck is farther than the 820-block sun quad). A 20-agent adversarial review confirmed 15 findings, all fixed — including the unanchored stronghold early-out that would have kept the structure from ever generating, and the LOD gate erasing distant lava falls. Splits: `world/surface_rules.js` (terrain.js back under the cap, byte-identical A/B). Boots in Chromium with zero game console errors; screenshot-verified (noon, god rays, golden hour x3, cloud-clipped sun, night bloom, shaft dust, exaggerated-water proof). | Framerate unmeasured again (software GL sandbox — geometry measured in node instead); the swiftshader ring stall unchanged; the three standing size-cap debts (dragon rig, emitters small-boxes, blocks lookups) untouched. |
+| 27 | **Render distance 40, smooth streaming, chat + /tp.** The view ring grew 30 -> 40 chunks (640 blocks) at -59% of full-detail cost: the LOD tiers hold the ring to 10.22M tris / 838 MB (measured; full detail would be 25.09M / 2058 MB), far chunks stopped storing their 98KB light arrays (~420 MB saved; every consumer lives inside the detail radius and handles null), and fog moved out to 460/680. Movement hitches attacked at the source (`world/world.js`): a completed no-work pass PARKS the streamer (an idle frame costs 0.0004 ms, measured, vs walking 6889 Map lookups), passes resume at the first incomplete offset instead of re-scanning the finished near region, LOD tier remeshes trickle at RETIER_PER_PASS 2 with hysteresis 3 so border crossings stop queueing arcs of remeshes, and the per-frame budget went 8 -> 6 ms. Node-verified: settle -> idle, edit -> wake -> re-settle in single-digit frames, a 10-chunk move re-tiers correctly. CHAT (`ui/chat.js`, the sign-editor pattern — game keeps running, pointer releases, relocks on close) opens on T or '/', with history recall; `systems/commands.js` (split out of main.js at birth — the wiring took main to 875, back to 802) ships `/tp <x> <z>` with a SAFE landing (surface; floated over deep water; a scanned interior spot under the Nether ceiling; refusal over the End void) and `/tp <x> <y> <z>` exact. Browser-verified end to end including a 4.7km teleport into ungenerated terrain, zero game console errors. FOLLOW-UP (same session, by request — "make clouds look realistic, not blocks. moon light should also good"): the blocky slab deck REPLACED with shader cumulus — a camera-following plane whose fragment grows soft puffs from 5-octave fbm (weather-gate grouping that modulates rather than empties, interior-steepened cores with feathered edges, sun-probed self-shading, silver linings, a faint higher cirrus veil; world-anchored pattern, wrapped drift; all knobs in config CLOUDS), drawn twice to keep the Phase 26 occlusion contract (depth-only core pass at -1.95, soft colour at -1.1); tuning swept in a node port of the shader math (COVER 0.66 = 40% visible / 25% solid / 0 empty vantages in 24). MOONLIGHT: a cool rim-windowed halo quad behind the moon, a moonlit dome wash via the sky shader's new glowBand uniform, night palette brightened to silver-blue (SKY_DARKEN 11 -> 10, NIGHT_SKY_TINT 0xa9bef2), and a moon glint lane on water (MOON_GLINT_LEVEL; main.js flips the water light to the moon after dark). SECOND FOLLOW-UP ("Cloud more realistic, plus make moon round"): cloud shapes domain-warped + edge-eroded (the curdled cauliflower rim; COVER retuned 0.66 -> 0.68 by node sweep), lighting gone PSEUDO-VOLUME — density-as-height dome normals with rotated-grid two-octave relief bumps (the un-rotated first cut read as a quilted blanket) lit by a real N.L against the sun/moon, cirrus skipping the taps via FLAT_SHEET; the look iterated in an offline node render of the exact shader math instead of browser cycles. The moon rebuilt ROUND: 128px AA disc, seeded maria + craters shared by all eight phases, soft elliptical terminator, limb darkening, earthshine dark side, linear-filtered; MOON_SIZE 95 -> 104 keeps the apparent diameter. Screenshot-verified at 1080p (day field, straight-up puff, sunset with the sun half-sunk behind a grey bank, round moon in halo, moonlit ground), zero game console errors. | Framerate still unmeasurable in the sandbox (geometry measured in node instead); main.js at 812 sits just over the ~800 tilde — the beds block is its next cut; the swiftshader ring stall unchanged. |

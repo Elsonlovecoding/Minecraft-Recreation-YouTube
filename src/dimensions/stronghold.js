@@ -63,16 +63,22 @@ const keyOf = (cx, cz) => `${cx},${cz}`;
 
 // The stronghold's centre column in world coordinates, deterministic per
 // seed — the single source of truth thrown eyes of ender fly toward
-// (entities/ender_eye.js) and generation anchors to. SPEC: 1000-2000
-// blocks from spawn (PORTALS.STRONGHOLD_MIN/MAX_DISTANCE).
-export function strongholdCenter(seed) {
+// (entities/ender_eye.js) and generation anchors to. Phase 26: roughly 400
+// blocks from spawn (PORTALS.STRONGHOLD_MIN/MAX_DISTANCE, 340-460 — it must
+// be reachable without a long journey), measured from the ACTUAL spawn:
+// callers pass the scanned plains spawn column as `spawn` (terrain.js hands
+// the generator a thunk for it); the config origin is only the fallback for
+// generators without a scan.
+export function strongholdCenter(seed, spawn = null) {
   const rng = mulberry32(hash2(seed ^ SALT_STRONGHOLD, 0, 0));
   const angle = rng() * Math.PI * 2;
   const dist = PORTALS.STRONGHOLD_MIN_DISTANCE +
     rng() * (PORTALS.STRONGHOLD_MAX_DISTANCE - PORTALS.STRONGHOLD_MIN_DISTANCE);
+  const ax = spawn ? spawn.x : PLAYER.SPAWN.X;
+  const az = spawn ? spawn.z : PLAYER.SPAWN.Z;
   return {
-    x: Math.round(PLAYER.SPAWN.X + Math.cos(angle) * dist),
-    z: Math.round(PLAYER.SPAWN.Z + Math.sin(angle) * dist),
+    x: Math.round(ax + Math.cos(angle) * dist),
+    z: Math.round(az + Math.sin(angle) * dist),
   };
 }
 
@@ -104,9 +110,26 @@ export function isRoomType(type) {
 }
 
 export class StrongholdGenerator {
-  constructor(seed) {
+  // `getSpawn` (Phase 26): a thunk returning the scanned spawn column the
+  // centre anchors to — a thunk rather than a value so terrain.js can hand
+  // it over before the (lazy, cached) scan has ever run.
+  constructor(seed, getSpawn = null) {
     this.seed = seed | 0;
+    this._getSpawn = getSpawn;
     this._blueprint = null;
+    this._center = null;
+  }
+
+  // The ONE anchored centre every path shares (Phase 26 — the review caught
+  // emitChunk's early-out recomputing an UNanchored centre, which pointed
+  // its bounding box ~1400 blocks away from where the anchored blueprint
+  // actually generates: every chunk inside the real stronghold early-outed
+  // and the structure never emitted at all).
+  center() {
+    if (!this._center) {
+      this._center = strongholdCenter(this.seed, this._getSpawn?.());
+    }
+    return this._center;
   }
 
   // The full deterministic layout: { ox, oz, deckY, cells, frames,
@@ -114,7 +137,7 @@ export class StrongholdGenerator {
   // corner is (ox + cx*CELL, oz + cz*CELL); the portal room is cell (0,0).
   blueprint() {
     if (this._blueprint) return this._blueprint;
-    const center = strongholdCenter(this.seed);
+    const center = this.center();
     // Anchor: strongholdCenter lands on portal-room offset ANCHOR (a
     // walkway column beside the ring — see the header note).
     const ox = center.x - S.ANCHOR.A;
@@ -311,7 +334,7 @@ export class StrongholdGenerator {
   // room's walkway, one block above the deck floor.
   entryPoint() {
     const bp = this.blueprint();
-    const center = strongholdCenter(this.seed);
+    const center = this.center();
     return { x: center.x + 0.5, y: bp.deckY + 1, z: center.z + 0.5 };
   }
 
@@ -350,7 +373,8 @@ export class StrongholdGenerator {
     // One stronghold per world: a cheap bounding-box early-out keeps every
     // other chunk's generation untouched. The blueprint is only derived
     // once a chunk actually inside the (deterministic) bounds generates.
-    const center = strongholdCenter(this.seed);
+    // Phase 26: the SHARED anchored centre — see center() above.
+    const center = this.center();
     const reach = (S.MAX_RADIUS_CELLS + 1) * CELL;
     if (
       x0 + size - 1 < center.x - reach || x0 > center.x + reach ||
