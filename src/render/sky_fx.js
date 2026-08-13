@@ -1,6 +1,6 @@
 // render/sky_fx.js — the Phase 24 sky furniture: the cloud layer, the night
-// starfield, and the generated sun/moon textures (a square sun inside a soft
-// atmospheric glow; the eight-phase square moon). Split out of
+// starfield, and the generated sun/moon textures (a round sun disc inside a
+// soft atmospheric glow; the eight-phase round moon). Split out of
 // render/lighting.js per the ARCHITECTURE size cap — lighting.js keeps the
 // light propagation and the day/night CYCLE (which drives everything here);
 // this module only builds the objects and exposes small update hooks.
@@ -42,11 +42,14 @@ export function forceFarDepth(material) {
 // ---------------------------------------------------------------------------
 //
 // A noise-shaded cloud LAYER: a camera-following plane at CLOUDS.HEIGHT whose
-// fragment shader grows soft cumulus from fbm value noise — a very-low-
-// frequency weather gate groups the masses with real clear sky between,
-// fake self-shading comes from the density gradient probed toward the sun,
-// and thin edges catch a warm silver lining when they sit near a low sun.
-// A second, faint cirrus plane rides higher for depth. The pattern lives in
+// fragment shader grows soft cumulus from domain-warped fbm value noise — a
+// very-low-frequency weather gate groups the masses with real clear sky
+// between, detail noise erodes the thin edges into the curdled cauliflower
+// rim, self-shading is PSEUDO-VOLUME (density read as the height of a dome,
+// rotated relief bumps keeping the interior dappled, a real N.L against the
+// 3D sun — the moon after dark), and thin edges catch a warm silver lining
+// when they sit near a low sun. A second, faint cirrus plane rides higher
+// for depth (FLAT_SHEET: it skips the gradient taps). The pattern lives in
 // WORLD space (the plane follows the camera but the noise is sampled at
 // world coordinates plus the drift offset), so flying never slides the sky.
 //
@@ -102,17 +105,37 @@ const CLOUD_FRAG = /* glsl */ `
       p = p * 2.03 + 17.7;
       a *= 0.5;
     }
-    return s * 1.032; // 5-octave sum renormalised toward 0..1
+    return s * 1.032; // 5-octave sum renormalised toward 0..1 — the fifth
+                      // octave is what keeps a puff's INTERIOR curdled
+                      // (erosion only works the edges), and the dome
+                      // normals turn it into dappled self-shading
   }
-  // Cloud density 0..1 at a noise-space point: the fbm body thresholded
-  // inside the weather gate.
+  // Relief bumps for the dome normal: two octaves on a ROTATED grid —
+  // bare value noise shows its axis-aligned lattice when it drives
+  // lighting (the first cut of the bumps read as a quilted blanket).
+  float crelief(vec2 p) {
+    vec2 r = vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+    return cnoise(r * RELIEF_SCALE) * 0.65
+         + cnoise(r.yx * RELIEF_SCALE * 2.3 + 31.7) * 0.35;
+  }
+  // Cloud density 0..1 at a noise-space point: a domain-warped fbm body
+  // thresholded inside the weather gate, its edges eroded by detail noise.
   float cloudDensity(vec2 np) {
+    // Domain warp first — pure fbm puffs are round and samey; bending the
+    // sample space gives every mass its own drawn-out, organic outline.
+    np += (vec2(cnoise(np * 0.55 + 13.1), cnoise(np * 0.55 + 71.7)) - 0.5) * WARP;
     // The gate MODULATES coverage rather than zeroing it — a low weather
     // cell thins the sky out, it never empties it entirely.
     float gate = smoothstep(0.30, 0.72,
       cnoise(np * GATE_SCALE) * 0.65 + cnoise(np * GATE_SCALE * 2.63 + 41.3) * 0.35);
     float t = 1.0 - uCover * (0.58 + 0.42 * gate);
     float body = smoothstep(t, t + SOFTNESS, cfbm(np));
+    // Cauliflower erosion: high-frequency detail eats at the THIN parts
+    // (weighted by 1-body, so cores keep their mass) — the crisp curdled
+    // rim real cumulus have, instead of one smooth blurred contour.
+    float detail = cnoise(np * DETAIL_SCALE) * 0.65
+                 + cnoise(np * DETAIL_SCALE * 2.13 + 7.7) * 0.35;
+    body = clamp(body - (1.0 - body) * detail * EROSION, 0.0, 1.0);
     // Steepen the interior: cores saturate to solid cloud while the outer
     // ramp keeps its feathered edge — the puffy-cumulus read.
     return body * body * (3.0 - 2.0 * body);
@@ -130,14 +153,38 @@ const CLOUD_FRAG = /* glsl */ `
       gl_FragColor = vec4(0.0);
     #else
       if (alpha < 0.004) discard;
-      // Self-shading: probe the density toward the sun — the lit side of a
-      // puff is the side the gradient falls away from.
-      vec2 sunXZ = normalize(uSunDir.xz + vec2(1e-4));
-      float toSun = cloudDensity(np + sunXZ * LIGHT_EPS);
-      float lit = clamp(0.5 + (dens - toSun) * LIGHT_GAIN, 0.0, 1.0);
+      // Pseudo-volume: treat density as the height of a dome and light it
+      // with a real N.L against the 3D sun — sun-facing swells brighten,
+      // the far sides fall into shade, which is what makes a flat plane
+      // read as a field of solid puffs. (At night uSunDir is the moon.)
+      // A high-frequency RELIEF term rides on top of the body height,
+      // weighted by density so it lives on the cloud and not the clear
+      // sky: the body ramp saturates to 1 inside a puff (gradient zero),
+      // and without the bumps a big cloud shades only at its rim and
+      // reads flat overhead. With them the base stays dappled.
+      #ifdef FLAT_SHEET
+        // The cirrus veil is a sheet, not puffs — skip the six gradient
+        // taps and light it like a horizontal plane.
+        float ndl = clamp(uSunDir.y, 0.0, 1.0);
+      #else
+        vec2 npR = np + vec2(NORMAL_EPS, 0.0);
+        vec2 npF = np + vec2(0.0, NORMAL_EPS);
+        float dR = cloudDensity(npR);
+        float dF = cloudDensity(npF);
+        float hC = dens + crelief(np) * RELIEF * dens;
+        float hR = dR + crelief(npR) * RELIEF * dR;
+        float hF = dF + crelief(npF) * RELIEF * dF;
+        vec3 nrm = normalize(vec3((hC - hR) * DOME_GAIN, NORMAL_EPS,
+                                  (hC - hF) * DOME_GAIN));
+        float ndl = clamp(dot(nrm, uSunDir), 0.0, 1.0);
+      #endif
+      float lit = AMBIENT + (1.0 - AMBIENT) * ndl;
       // Thin cloud reads brighter (light passes through it).
-      lit = clamp(lit + (1.0 - dens) * 0.35, 0.0, 1.0);
+      lit = clamp(lit + (1.0 - dens) * THIN_LIFT, 0.0, 1.0);
       vec3 col = mix(uShade, uLit, lit);
+      // Optical depth: the deepest cores keep a flat grey belly no matter
+      // where the sun sits — thick cumulus never read paper-white all over.
+      col = mix(col, uShade, smoothstep(0.6, 1.0, dens) * CORE_SHADE);
       // Silver lining: thin edges glow toward the sun's direction.
       vec3 viewDir = normalize(vWorld - cameraPosition);
       float rim = pow(max(dot(viewDir, uSunDir), 0.0), SILVER_POWER);
@@ -173,8 +220,16 @@ export function createClouds() {
     CORE_ALPHA: C.CORE_ALPHA.toFixed(4),
     FADE_START: C.FADE_START.toFixed(1),
     FADE_END: C.FADE_END.toFixed(1),
-    LIGHT_EPS: C.LIGHT_EPS.toFixed(4),
-    LIGHT_GAIN: C.LIGHT_GAIN.toFixed(4),
+    WARP: C.WARP.toFixed(4),
+    DETAIL_SCALE: C.DETAIL_SCALE.toFixed(4),
+    EROSION: C.EROSION.toFixed(4),
+    NORMAL_EPS: C.NORMAL_EPS.toFixed(4),
+    DOME_GAIN: C.DOME_GAIN.toFixed(4),
+    RELIEF: C.RELIEF.toFixed(4),
+    RELIEF_SCALE: C.RELIEF_SCALE.toFixed(4),
+    AMBIENT: C.AMBIENT.toFixed(4),
+    THIN_LIFT: C.THIN_LIFT.toFixed(4),
+    CORE_SHADE: C.CORE_SHADE.toFixed(4),
     SILVER_POWER: C.SILVER_POWER.toFixed(1),
     CLOUD_SEED: C.SEED.toFixed(4),
   }, extra);
@@ -211,6 +266,7 @@ export function createClouds() {
     NOISE_SCALE: C.CIRRUS.SCALE.toFixed(8),
     OPACITY: C.CIRRUS.OPACITY.toFixed(4),
     SOFTNESS: '0.34',
+    FLAT_SHEET: 1, // the high veil skips the dome-normal taps entirely
     CLOUD_SEED: (C.SEED + 111.1).toFixed(4),
   });
   cirrusMat.uniforms.uCover.value = C.CIRRUS.COVER;
@@ -224,6 +280,15 @@ export function createClouds() {
   for (const m of [depthMesh, colorMesh, cirrusMesh]) m.frustumCulled = false;
 
   const mats = [depthMat, colorMat, cirrusMat];
+  // The drift wrap bounds float precision through arbitrarily long days.
+  // It is NOT seamless: only cfbm's first octave shares the hash lattice's
+  // 512 period — every scaled/rotated sampling (gate, higher octaves,
+  // warp, detail, relief) lands elsewhere on the lattice after a wrap, so
+  // the whole sky re-rolls to a fresh layout when one hits. That takes
+  // ~17h of continuous play (48h for cirrus), both passes pop coherently
+  // (same drift, same density code — occlusion holds), and clouds are
+  // weather, so the once-a-real-day reshuffle is accepted rather than
+  // paying for a true common period or a cross-fade.
   const NOISE_PERIOD = 512; // the hash lattice wrap (see chash)
   let drift = 0;
   let cirrusDrift = 0;
@@ -235,8 +300,7 @@ export function createClouds() {
     mesh: group,
     // The planes follow the camera; the PATTERN stays world-anchored
     // because the shader samples world position plus a bounded drift
-    // offset (wrapped at the noise lattice period, so precision holds
-    // through arbitrarily long days).
+    // offset (wrapped — see NOISE_PERIOD above).
     update(delta, focus) {
       drift = (drift + delta * C.SPEED * C.SCALE) % NOISE_PERIOD;
       cirrusDrift = (cirrusDrift + delta * C.CIRRUS.SPEED * C.CIRRUS.SCALE) % NOISE_PERIOD;
@@ -342,14 +406,6 @@ export function createStars(sky) {
 // Sun and moon textures
 // ---------------------------------------------------------------------------
 
-function canvasTexture(canvas) {
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  return texture;
-}
-
 const hexRgb = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 
 // The sun: a bright ROUND disc with a soft radial glow — rendered additively
@@ -359,8 +415,8 @@ const hexRgb = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 // before the quad rim (the old exponential still carried alpha ~16/255 at
 // the edge, which additive blending drew as a faint square against the
 // sky), and the texture filters LINEARLY (Nearest magnification turned the
-// smooth gradient into visible stair-stepped blocks). The moon keeps its
-// pixel-art Nearest filtering — that one is meant to look blocky.
+// smooth gradient into visible stair-stepped blocks). The moon follows the
+// same two rules now that it is a round disc.
 export function createSunTexture() {
   const W = 256;
   const canvas = document.createElement('canvas');
@@ -406,9 +462,9 @@ export function createSunTexture() {
 }
 
 // The moon's halo (Phase 27 follow-up — "moon light should also good"): a
-// soft cool radial glow on an additive quad behind the pixel moon, built by
-// the sun-glow rules — windowed to exactly zero before the quad rim (no
-// box) and linear-filtered (a gradient, not pixel art).
+// soft cool radial glow on an additive quad behind the round moon disc,
+// built by the sun-glow rules — windowed to exactly zero before the quad
+// rim (no box) and linear-filtered (a gradient, not pixel art).
 export function createMoonGlowTexture() {
   const W = 128;
   const canvas = document.createElement('canvas');
@@ -444,14 +500,47 @@ export function createMoonGlowTexture() {
   return texture;
 }
 
-// The eight moon phases as separate small textures — the vanilla square
-// moon, its unlit part left as a faint disc. Phase 0 is full; the
-// terminator is the classic ellipse, waning through new (4) and waxing back.
+// The eight moon phases as separate textures — a ROUND moon now (the
+// Phase 27 second follow-up; the vanilla pixel square is gone): an
+// anti-aliased disc carrying maria and craters generated ONCE from a
+// seeded RNG (every phase shows the same face, like the real thing), a
+// soft elliptical terminator, and the unlit part left as faint cool
+// earthshine. Phase 0 is full, waning through new (4) and waxing back.
+// Linear-filtered — a round rim, not pixel art.
 export function createMoonTextures() {
-  const P = 32;
+  const P = 128;
+  const R = 0.94;          // disc radius in normalised (-1..1) coords
+  const AA = 2.5 / (P / 2); // anti-alias band, ~2.5px
+  const TERM = 0.09;        // terminator softness, normalised units
   const phases = [];
   const [lr, lg, lb] = hexRgb(CELESTIAL.MOON_LIT_COLOR);
-  const darkAlpha = Math.round(CELESTIAL.MOON_DARK_ALPHA * 255);
+  const smooth = (v) => v * v * (3 - 2 * v);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  // One moon, eight lightings: the surface features come from a fixed
+  // seeded RNG OUTSIDE the phase loop.
+  const rng = mulberry32(9241);
+  const maria = [];
+  for (let i = 0; i < 4; i++) {
+    maria.push({ x: (rng() * 2 - 1) * 0.5, y: (rng() * 2 - 1) * 0.5,
+                 r: 0.25 + rng() * 0.3, d: 0.07 + rng() * 0.07 });
+  }
+  const craters = [];
+  for (let i = 0; i < 24; i++) {
+    craters.push({ x: (rng() * 2 - 1) * 0.8, y: (rng() * 2 - 1) * 0.8,
+                   r: 0.035 + rng() * 0.085, d: 0.1 + rng() * 0.15 });
+  }
+  const surface = (xn, yn) => {
+    let m = 1;
+    for (const c of maria) {
+      const dd = Math.hypot(xn - c.x, yn - c.y);
+      if (dd < c.r) m -= c.d * smooth(1 - dd / c.r); // broad soft dark seas
+    }
+    for (const c of craters) {
+      const dd = Math.hypot(xn - c.x, yn - c.y);
+      if (dd < c.r) m -= c.d * (1 - (dd / c.r) ** 2); // small dished pits
+    }
+    return m;
+  };
   for (let phase = 0; phase < CELESTIAL.MOON_PHASES; phase++) {
     const canvas = document.createElement('canvas');
     canvas.width = P;
@@ -462,32 +551,50 @@ export function createMoonTextures() {
       for (let x = 0; x < P; x++) {
         const xn = ((x + 0.5) / P) * 2 - 1;
         const yn = ((y + 0.5) / P) * 2 - 1;
-        const bulge = Math.sqrt(Math.max(0, 1 - yn * yn));
-        let lit;
-        if (phase === 0) lit = true;
-        else if (phase === 4) lit = false;
-        else if (phase < 4) lit = xn < Math.cos((Math.PI * phase) / 4) * bulge;
-        else lit = xn > -Math.cos((Math.PI * (8 - phase)) / 4) * bulge;
+        const d = Math.hypot(xn, yn);
+        const i = (y * P + x) * 4;
+        const cov = clamp01((R - d) / AA); // disc edge coverage
+        if (cov <= 0) { img.data[i + 3] = 0; continue; }
+        // The terminator: signed distance to the phase ellipse, eased over
+        // TERM — real shadow edges on the moon are soft, not pixel steps.
+        // The ellipse lives on the ACTUAL R-disc (semi-axes R.cos, R), so
+        // crescent tips taper to points at the limb — the unit-disc bulge
+        // of the old square moon left them truncated 4px short of the
+        // poles (adversarial-review catch).
+        const bulge = Math.sqrt(Math.max(0, R * R - yn * yn));
+        let litAmt;
+        if (phase === 0) litAmt = 1;
+        else if (phase === 4) litAmt = 0;
+        else if (phase < 4) {
+          litAmt = clamp01((Math.cos((Math.PI * phase) / 4) * bulge - xn) / TERM + 0.5);
+        } else {
+          litAmt = clamp01((xn + Math.cos((Math.PI * (8 - phase)) / 4) * bulge) / TERM + 0.5);
+        }
         // A hashed speckle keeps the face from reading as flat plastic.
         let h = (Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1)) | 0;
         h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-        const grain = 0.88 + ((h >>> 8) & 0xff) / 255 * 0.12;
-        const i = (y * P + x) * 4;
-        if (lit) {
-          img.data[i] = Math.round(lr * grain);
-          img.data[i + 1] = Math.round(lg * grain);
-          img.data[i + 2] = Math.round(lb * grain);
-          img.data[i + 3] = 255;
-        } else {
-          img.data[i] = 24;
-          img.data[i + 1] = 28;
-          img.data[i + 2] = 44;
-          img.data[i + 3] = darkAlpha;
-        }
+        const grain = 0.92 + ((h >>> 8) & 0xff) / 255 * 0.08;
+        // Maria + craters + a whisper of limb darkening (the real moon is
+        // nearly flat-lit; keep it subtle or the disc reads like a ball).
+        const limb = 0.9 + 0.1 * Math.sqrt(Math.max(0, 1 - (d / R) ** 2));
+        const shade = surface(xn, yn) * grain * limb;
+        // Earthshine: the unlit part is a faint cool grey-blue ghost.
+        const er = 30 * (shade + 0.4);
+        const eg = 35 * (shade + 0.4);
+        const eb = 54 * (shade + 0.4);
+        img.data[i] = Math.round(er + (lr * shade - er) * litAmt);
+        img.data[i + 1] = Math.round(eg + (lg * shade - eg) * litAmt);
+        img.data[i + 2] = Math.round(eb + (lb * shade - eb) * litAmt);
+        img.data[i + 3] = Math.round(cov * 255 *
+          (CELESTIAL.MOON_DARK_ALPHA + (1 - CELESTIAL.MOON_DARK_ALPHA) * litAmt));
       }
     }
     ctx.putImageData(img, 0, 0);
-    phases.push(canvasTexture(canvas));
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.LinearFilter; // a disc, not pixel art
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    phases.push(texture);
   }
   return phases;
 }

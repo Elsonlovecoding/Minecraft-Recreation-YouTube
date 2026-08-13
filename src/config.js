@@ -2220,8 +2220,10 @@ export const DAY_NIGHT = {
 // additive blending paints as a faint square boundary against the sky, and
 // the texture was Nearest-filtered, so the magnified gradient stair-stepped.
 // The glow is windowed to reach EXACTLY zero before the rim now, the sun
-// texture filters linearly, and the core is a disc. The moon stays the
-// vanilla pixel square — nobody reported the moon.
+// texture filters linearly, and the core is a disc. The moon followed in
+// the second Phase 27 follow-up ("make moon round"): an anti-aliased
+// disc with seeded maria + craters, a soft terminator and an earthshine
+// dark side — the same two rules (windowed, linear-filtered).
 export const CELESTIAL = {
   DISTANCE: 820,                  // from the camera; inside the sky dome radius
   SUN_SIZE: 150,                  // the disc's diameter, in dome units
@@ -2233,16 +2235,18 @@ export const CELESTIAL = {
                                   // hardcoded 0.5 in sky_fx.js)
   SUN_CORE_COLOR: 0xfffbe8,       // the square itself
   SUN_GLOW_COLOR: 0xffd9a0,       // the atmospheric halo around it
-  MOON_SIZE: 95,
+  MOON_SIZE: 104,                 // the round disc is inscribed in the quad
+                                  // (0.94 of it), so the quad grew a touch
+                                  // to keep the old apparent diameter
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
   MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
   // Phase 27 follow-up — MOONLIGHT ("moon light should also good"). The
-  // moon keeps its pixel-art square, but it hangs in a soft cool halo now
-  // (an additive glow quad behind it, the sun-glow treatment at night
-  // temperature), the sky dome carries a gentle wash of light around its
-  // position, and the water picks up a moon glint (main.js feeds the water
-  // uniforms the moon's direction after sunset).
+  // round moon disc hangs in a soft cool halo (an additive glow quad
+  // behind it, the sun-glow treatment at night temperature), the sky dome
+  // carries a gentle wash of light around its position, and the water
+  // picks up a moon glint (main.js feeds the water uniforms the moon's
+  // direction after sunset).
   MOON_GLOW_SCALE: 3.0,           // halo quad as a multiple of the moon
   MOON_GLOW_STRENGTH: 0.55,       // halo alpha at the moon's edge
   MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
@@ -2259,11 +2263,13 @@ export const CELESTIAL = {
 // Phase 27 follow-up — REALISTIC clouds, by request ("make clouds look
 // realistic, not blocks"). The blocky slab deck is gone: the sky carries a
 // noise-shaded cloud LAYER now — a camera-following plane at HEIGHT whose
-// fragment shader grows soft cumulus out of fbm value noise (a coarse
-// weather-system gate grouping the masses, fake self-shading from the
-// density gradient toward the sun, warm silver linings on thin edges near
-// a low sun) plus a faint high cirrus veil for depth. World-anchored and
-// drifting along -x like the old deck, day/night tinted, dawn-blushed.
+// fragment shader grows soft cumulus out of domain-warped fbm value noise
+// (a coarse weather-system gate grouping the masses, detail-noise erosion
+// curdling the thin edges, pseudo-volume dome lighting — density read as
+// height, relief-bumped normals, N.L against the sun or the night's moon —
+// and warm silver linings on thin edges near a low sun) plus a faint high
+// cirrus veil for depth. World-anchored and drifting along -x like the old
+// deck, day/night tinted, dawn-blushed.
 //
 // THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
 // twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
@@ -2289,15 +2295,35 @@ export const CLOUDS = {
                                   // first cut put the WHOLE visible sky in
                                   // one gate cell and a low roll meant a
                                   // permanently empty sky)
-  COVER: 0.66,                    // how much of a weather system fills in
-  SOFTNESS: 0.26,                 // density ramp width (puffy vs crisp edges)
+  COVER: 0.68,                    // how much of a weather system fills in
+                                  // (retuned when the erosion landed —
+                                  // detail noise eats some area back; node
+                                  // sweep holds ~40% visible / ~30% solid)
+  SOFTNESS: 0.22,                 // density ramp width (puffy vs crisp edges)
   OPACITY: 0.94,                  // core opacity
   CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
                                   // and OCCLUDES the sun/moon/stars
   FADE_START: 620,                // thin out toward the horizon so the far
   FADE_END: 950,                  // plane clip never shows a hard edge
-  LIGHT_EPS: 0.55,                // gradient probe toward the sun (noise units)
-  LIGHT_GAIN: 3.0,                // self-shading contrast
+  WARP: 0.7,                      // domain-warp strength (noise units) —
+                                  // bends the sample space so puffs stop
+                                  // being round fbm blobs
+  DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
+  EROSION: 0.42,                  // how hard detail noise eats thin edges
+                                  // (the cauliflower rim; cores keep mass)
+  NORMAL_EPS: 0.05,               // gradient step for the dome normal —
+                                  // small enough not to alias the relief
+  DOME_GAIN: 1.0,                 // density-as-height slope: how strongly
+                                  // the fake dome tilts into/away from sun
+  RELIEF: 0.4,                    // interior bump height (fraction of the
+                                  // body): the dappled underbelly cells
+  RELIEF_SCALE: 2.6,              // bump frequency, x base scale (~42
+                                  // blocks per cell at SCALE 1/110)
+  AMBIENT: 0.42,                  // shading floor — sky light on the side
+                                  // the sun never touches
+  THIN_LIFT: 0.3,                 // thin cloud reads brighter (translucent)
+  CORE_SHADE: 0.32,               // flat grey belly held by the deepest
+                                  // cores regardless of sun angle
   LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
   SHADE_COLOR: 0x9aa8bb,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges

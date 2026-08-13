@@ -146,17 +146,23 @@ src/
     lighting.js          light propagation, AO, day/night (the cycle drives
                          the Phase 24 sky furniture below)
     sky_fx.js            the sky furniture (Phase 24; clouds rebuilt
-                         REALISTIC in the Phase 27 follow-up): the cloud
+                         REALISTIC in the Phase 27 follow-ups): the cloud
                          layer as a camera-following plane whose fragment
-                         shader grows soft cumulus from 5-octave fbm value
-                         noise (weather-gate grouping, sun-probed
-                         self-shading, silver linings, plus a faint higher
-                         cirrus veil) — drawn TWICE for the Phase 26
-                         occlusion contract, a depth-only core pass then a
-                         soft colour pass; the starfield; the generated sun
-                         (round disc in a rim-windowed additive glow,
-                         linear-filtered), the moon's cool halo glow, and
-                         eight-phase moon textures — split from lighting.js
+                         shader grows soft cumulus from domain-warped
+                         5-octave fbm value noise (weather-gate grouping,
+                         detail-noise edge erosion, pseudo-volume dome
+                         lighting — density-as-height normals with rotated
+                         relief bumps, N.L against the real sun/moon —
+                         silver linings, plus a faint higher cirrus veil
+                         that skips the normal taps via FLAT_SHEET) —
+                         drawn TWICE for the Phase 26 occlusion contract,
+                         a depth-only core pass then a soft colour pass;
+                         the starfield; the generated sun (round disc in a
+                         rim-windowed additive glow, linear-filtered), the
+                         moon's cool halo glow, and the eight-phase ROUND
+                         moon (AA disc, seeded maria + craters shared by
+                         every phase, soft elliptical terminator, faint
+                         earthshine dark side) — split from lighting.js
                          per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls

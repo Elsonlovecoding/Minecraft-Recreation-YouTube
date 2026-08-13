@@ -8,8 +8,9 @@
 //    baked skylight x time-of-day with baked block light x torch tint via
 //    shared uniforms, so day/night relights the whole world without remeshing.
 //  - A ~20-minute day/night cycle: keyframed sky gradient, fog colour always
-//    matched to the horizon, a square sun and moon riding the dome, and the
-//    directional sun light (for later entity phases) tracking the same orbit.
+//    matched to the horizon, a round glowing sun and an eight-phase round
+//    moon riding the dome, and the directional sun light (for later entity
+//    phases) tracking the same orbit.
 // Vertex AO itself is baked in the mesher (world/chunks.js) from the same
 // corner cells that sample this module's light.
 
@@ -517,8 +518,8 @@ function createCelestials(sky) {
     }),
   );
   // Phase 27 follow-up: the moon hangs in a soft cool HALO — an additive
-  // glow quad drawn just before the pixel moon (and, like it, pinned to
-  // the far plane, so the cloud layer's dense cores occlude both).
+  // glow quad drawn just before the round moon disc (and, like it, pinned
+  // to the far plane, so the cloud layer's dense cores occlude both).
   const moonGlow = make(
     CELESTIAL.MOON_SIZE * CELESTIAL.MOON_GLOW_SCALE,
     new THREE.MeshBasicMaterial({
