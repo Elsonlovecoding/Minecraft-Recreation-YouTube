@@ -225,11 +225,17 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 40,    // chunks loaded/rendered around the player
-                          // (Phase 27: 30 -> 40, 640 blocks, by request —
-                          // affordable because the LOD tier does the heavy
-                          // lifting and far chunks stopped storing light
-                          // data; measured numbers in the LOD note below)
+  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
+                          // the guaranteed radius WHEREVER the player
+                          // stands (streaming re-centres every border
+                          // crossing). Final request: "render 25 chunks
+                          // ... wherever I'm standing, 25 chunk radius" —
+                          // Phase 27's 40 was more than asked and its
+                          // 5025-chunk ring took real minutes to fill
+                          // after a move; 1961 chunks fills ~2.5x faster,
+                          // so the promised radius is actually THERE.
+                          // (Phase 27: 30 -> 40; measured numbers for
+                          // both in the LOD note below.)
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -247,14 +253,15 @@ export const VIEW = {
   // nothing visible to pop. HYSTERESIS keeps a chunk's tier sticky for 2
   // chunks of movement so walking along the boundary never remesh-thrashes.
   // Measured over the full ring (node, real generator + mesher):
+  //   r=25 full detail  1961 meshed   4605 draws  10.00M tris   820 MB geometry
+  //   r=25 with LOD     1961 meshed   4182 draws   5.58M tris   458 MB geometry
   //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
   //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
   //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
   //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
-  // -59% at r=40 — the shipped 40-chunk ring carries fewer triangles than
-  // the old fully-detailed r=20 ring drew per its own measurements, and
-  // far chunks stopped storing their 98KB light arrays on top (only
-  // full-detail chunks keep them; ~420 MB saved at r=40 — see chunks.js).
+  // The shipped r=25 ring carries less than half the r=40 cost, and far
+  // chunks stopped storing their 98KB light arrays on top (only
+  // full-detail chunks keep them — see chunks.js).
   // Per-mesh frustum culling (three.js bounding spheres, precomputed at
   // build) then trims the drawn set to the lens — a 70° view draws roughly
   // a quarter of it.
@@ -2132,11 +2139,11 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  // Phase 27 (view 480 -> 640 blocks): pushed out at the same fractions of
-  // the view — clear to ~72%, the ring edge sitting at ~80% haze so pop-in
-  // stays invisible.
-  FOG_NEAR: 460,
-  FOG_FAR: 680,
+  // Scaled with the view at the same fractions every retune (480 -> 640 ->
+  // the final 400): clear to ~72% of the view, the ring edge sitting at
+  // ~80% haze so pop-in stays invisible.
+  FOG_NEAR: 288,
+  FOG_FAR: 425,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
