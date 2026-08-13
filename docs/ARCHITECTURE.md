@@ -153,14 +153,12 @@ src/
                          detail-noise edge erosion, pseudo-volume dome
                          lighting — density-as-height normals with rotated
                          relief bumps, N.L against the real sun/moon —
-                         silver linings, plus a faint higher cirrus veil
-                         that skips the normal taps via FLAT_SHEET, and a
-                         colour-only TOP layer — the same field shrunken
-                         to its cores riding TOP_LIFT above the base, so
-                         the two planes parallax apart and clouds read as
-                         having real thickness) — the base drawn TWICE
-                         for the Phase 26 occlusion contract, a depth-only
-                         core pass then a soft colour pass;
+                         silver linings) — ONE visible colour pass drawing
+                         the field shrunken to its cores (dens^2: compact
+                         bright puffs, no flat sheet; the raw-field base
+                         pass and the cirrus veil were cut by request),
+                         plus the Phase 26 occlusion contract's depth-only
+                         core pass on the RAW field (CORE_ALPHA 0.60);
                          the starfield; the generated sun (round disc in a
                          rim-windowed additive glow, linear-filtered), the
                          moon's cool halo glow, and the eight-phase ROUND

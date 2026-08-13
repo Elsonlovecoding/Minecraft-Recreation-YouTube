@@ -2277,9 +2277,11 @@ export const CELESTIAL = {
 // (a coarse weather-system gate grouping the masses, detail-noise erosion
 // curdling the thin edges, pseudo-volume dome lighting — density read as
 // height, relief-bumped normals, N.L against the sun or the night's moon —
-// and warm silver linings on thin edges near a low sun) plus a faint high
-// cirrus veil for depth. World-anchored and drifting along -x like the old
-// deck, day/night tinted, dawn-blushed.
+// and warm silver linings on thin edges near a low sun). The visible pass
+// draws the field SHRUNKEN to its cores (dens^2): one bright compact-puff
+// layer — the raw field's flat milky sheet and the old cirrus veil were
+// cut by request. World-anchored and drifting along -x like the old deck,
+// day/night tinted, dawn-blushed.
 //
 // THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
 // twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
@@ -2289,9 +2291,6 @@ export const CELESTIAL = {
 // popping. See render/sky_fx.js.
 export const CLOUDS = {
   HEIGHT: 192,                    // cloud base height (the vanilla altitude)
-  TOP_LIFT: 34,                   // the TOP layer rides this far above the
-                                  // base — the parallax between the two
-                                  // planes is what reads as thickness
   PLANE_RADIUS: 1600,             // half-extent of the camera-following plane
   SPEED: 0.9,                     // drift in blocks per second, along -x
   SCALE: 1 / 110,                 // noise-space units per block — the size
@@ -2318,8 +2317,11 @@ export const CLOUDS = {
                                   // rolls an empty sky)
   SOFTNESS: 0.16,                 // density ramp width (puffy vs crisp edges)
   OPACITY: 0.97,                  // core opacity
-  CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
-                                  // and OCCLUDES the sun/moon/stars
+  CORE_ALPHA: 0.60,               // RAW-field alpha above which a fragment
+                                  // writes depth and OCCLUDES the sun/moon/
+                                  // stars (the visible pass draws dens^2,
+                                  // so this keeps the occluding core inside
+                                  // visibly solid cloud)
   FADE_START: 780,                // thin out toward the horizon so the far
   FADE_END: 1400,                 // plane clip never shows a hard edge —
                                   // pushed out with VIEW.FAR 1700 so the
@@ -2342,8 +2344,6 @@ export const CLOUDS = {
   AMBIENT: 0.44,                  // shading floor — sky light on the side
                                   // the sun never touches
   THIN_LIFT: 0.35,                 // thin cloud reads brighter (translucent)
-  CORE_SHADE: 0.34,               // flat grey belly held by the deepest
-                                  // cores regardless of sun angle
   LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
   SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
@@ -2353,16 +2353,6 @@ export const CLOUDS = {
                                   // (what makes dawn clouds blush gold-pink)
   SEED: 37.73,                    // noise hash offset (clouds are weather,
                                   // not terrain — never world-seeded)
-  // The high thin veil above the cumulus: colour-only (never occludes —
-  // the sun THROUGH cirrus is the realistic read), slower features, faster
-  // apparent drift.
-  CIRRUS: {
-    HEIGHT: 252,
-    SCALE: 1 / 540,
-    COVER: 0.50,
-    OPACITY: 0.38,
-    SPEED: 1.6,
-  },
 };
 
 // Phase 24 — the night starfield: small fixed-size points on the celestial
