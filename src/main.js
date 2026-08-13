@@ -20,6 +20,7 @@ import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hu
 import { createScreens } from './ui/screens.js';
 import { createCreativeScreen } from './ui/creative.js';
 import { createMenus } from './ui/menus.js';
+import { createChat } from './ui/chat.js';
 import { gamemode } from './player/gamemode.js';
 import { World } from './world/world.js';
 import {
@@ -50,6 +51,7 @@ import { createEnderEyes } from './entities/ender_eye.js';
 import { createEnderPearls } from './entities/ender_pearl.js';
 import { createDragonFight } from './entities/dragon.js';
 import { createSmeltingSystem } from './systems/smelting.js';
+import { createCommands } from './systems/commands.js';
 import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat, rayAABB } from './systems/combat.js';
 import { createAmbience } from './systems/ambience.js';
@@ -588,6 +590,26 @@ async function init() {
   window.__menus = menus;
   window.__gamemode = gamemode;
 
+  // --- chat + commands (Phase 27) -------------------------------------------
+
+  // The chat bar (ui/chat.js) collects lines; systems/commands.js decides
+  // what they do (/tp with a safe landing). showToast is injected so the
+  // command system never imports UI (the dependency-direction rule).
+  const commands = createCommands({ world, player, dimensions, notify: showToast });
+  const chat = createChat({
+    canvas,
+    onCommand: commands.handle,
+    // Chat opens only while actually playing: a mode chosen, the pointer
+    // locked (or the harness override), and no other screen or text entry
+    // holding the input.
+    canOpen: () => gamemode.chosen &&
+      (document.pointerLockElement === canvas || player.inputOverridden) &&
+      !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
+      !creativeScreen.isOpen && !signs.isEditing,
+  });
+  window.__chat = chat;
+  window.__commands = commands;
+
   // Pickups go to the inventory (existing stacks first, then the first empty
   // slot); the return value tells the item manager how many were accepted.
   // A dropped worn tool carries its durability back in via addStack.
@@ -638,7 +660,7 @@ async function init() {
     document.pointerLockElement !== canvas &&
     !screens.isOpen && !screens.isDeathShown && !screens.isVictoryShown &&
     !creativeScreen.isOpen &&
-    !signs.isEditing && !player.inputOverridden;
+    !signs.isEditing && !chat.isOpen && !player.inputOverridden;
   // Esc while paused resumes, like vanilla. The lock request can reject
   // during the browser's ~1.3s post-Esc cooldown — the pause overlay stays
   // up and a click resumes instead (same swallow as the click path).

@@ -286,6 +286,15 @@ src/
                          end-portal swirls + hum), the looping water/lava
                          ambience beds and the rare underground cave tone.
                          Purely reactive — it reads state, never writes it
+    commands.js          chat commands (Phase 27, split out of main.js at
+                         birth per the size cap): /tp <x> <z> lands the
+                         player at a SAFE spot — the surface in open-sky
+                         worlds (floated to the sea surface over deep
+                         water), a scanned interior spot under the Nether
+                         ceiling, a refusal over the End's void — and
+                         /tp <x> <y> <z> goes exactly there. `notify` is
+                         injected (hud's showToast) so the dependency
+                         direction stays downward
     crafting.js          recipes, grid matching
     smelting.js          furnace logic, fuel
     brewing.js           brewing stand (Phase 18): the 5-slot BrewingStand
@@ -357,6 +366,15 @@ src/
                          other). The pause overlay is pointer-events: none
                          except for its panel, so a click anywhere else still
                          falls through to the canvas and resumes play
+    chat.js              the Phase 27 CHAT BAR: T (or '/', pre-filled)
+                         opens a single-line input at vanilla's chat spot;
+                         the game KEEPS RUNNING while it is open (the
+                         sign-editor rule — pointer releases, main.js's
+                         pause verdict consults isOpen), Enter hands the
+                         line to systems/commands.js, Escape cancels,
+                         ArrowUp recalls history, either way the pointer
+                         relocks. Owns only the DOM and key routing —
+                         never a game rule. Tunables in config CHAT
     creative.js          the Phase 25 CREATIVE INVENTORY: the tabbed
                          catalogue of every block and item (building blocks,
                          decoration, tools, combat, food, materials,
@@ -402,7 +420,14 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 26 added FOUR new files (`world/spawn_scan.js` 130,
+in this document. Phase 27 added TWO new files (`ui/chat.js` 129,
+`systems/commands.js` 95 — the command logic split out of main.js AT BIRTH:
+the chat wiring had taken main to 875, and moving /tp into its own system
+brought it back to 802, sitting right on the tilde; **if main.js grows
+again, the beds block — trySleep/updateSleep — is its next natural cut**).
+`world/world.js` is 426 after the streaming idle/resume work and
+`world/chunks.js` 627 after the light-data tier gate, both comfortably
+under. Phase 26 added FOUR new files (`world/spawn_scan.js` 130,
 `world/surface_rules.js` 112, `render/post_fx.js` 354, `render/water_fx.js`
 152) and made ONE cut the same session: the spawn scan and LOD additions took
 `world/terrain.js` 792 → 814, so the Phase 24 surface rules moved verbatim to

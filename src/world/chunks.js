@@ -295,17 +295,27 @@ export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
   // Phase 12: keep the centre chunk's computed light for cheap point
   // queries (world.getLight — the mob spawner's light checks). Packed
   // sky << 4 | block per cell, refreshed on every remesh.
-  let lightData = chunk.lightData;
-  if (!lightData) {
-    lightData = new Uint8Array(SIZE * SIZE * HEIGHT);
-    chunk.lightData = lightData;
-  }
-  for (let lz = 0; lz < SIZE; lz++) {
-    for (let lx = 0; lx < SIZE; lx++) {
-      const src = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT;
-      const dst = (lz * SIZE + lx) * HEIGHT;
-      for (let iy = 0; iy < HEIGHT; iy++) {
-        lightData[dst + iy] = (wSky[src + iy] << 4) | wBlk[src + iy];
+  // Phase 27: FULL-DETAIL chunks only. Every getLight consumer lives well
+  // inside VIEW.LOD.DETAIL_CHUNKS — mob spawning reaches 96 blocks (6
+  // chunks), the ambient dust tick 10 blocks, the cave tone reads the
+  // player's own cell — and spawning already treats missing light as
+  // "no spawn". At 98KB per chunk this was the single biggest memory line
+  // of the r=40 ring (~660MB across ~6700 far chunks), all of it unread.
+  // A demoted chunk keeps its stale copy (harmless: nothing consults it
+  // out there) and refreshes it on promotion.
+  if (lod === 0) {
+    let lightData = chunk.lightData;
+    if (!lightData) {
+      lightData = new Uint8Array(SIZE * SIZE * HEIGHT);
+      chunk.lightData = lightData;
+    }
+    for (let lz = 0; lz < SIZE; lz++) {
+      for (let lx = 0; lx < SIZE; lx++) {
+        const src = ((lz + SIZE) * W + (lx + SIZE)) * HEIGHT;
+        const dst = (lz * SIZE + lx) * HEIGHT;
+        for (let iy = 0; iy < HEIGHT; iy++) {
+          lightData[dst + iy] = (wSky[src + iy] << 4) | wBlk[src + iy];
+        }
       }
     }
   }

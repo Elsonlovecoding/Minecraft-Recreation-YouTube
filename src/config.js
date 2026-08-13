@@ -225,7 +225,11 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 30,    // chunks loaded/rendered around the player
+  DISTANCE_CHUNKS: 40,    // chunks loaded/rendered around the player
+                          // (Phase 27: 30 -> 40, 640 blocks, by request —
+                          // affordable because the LOD tier does the heavy
+                          // lifting and far chunks stopped storing light
+                          // data; measured numbers in the LOD note below)
   FOV: 70,
   NEAR: 0.1,
   FAR: 1000,
@@ -242,17 +246,30 @@ export const VIEW = {
   // player builds mesh identically at both tiers, so the boundary has
   // nothing visible to pop. HYSTERESIS keeps a chunk's tier sticky for 2
   // chunks of movement so walking along the boundary never remesh-thrashes.
-  // Measured over the full r=30 ring (node, real generator + mesher):
-  //     full detail   2821 meshed  6634 draws  14.25M tris  1168 MB geometry
-  //     with LOD      2821 meshed  5908 draws   6.87M tris   563 MB geometry
-  // -52% triangles and geometry memory — the r=30 ring now costs LESS than
-  // the old fully-detailed r=20 ring (6.44M) while looking identical from
-  // eye level. Per-mesh frustum culling (three.js bounding spheres, on by
-  // default for every chunk mesh, spheres precomputed at build) then trims
-  // the drawn set to the lens — a 70° view draws roughly a quarter of it.
+  // Measured over the full ring (node, real generator + mesher):
+  //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
+  //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
+  //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
+  //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
+  // -59% at r=40 — the shipped 40-chunk ring carries fewer triangles than
+  // the old fully-detailed r=20 ring drew per its own measurements, and
+  // far chunks stopped storing their 98KB light arrays on top (only
+  // full-detail chunks keep them; ~420 MB saved at r=40 — see chunks.js).
+  // Per-mesh frustum culling (three.js bounding spheres, precomputed at
+  // build) then trims the drawn set to the lens — a 70° view draws roughly
+  // a quarter of it.
   LOD: {
     DETAIL_CHUNKS: 14,    // full-detail radius (chunks) around the player
-    HYSTERESIS: 2,        // extra chunks a promoted chunk keeps its tier
+    HYSTERESIS: 3,        // extra chunks a promoted chunk keeps its tier
+                          // (Phase 27: 2 -> 3 — walking along the boundary
+                          // re-tiers fewer chunks per border crossing)
+    RETIER_PER_PASS: 2,   // tier-change remeshes allowed per streaming pass
+                          // (Phase 27): crossing a chunk border wants a
+                          // whole arc of promotions at once, and letting
+                          // them all compete for the frame budget was a
+                          // visible hitch while moving — they trickle now,
+                          // capped, while missing/dirty meshes keep full
+                          // priority
   },
 };
 
@@ -261,7 +278,10 @@ export const VIEW = {
 // every meshed chunk has all 8 neighbours available for culling and AO.
 export const STREAMING = {
   INITIAL_RADIUS: 3,      // chunks fully generated+meshed synchronously at boot
-  FRAME_BUDGET_MS: 8,     // max main-thread ms per frame spent generating/meshing
+  FRAME_BUDGET_MS: 6,     // max main-thread ms per frame spent generating/meshing
+                          // (Phase 27: 8 -> 6 — 8ms on top of the render left
+                          // moving through unbuilt terrain visibly hitchy at
+                          // 60fps; the ring fills a touch slower instead)
   UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
 };
 
@@ -1934,6 +1954,29 @@ export const UI = {
 };
 
 // ---------------------------------------------------------------------------
+// Chat / commands (ui/chat.js — Phase 27). T opens the chat bar, '/' opens
+// it with the slash already typed (vanilla). The game KEEPS RUNNING while
+// chat is open (the sign-entry rule — pointer lock releases, nothing
+// pauses); Enter submits, Escape cancels, either way the pointer relocks.
+// Commands are parsed in main.js; /tp is the one that ships.
+// ---------------------------------------------------------------------------
+
+export const CHAT = {
+  OPEN_KEY: 'KeyT',        // opens the chat bar
+  COMMAND_KEY: 'Slash',    // opens it with '/' already typed (vanilla)
+  MAX_LENGTH: 96,          // input length cap
+  HISTORY: 16,             // submitted lines ArrowUp/ArrowDown recall
+  WIDTH_PX: 440,           // bar width
+  FONT_PX: 15,             // input font size
+  BOTTOM_PX: 88,           // above the hotbar, vanilla's chat spot
+  LEFT_PX: 12,
+  TELEPORT_LIMIT: 100000,  // /tp clamps |x| and |z| to this — far enough
+                           // for anything sane, small enough that a typo
+                           // can't strand the player at float-breaking
+                           // coordinates
+};
+
+// ---------------------------------------------------------------------------
 // Block interaction (break / place / outline / hand)
 // ---------------------------------------------------------------------------
 
@@ -2087,8 +2130,11 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  FOG_NEAR: 340,
-  FOG_FAR: 510,
+  // Phase 27 (view 480 -> 640 blocks): pushed out at the same fractions of
+  // the view — clear to ~72%, the ring edge sitting at ~80% haze so pop-in
+  // stays invisible.
+  FOG_NEAR: 460,
+  FOG_FAR: 680,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every

@@ -10,7 +10,73 @@ Updated at the end of every session. Read at the start of every session.
 
 **THE PROJECT IS COMPLETE.**
 
-Phase last completed: **Phase 26 — VISUAL AND WORLD POLISH (final).** No new
+Phase last completed: **Phase 27 — RENDER DISTANCE 40, SMOOTH STREAMING,
+CHAT + /tp.**
+
+### Phase 27 — more distance, less hitching, and a chat bar
+
+**RENDER DISTANCE 30 -> 40 chunks (640 blocks),** with the cost curve bent
+so it stays playable:
+- Measured over the full ring (node, real generator + mesher): full detail
+  would be 25.09M tris / 2058 MB of geometry; **with the LOD tiers it is
+  10.22M tris / 838 MB (-59%)** — fewer triangles than the old
+  fully-detailed r=20 ring drew. Fog pushed out to match (460/680, the
+  same clear fraction of the view); the golden-hour haze bounds unchanged.
+- **Far chunks stopped storing light data** (`chunks.js`): the 98KB
+  per-chunk packed light array now exists only for full-detail chunks.
+  Every consumer lives well inside the detail radius (mob spawning reaches
+  96 blocks, the dust tick 10, the cave tone 0) and spawning already
+  treats missing light as "no spawn". ~420 MB saved at r=40, and every
+  far mesh skips a 98K-cell copy loop.
+
+**"Don't be laggy when I move around"** — the streaming hitches came from
+four places, each addressed (`world/world.js`, config STREAMING/VIEW.LOD):
+- **The idle scan is GONE.** A full pass that finds nothing to do parks
+  the streamer; any setBlock (the one dirty-path), a chunk-border crossing
+  or a dimension swap wakes it. A parked frame costs 0.0004 ms (measured);
+  before, every frame walked the whole candidate ring — 6889 string-keyed
+  Map lookups at r=40 — for nothing.
+- **Passes resume where they left off.** Work is nearest-first, so the
+  completed near region only grows; the scan starts at the first offset
+  the previous pass left incomplete instead of re-checking thousands of
+  finished chunks (reset on edits/movement, when work can appear behind it).
+- **Tier remeshes trickle.** Crossing a chunk border wants a whole arc of
+  LOD promotions at once; they're capped at RETIER_PER_PASS (2) per pass
+  now — missing and dirty meshes keep the full budget — and HYSTERESIS
+  went 2 -> 3 so the boundary re-tiers fewer chunks per crossing.
+- **The per-frame budget dropped 8 -> 6 ms** — 8ms of meshing on top of
+  the render was itself a visible hitch at 60fps; the ring fills a touch
+  slower instead.
+  Verified in node with the real World: ring settles to idle, an edit
+  wakes it and it re-settles in a handful of frames, a 10-chunk move
+  re-tiers and settles, tiers land on the right side of the hysteresis
+  band; and in the browser the whole session runs with zero game console
+  errors.
+
+**CHAT + /tp** (`ui/chat.js` + `systems/commands.js`, config CHAT):
+- **T opens the chat bar** ('/' opens it with the slash already typed) at
+  vanilla's bottom-left spot. The game KEEPS RUNNING while it is open —
+  the sign-editor rule: pointer lock releases, main.js's pause verdict
+  consults `chat.isOpen`, keys never leak into the game (stopPropagation),
+  Enter submits, Escape cancels, ArrowUp/Down recall history, and the
+  pointer relocks on close. Chat only opens while actually playing (mode
+  chosen, pointer locked, no screen/sign/death/victory holding the input).
+- **`/tp <x> <z>`** teleports to a SAFE spot at that column: the surface
+  in open-sky worlds, floated to the sea surface over deep water (a lake
+  teleport swims instead of drowning in the dark), a scanned interior spot
+  under the Nether's bedrock ceiling (the top-of-column rule would land ON
+  the roof), and a refusal over the End's void. **`/tp <x> <y> <z>`** goes
+  exactly there. Coordinates clamp to CHAT.TELEPORT_LIMIT, junk input gets
+  a usage toast, unknown commands and plain text get gentle pointers.
+  Velocity zeroes on arrival; the destination chunk generates
+  synchronously and the ring re-centres around it on the next frame.
+- Browser-verified end to end: T and '/' openers, surface landing exactly
+  on ground+1 at (300, -500), the exact-y form, junk-input safety, Escape
+  cancelling an armed command, history recall, and a 4.7km teleport into
+  ungenerated terrain landing on the real surface — zero game console
+  errors throughout.
+
+The previous phase: **Phase 26 — VISUAL AND WORLD POLISH.** No new
 systems; the game Phase 25 finished, made richer to look at and friendlier to
 start. Everything below the Phase 26 entry describes the finished game it
 polished.
@@ -895,6 +961,25 @@ request for End-fight testing, and are now gone for good.
 
 ## Working
 
+- **Phase 27 chat + commands** — `ui/chat.js` `createChat({ canvas,
+  onCommand, canOpen })` -> `{ open(prefill), close(relock), isOpen }`;
+  main.js's pause verdict includes `!chat.isOpen` (the signs.isEditing
+  slot). `systems/commands.js` `createCommands({ world, player, dimensions,
+  notify })` -> `{ handle(line), teleportTo(x, z, y?) }` — notify injected
+  (showToast) so systems never import UI. Adding a command = one branch in
+  `handle`. Config CHAT.
+- **Phase 27 streaming idle/resume** — `world._streamIdle` (a completed
+  no-work pass parks the streamer; setBlock, border crossings and
+  swapState wake it — anything that dirties a chunk MUST go through
+  setBlock, which has always been the rule) and `world._scanFrom` (passes
+  resume at the first incomplete offset; reset wherever work can appear
+  behind it). prebuild explicitly un-parks — its small ring "completes".
+  Tier remeshes capped per pass (VIEW.LOD.RETIER_PER_PASS).
+- **Phase 27 far-chunk light** — `chunk.lightData` is written only by
+  tier-0 meshes now; `world.getLight` returns null out there (it always
+  could — unmeshed chunks never had data) and every consumer already
+  handles null. Do not add a getLight consumer that reaches past
+  VIEW.LOD.DETAIL_CHUNKS without revisiting chunks.js.
 - **Phase 26 plains spawn** — `world/spawn_scan.js` `scanPlainsSpawn(gen)`
   (the generator passed as an argument, cycle-free) +
   `TerrainGenerator.spawnColumn()` (cached). `findSpawnPosition` centres its
@@ -4524,17 +4609,19 @@ suites + the reviewers' own probes), zero console errors.
 
 _Nothing known broken._
 
-Phase 26's standing caveat is the same one Phases 23-25 recorded, and it
-still bites: **framerate is unmeasured** — Chromium in this sandbox has no
-GPU and runs the game at 11-17 fps under swiftshader whatever the settings,
-so the 60fps-at-1080p target rests on measured GEOMETRY rather than a
-measured frame rate: the LOD tiers cut the r=30 ring to 6.87M triangles
-(half of what the previously-shipped r=20 setting drew at full detail),
-frustum culling draws ~a quarter of that per frame, and the post pipeline
-adds ~8 small screen-space passes (the scene pass itself unchanged). If a
-real machine still disagrees, the knobs are one config edit each:
-VIEW.DISTANCE_CHUNKS, VIEW.LOD.DETAIL_CHUNKS (lower = cheaper),
-VISUAL.MSAA_SAMPLES, VISUAL.POST_ENABLED. Also honest: the swiftshader
+The standing caveat Phases 23-26 recorded still bites: **framerate is
+unmeasured** — Chromium in this sandbox has no GPU and runs the game at
+11-17 fps under swiftshader whatever the settings, so the 60fps-at-1080p
+target rests on measured GEOMETRY rather than a measured frame rate: the
+LOD tiers hold the Phase 27 r=40 ring to 10.22M triangles / 838 MB (-59%
+against full detail, and fewer triangles than the previously-shipped
+fully-detailed r=20 ring), far chunks carry no light arrays, frustum
+culling draws ~a quarter of the ring per frame, the streamer costs an idle
+frame nothing, and the post pipeline adds ~8 small screen-space passes
+(the scene pass itself unchanged). If a real machine still disagrees, the
+knobs are one config edit each: VIEW.DISTANCE_CHUNKS,
+VIEW.LOD.DETAIL_CHUNKS (lower = cheaper), VISUAL.MSAA_SAMPLES,
+VISUAL.POST_ENABLED. Also honest: the swiftshader
 chunk-ring stall documented in Phase 25 (the streamer is frame-rate-bound
 in this sandbox and never fills past ~50 meshed chunks) is unchanged and
 made every Phase 26 screenshot a near-field one; the LOD/full-ring numbers
@@ -4655,7 +4742,7 @@ per-block data tables belong in `world/blocks.js` and per-mob tables in
 
 ## Notes for the next session
 
-**There is no next session — Phase 26 was the last one, and the project is
+**There is no next session — Phase 27 was the last one, and the project is
 complete.** What follows is kept as a maintainer's handbook: if anyone picks
 this up again, these are the things that were expensive to learn.
 
@@ -4748,3 +4835,4 @@ unfreezes the loop without real pointer lock.
 | 24 | **Polish: terrain, sky and ground vegetation.** RIVERS (the last unbuilt SPEC feature): zero-contours of a low-frequency field press the heightmap below sea level (parabolic bed, eased banks, width varied along the run) so every channel is continuous and joins open water by construction — verified on a 768x768 surface map rendered from the real generator. Surface rules rewritten: beach sand only within reach of actual water, underwater floors sandy-then-dirt with gravel patches (riverbeds and beaches both), mountain bare stone only above a noise-jittered stone line or on ≥3-block cliff faces (measured 57% grass / 26% stone on mountain surfaces), domain-warped biome sampling (±34 blocks) + a wider dither band for irregular edges, tree density/height FIELDS for glades, thickets and groves, and occasional closed-basin surface lava pools in mountains/deserts. SKY: the vanilla blocky cloud deck at y=192 (one merged mesh, hashed blob pattern, period re-anchoring, steady -x drift, sRGB-correct day/night light), the sun rebuilt as a square core in a soft additive glow, the moon given the eight phases from generated textures (the cycle counts days now; sleeping advances the phase), a starfield wheeling on the sun's orbit fading through dusk/dawn on its own keyframe channel, and a keyframed skylight TINT (white noon / warm dawn-dusk / cool night) so terrain light agrees with the sky; fog stays horizon-matched. GROUND VEGETATION (atlas 65-68, finally used): short grass, dandelions, poppies, dead bushes as CROSS-PLANE blocks — a new mesher path (two DoubleSide X-quads, cutout pass, width-true diagonals, per-position nudge), no collision, no light attenuation, never culled; grass in per-biome noise patches, flowers rarer and clustered by colour, bushes on desert sand; instant break (seeds 1/8 from grass only), popped when their soil goes, placeable on grass/dirt, replaceable by blocks and buckets, flat sprite items. The TWO reported bugs: shallow lava was REAL — Phase 23 measured generated cells but the settle scan grew every open-rimmed pool into an apron; pools are now recessed erosion-verified basins (148 contained cells + 8 springs per 256x256, ZERO leak adjacencies). Deepslate was measured correct everywhere including the live browser game (9188/9188 deepslate-family cells at spawn depth; 100.00% purity below y=-9 across three seeds) — the report matches a stale cached build, with a console check recorded in Known broken. Splits: world/ores.js (caves.js's mandated vein cut, byte-identical streams), world/terrain_noise.js, world/plants.js, render/sky_fx.js. Generation 4.5 ms/chunk, meshing 13.9 vs 13.7 baseline, boots in Chromium with zero console errors, screenshot-verified through the full day cycle. | emitters.js (829) and blocks.js (915) over the cap with cuts mandated (small-box emitters; the lookups tail); dragon.js rig cut still outstanding; framerate unmeasured again (no GPU — generation/meshing measured directly instead); flowing water stops at plant cells instead of washing them away; the crack overlay and target outline are full-cube on plants (torch precedent); clouds are flat quads, not the fancy 4-thick boxes |
 | 25 | **THE FINAL PHASE — survival and creative modes; the game is complete.** A START SCREEN on load offers Survival or Creative and holds the world frozen until one is chosen; Esc brings up a PAUSE MENU naming the current mode with a button to switch to the other; the mode shows as a small badge in the HUD corner. Switching is live and lossless because `player/gamemode.js` is a module singleton (the third, beside `particles` and `audio`) whose `set()` flips ONE flag: no reload, no regeneration, no teleport, inventory identical across the switch in both directions (verified by serialising it). Every creative rule is a single gate in the system that already owns it — `stats.damage` (invulnerable), `stats.gainExhaustion` (no hunger), `miningPlan` (instant break, no drops, unbreakables still unbreakable), `inventory.consume*`/`damage*` (infinite stacks, no tool wear), `mobs.playerTargetable` + the same in `dragon.js` (hostiles ignore you), `hud.updateHud` (no bars), `screens.js` (E routes elsewhere). CREATIVE FLIGHT (`body._stepFlight`): double-tap Space toggles, Space up, Shift down, sprint doubles it, 10.9 b/s measured against walking's 4.3, landing ends it, no fall damage, and the move still goes through the same swept collision as walking (`CREATIVE.FLY_COLLIDES`). CREATIVE INVENTORY (`ui/creative.js`): 188 entries over seven tabs with a search that spans all of them, click for a full stack / right-click for one / drag into a slot / drop outside to destroy, infinite by construction (every gesture builds a new stack, nothing is ever removed) — verified 0 blank icons and 0 craftable names missing. The TEST CHEST and its config flag are GONE; survival starts empty in an unmodified world. The five reported bugs: render distance 8 -> 12 chunks with fog to match and the geometry/memory numbers written into config (441 meshed / 973 draws / 2.03M tris / ~320 MB at r=12); biomes rebalanced to plains 40 / forest 23 / desert 19 / mountains 18 with moisture given its own domain warp (and the forest-hugs-coast claim measured to be absent from the generator, 26.0% vs 22.6%, and 26.2% vs 26.1% before any change); a new seed 2163 whose spawn area is 29/25/22/24 across the four biomes; the mountain stone line moved 108 -> 128 with STEEP_DROP 3 -> 4, taking mountains from 60% grass to 91%; great caverns raised in RATE (region 224 -> 128, chance 0.72 -> 0.88, 3 connectors) until 5.4% of all open cave air is big-room and 67% of random cave cells are within 60 blocks of walking of one, 6/6 reachable from open sky. THE FINAL PASS: a survival run from a fresh world to the victory screen driven through the game's own systems in Chromium, 16/16 green, plus a 30/30 mode harness, zero game console errors. Three new files, nothing over the size cap that was not already. | Nothing. The project is finished. The three standing ARCHITECTURE size cuts (`entities/dragon.js` rig, `world/emitters.js` small-box emitters, `world/blocks.js` lookups tail) are the only debt, and only bind if someone grows those files again. |
 | 26 | **Polish: the visual and world pass; the game remains complete.** WORLD: plains made the clear majority biome (55.7% of land, measured over 2000x2000, vs forest 17.8 / desert 10.8 / mountains 15.6); the plains spawn GUARANTEED by a generator-side scan (`world/spawn_scan.js` — nearest large open plains disc wins, best-seen fallback, pure per seed; 12 seeds measured at 94-100% plains, 0% water) instead of seed luck; the stronghold moved to ~400 blocks from the SCANNED spawn (340-460 config, 348 measured, 12 frames + 3091 bricks censused at the anchored centre, eye target identical). RENDER: r=30 kept but tiered — beyond 14 chunks the mesher skips cross plants, culls leaf interiors and drops faces fronting sky-0 air (the enclosed cave network), cutting the ring 14.25M -> 6.87M tris and 1168 -> 563 MB (-52%), under the old r=20 full-detail cost; frustum culling fed by build-time bounding spheres. VISUAL (config VISUAL, all of it): a linear half-float post pipeline (`render/post_fx.js`) with depth-masked god rays at low sun, soft-thresholded warm/violet-detector bloom on lava/glowstone/torches/portals, and gentle grading (richer greens, warm sun, cool shadows); the water surface rippled, fresnel-reflective and sun-glinted (`render/water_fx.js`, render-only, still pass only); AO softened with a warm bounce + cool lean on shaded faces; dust motes in underground light shafts; and the GOLDEN HOUR (reference-image request): purple-to-gold sky keyframes at both day edges, a 3.4x soft sun halo, and a HAZE keyframe channel drowning distant terrain in warm atmosphere while midday keeps its clarity. BUG: clouds occlude the sun, moon and stars per pixel now (deck writes depth, celestials pinned to the far plane — a depth test alone fails below ~9° of sun elevation, where the deck is farther than the 820-block sun quad). A 20-agent adversarial review confirmed 15 findings, all fixed — including the unanchored stronghold early-out that would have kept the structure from ever generating, and the LOD gate erasing distant lava falls. Splits: `world/surface_rules.js` (terrain.js back under the cap, byte-identical A/B). Boots in Chromium with zero game console errors; screenshot-verified (noon, god rays, golden hour x3, cloud-clipped sun, night bloom, shaft dust, exaggerated-water proof). | Framerate unmeasured again (software GL sandbox — geometry measured in node instead); the swiftshader ring stall unchanged; the three standing size-cap debts (dragon rig, emitters small-boxes, blocks lookups) untouched. |
+| 27 | **Render distance 40, smooth streaming, chat + /tp.** The view ring grew 30 -> 40 chunks (640 blocks) at -59% of full-detail cost: the LOD tiers hold the ring to 10.22M tris / 838 MB (measured; full detail would be 25.09M / 2058 MB), far chunks stopped storing their 98KB light arrays (~420 MB saved; every consumer lives inside the detail radius and handles null), and fog moved out to 460/680. Movement hitches attacked at the source (`world/world.js`): a completed no-work pass PARKS the streamer (an idle frame costs 0.0004 ms, measured, vs walking 6889 Map lookups), passes resume at the first incomplete offset instead of re-scanning the finished near region, LOD tier remeshes trickle at RETIER_PER_PASS 2 with hysteresis 3 so border crossings stop queueing arcs of remeshes, and the per-frame budget went 8 -> 6 ms. Node-verified: settle -> idle, edit -> wake -> re-settle in single-digit frames, a 10-chunk move re-tiers correctly. CHAT (`ui/chat.js`, the sign-editor pattern — game keeps running, pointer releases, relocks on close) opens on T or '/', with history recall; `systems/commands.js` (split out of main.js at birth — the wiring took main to 875, back to 802) ships `/tp <x> <z>` with a SAFE landing (surface; floated over deep water; a scanned interior spot under the Nether ceiling; refusal over the End void) and `/tp <x> <y> <z>` exact. Browser-verified end to end including a 4.7km teleport into ungenerated terrain, zero game console errors. | Framerate still unmeasurable in the sandbox (geometry measured in node instead); main.js at 802 sits right on the ~800 tilde — the beds block is its next cut if it grows; the swiftshader ring stall unchanged. |

@@ -38,6 +38,20 @@ export class World {
       }
     }
     this._offsets.sort((a, b) => a.d2 - b.d2);
+    // Phase 27 — the streaming scan itself must not cost a frame anything
+    // once the ring is built. At r=40 the candidate list is 6889 offsets,
+    // and walking it every frame (a string-keyed Map lookup each) is real
+    // milliseconds. Two cuts:
+    //   _streamIdle    a full pass that found NOTHING to do parks the
+    //                  streamer entirely; any setBlock (the one dirty
+    //                  writer), a chunk-border crossing or a dimension swap
+    //                  wakes it
+    //   _scanFrom      work is nearest-first, so the completed near region
+    //                  only ever grows — passes resume at the first offset
+    //                  the previous pass found incomplete instead of
+    //                  re-checking thousands of finished chunks
+    this._streamIdle = false;
+    this._scanFrom = 0;
   }
 
   static chunkKey(cx, cz) {
@@ -90,6 +104,8 @@ export class World {
     chunk.set(lx, y, lz, id);
     chunk.dirty = true;
     if (markModified) chunk.modified = true; // player edits — never dropped
+    this._streamIdle = false; // wake the streamer (Phase 27)
+    this._scanFrom = 0;       // the dirty chunk can be anywhere in the ring
 
     const markDirty = (ncx, ncz) => {
       const n = this.getChunkIfLoaded(ncx, ncz);
@@ -143,6 +159,8 @@ export class World {
     this.meshedCount = state.meshedCount;
     this._pcx = state.pcx;
     this._pcz = state.pcz;
+    this._streamIdle = false; // a whole other world just arrived (Phase 27)
+    this._scanFrom = 0;
     return prev;
   }
 
@@ -230,6 +248,10 @@ export class World {
     this._pcz = Math.floor(pos.z / SIZE);
     this._streamPass(this._pcx, this._pcz, Infinity, STREAMING.INITIAL_RADIUS);
     this._streamPass(this._pcx, this._pcz, Infinity, STREAMING.INITIAL_RADIUS);
+    // Phase 27: the small prebuild ring "completes" its scan, but the REAL
+    // ring is still empty — never let the boot passes park the streamer.
+    this._streamIdle = false;
+    this._scanFrom = 0;
   }
 
   // Call once per frame with the camera/player position. Generates missing
@@ -243,7 +265,12 @@ export class World {
       this._pcx = pcx;
       this._pcz = pcz;
       this._unloadFar(pcx, pcz);
+      this._streamIdle = false; // the ring re-centred (Phase 27)
+      this._scanFrom = 0;
     }
+    // Phase 27: a built, clean ring costs the frame NOTHING — the last
+    // full pass found no work and nothing has changed since.
+    if (this._streamIdle) return;
     this._streamPass(pcx, pcz, STREAMING.FRAME_BUDGET_MS, VIEW.DISTANCE_CHUNKS);
   }
 
@@ -268,13 +295,27 @@ export class World {
     const genR = meshRadius + 1;
     const detailR2 = VIEW.LOD.DETAIL_CHUNKS ** 2;
     const demoteR2 = (VIEW.LOD.DETAIL_CHUNKS + VIEW.LOD.HYSTERESIS) ** 2;
-    for (const o of this._offsets) {
+    // Phase 27: tier-change remeshes TRICKLE (VIEW.LOD.RETIER_PER_PASS) so a
+    // border crossing's whole arc of promotions can't camp on the budget,
+    // and the scan resumes at the first offset the previous pass left
+    // incomplete — work is nearest-first, so everything before that index
+    // is known finished and re-checking it is pure waste (at r=40 the ring
+    // is 6889 offsets; walking them all every frame was itself a cost).
+    let retiers = VIEW.LOD.RETIER_PER_PASS;
+    let firstIncomplete = -1;
+    const offsets = this._offsets;
+    for (let i = this._scanFrom; i < offsets.length; i++) {
+      const o = offsets[i];
       const cx = pcx + o.dx;
       const cz = pcz + o.dz;
       const chunk = this.getChunkIfLoaded(cx, cz);
       if (!chunk) {
         if (Math.max(Math.abs(o.dx), Math.abs(o.dz)) > genR) continue;
-        if (performance.now() - t0 >= budgetMs) return;
+        if (firstIncomplete < 0) firstIncomplete = i;
+        if (performance.now() - t0 >= budgetMs) {
+          this._scanFrom = firstIncomplete;
+          return;
+        }
         this.getChunk(cx, cz); // generates; meshing happens on a later pass
         continue;
       }
@@ -290,9 +331,29 @@ export class World {
         ? !chunk.mesh || chunk.dirty || lodStale
         : o.d2 <= keepR2 && !!chunk.mesh && (chunk.dirty || lodStale);
       if (!wantsMesh) continue;
+      if (firstIncomplete < 0) firstIncomplete = i;
+      // A tier change with nothing else wrong is cosmetic upkeep — capped
+      // per pass; missing and dirty meshes keep the whole budget.
+      if (lodStale && chunk.mesh && !chunk.dirty) {
+        if (retiers <= 0) continue;
+        retiers--;
+      }
       if (!this._neighborsLoaded(cx, cz)) continue;
-      if (performance.now() - t0 >= budgetMs) return;
+      if (performance.now() - t0 >= budgetMs) {
+        this._scanFrom = firstIncomplete;
+        return;
+      }
       this._remesh(chunk, lod);
+    }
+    // Scanned to the end of the ring: park on the first thing still
+    // unfinished (a capped retier, a chunk waiting on neighbours), or go
+    // IDLE — the next frames cost nothing until something wakes us
+    // (updateStreaming clears the flag on movement, setBlock on any edit).
+    if (firstIncomplete >= 0) {
+      this._scanFrom = firstIncomplete;
+    } else {
+      this._scanFrom = 0;
+      this._streamIdle = true;
     }
   }
 
