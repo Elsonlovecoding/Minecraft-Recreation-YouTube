@@ -238,7 +238,10 @@ export const VIEW = {
                           // both in the LOD note below.)
   FOV: 70,
   NEAR: 0.1,
-  FAR: 1000,
+  FAR: 1700,              // must clear CLOUDS.FADE_END (1400) plus slack —
+                          // the cloud plane's far band was clipping at the
+                          // old 1000 (terrain never gets near this: the
+                          // ring ends at 400 and fog closes at 425)
 
   // Phase 26 — LEVEL OF DETAIL, so the 30-chunk ring doesn't cost 30 chunks
   // of full geometry. Chunks beyond DETAIL_CHUNKS mesh at a reduced tier:
@@ -2286,6 +2289,9 @@ export const CELESTIAL = {
 // popping. See render/sky_fx.js.
 export const CLOUDS = {
   HEIGHT: 192,                    // cloud base height (the vanilla altitude)
+  TOP_LIFT: 34,                   // the TOP layer rides this far above the
+                                  // base — the parallax between the two
+                                  // planes is what reads as thickness
   PLANE_RADIUS: 1600,             // half-extent of the camera-following plane
   SPEED: 0.9,                     // drift in blocks per second, along -x
   SCALE: 1 / 110,                 // noise-space units per block — the size
@@ -2302,37 +2308,44 @@ export const CLOUDS = {
                                   // first cut put the WHOLE visible sky in
                                   // one gate cell and a low roll meant a
                                   // permanently empty sky)
-  COVER: 0.68,                    // how much of a weather system fills in
-                                  // (retuned when the erosion landed —
-                                  // detail noise eats some area back; node
-                                  // sweep holds ~40% visible / ~30% solid)
-  SOFTNESS: 0.22,                 // density ramp width (puffy vs crisp edges)
-  OPACITY: 0.94,                  // core opacity
+  COVER: 0.70,                    // how much of a weather system fills in
+                                  // (the reference-image retune: node
+                                  // sweep holds ~52% visible / ~44% solid
+                                  // with EVERY sampled vantage >= 38% —
+                                  // clouds mostly SOLID white with thin
+                                  // rims, blue between the puffs, and the
+                                  // gate kept mild so no vantage ever
+                                  // rolls an empty sky)
+  SOFTNESS: 0.16,                 // density ramp width (puffy vs crisp edges)
+  OPACITY: 0.97,                  // core opacity
   CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
                                   // and OCCLUDES the sun/moon/stars
-  FADE_START: 620,                // thin out toward the horizon so the far
-  FADE_END: 950,                  // plane clip never shows a hard edge
-  WARP: 0.7,                      // domain-warp strength (noise units) —
+  FADE_START: 780,                // thin out toward the horizon so the far
+  FADE_END: 1400,                 // plane clip never shows a hard edge —
+                                  // pushed out with VIEW.FAR 1700 so the
+                                  // low stacked band of distant clouds
+                                  // (the reference image's horizon) shows
+  WARP: 0.55,                      // domain-warp strength (noise units) —
                                   // bends the sample space so puffs stop
                                   // being round fbm blobs
   DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
-  EROSION: 0.42,                  // how hard detail noise eats thin edges
+  EROSION: 0.38,                  // how hard detail noise eats thin edges
                                   // (the cauliflower rim; cores keep mass)
   NORMAL_EPS: 0.05,               // gradient step for the dome normal —
                                   // small enough not to alias the relief
-  DOME_GAIN: 1.0,                 // density-as-height slope: how strongly
+  DOME_GAIN: 1.3,                 // density-as-height slope: how strongly
                                   // the fake dome tilts into/away from sun
-  RELIEF: 0.4,                    // interior bump height (fraction of the
+  RELIEF: 0.5,                    // interior bump height (fraction of the
                                   // body): the dappled underbelly cells
   RELIEF_SCALE: 2.6,              // bump frequency, x base scale (~42
                                   // blocks per cell at SCALE 1/110)
-  AMBIENT: 0.42,                  // shading floor — sky light on the side
+  AMBIENT: 0.44,                  // shading floor — sky light on the side
                                   // the sun never touches
-  THIN_LIFT: 0.3,                 // thin cloud reads brighter (translucent)
-  CORE_SHADE: 0.32,               // flat grey belly held by the deepest
+  THIN_LIFT: 0.35,                 // thin cloud reads brighter (translucent)
+  CORE_SHADE: 0.34,               // flat grey belly held by the deepest
                                   // cores regardless of sun angle
   LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
-  SHADE_COLOR: 0x9aa8bb,          // ...and its shaded underbelly (sRGB)
+  SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
   SILVER_POWER: 9,                // ...tightness around the sun's direction
   NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)

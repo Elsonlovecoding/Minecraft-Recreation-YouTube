@@ -126,9 +126,9 @@ const CLOUD_FRAG = /* glsl */ `
     np += (vec2(cnoise(np * 0.55 + 13.1), cnoise(np * 0.55 + 71.7)) - 0.5) * WARP;
     // The gate MODULATES coverage rather than zeroing it — a low weather
     // cell thins the sky out, it never empties it entirely.
-    float gate = smoothstep(0.30, 0.72,
+    float gate = smoothstep(0.32, 0.70,
       cnoise(np * GATE_SCALE) * 0.65 + cnoise(np * GATE_SCALE * 2.63 + 41.3) * 0.35);
-    float t = 1.0 - uCover * (0.58 + 0.42 * gate);
+    float t = 1.0 - uCover * (0.62 + 0.38 * gate);
     float body = smoothstep(t, t + SOFTNESS, cfbm(np));
     // Cauliflower erosion: high-frequency detail eats at the THIN parts
     // (weighted by 1-body, so cores keep their mass) — the crisp curdled
@@ -143,6 +143,13 @@ const CLOUD_FRAG = /* glsl */ `
   void main() {
     vec2 np = vWorld.xz * NOISE_SCALE + uOffset;
     float dens = cloudDensity(np);
+    #ifdef TOP_LAYER
+      // The deck's TOP: the same field shrunken toward its cores (a puff's
+      // crown is smaller than its base). Riding TOP_LIFT above the base
+      // plane, it parallaxes apart from it at every viewing angle — the
+      // cheap read of vertical development a single flat layer can't give.
+      dens = dens * dens;
+    #endif
     // Horizon fade: thin out before the far-plane clip ever shows an edge.
     float dist = distance(vWorld.xz, cameraPosition.xz);
     float fade = 1.0 - smoothstep(FADE_START, FADE_END, dist);
@@ -182,9 +189,13 @@ const CLOUD_FRAG = /* glsl */ `
       // Thin cloud reads brighter (light passes through it).
       lit = clamp(lit + (1.0 - dens) * THIN_LIFT, 0.0, 1.0);
       vec3 col = mix(uShade, uLit, lit);
-      // Optical depth: the deepest cores keep a flat grey belly no matter
-      // where the sun sits — thick cumulus never read paper-white all over.
-      col = mix(col, uShade, smoothstep(0.6, 1.0, dens) * CORE_SHADE);
+      #ifndef TOP_LAYER
+        // Optical depth: the deepest cores keep a flat grey belly no
+        // matter where the sun sits — thick cumulus never read
+        // paper-white all over. The TOP layer skips this: sunlit crowns
+        // stay white.
+        col = mix(col, uShade, smoothstep(0.6, 1.0, dens) * CORE_SHADE);
+      #endif
       // Silver lining: thin edges glow toward the sun's direction.
       vec3 viewDir = normalize(vWorld - cameraPosition);
       float rim = pow(max(dot(viewDir, uSunDir), 0.0), SILVER_POWER);
@@ -261,6 +272,17 @@ export function createClouds() {
   const colorMesh = new THREE.Mesh(geometry, colorMat);
   colorMesh.renderOrder = -1.1;
 
+  // The deck's TOP (the reference-image retune): colour-only, the same
+  // field shrunken to its cores, flat-lit bright (FLAT_SHEET — sunlit
+  // crowns need no gradient taps), riding TOP_LIFT above the base. Drawn
+  // BEFORE the base colour pass: from below it is the farther surface.
+  const topMat = makeMaterial({ depthWrite: false }, {
+    FLAT_SHEET: 1,
+    TOP_LAYER: 1,
+  });
+  const topMesh = new THREE.Mesh(geometry, topMat);
+  topMesh.renderOrder = -1.11;
+
   // The cirrus veil: colour-only, its own scale/coverage, never occludes.
   const cirrusMat = makeMaterial({ depthWrite: false }, {
     NOISE_SCALE: C.CIRRUS.SCALE.toFixed(8),
@@ -276,10 +298,11 @@ export function createClouds() {
   const group = new THREE.Group();
   group.add(depthMesh);
   group.add(colorMesh);
+  group.add(topMesh);
   group.add(cirrusMesh);
-  for (const m of [depthMesh, colorMesh, cirrusMesh]) m.frustumCulled = false;
+  for (const m of [depthMesh, colorMesh, topMesh, cirrusMesh]) m.frustumCulled = false;
 
-  const mats = [depthMat, colorMat, cirrusMat];
+  const mats = [depthMat, colorMat, topMat, cirrusMat];
   // The drift wrap bounds float precision through arbitrarily long days.
   // It is NOT seamless: only cfbm's first octave shares the hash lattice's
   // 512 period — every scaled/rotated sampling (gate, higher octaves,
@@ -306,9 +329,11 @@ export function createClouds() {
       cirrusDrift = (cirrusDrift + delta * C.CIRRUS.SPEED * C.CIRRUS.SCALE) % NOISE_PERIOD;
       depthMesh.position.set(focus.x, C.HEIGHT, focus.z);
       colorMesh.position.set(focus.x, C.HEIGHT, focus.z);
+      topMesh.position.set(focus.x, C.HEIGHT + C.TOP_LIFT, focus.z);
       cirrusMesh.position.set(focus.x, C.CIRRUS.HEIGHT, focus.z);
       depthMat.uniforms.uOffset.value.set(drift, 0);
       colorMat.uniforms.uOffset.value.set(drift, 0);
+      topMat.uniforms.uOffset.value.set(drift, 0);
       cirrusMat.uniforms.uOffset.value.set(cirrusDrift, 0);
     },
     // Day/night: the lit/shade pair scales with the sun and blushes toward

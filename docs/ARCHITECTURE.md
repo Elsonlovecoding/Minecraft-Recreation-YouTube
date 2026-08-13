@@ -154,9 +154,13 @@ src/
                          lighting — density-as-height normals with rotated
                          relief bumps, N.L against the real sun/moon —
                          silver linings, plus a faint higher cirrus veil
-                         that skips the normal taps via FLAT_SHEET) —
-                         drawn TWICE for the Phase 26 occlusion contract,
-                         a depth-only core pass then a soft colour pass;
+                         that skips the normal taps via FLAT_SHEET, and a
+                         colour-only TOP layer — the same field shrunken
+                         to its cores riding TOP_LIFT above the base, so
+                         the two planes parallax apart and clouds read as
+                         having real thickness) — the base drawn TWICE
+                         for the Phase 26 occlusion contract, a depth-only
+                         core pass then a soft colour pass;
                          the starfield; the generated sun (round disc in a
                          rim-windowed additive glow, linear-filtered), the
                          moon's cool halo glow, and the eight-phase ROUND
