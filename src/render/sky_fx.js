@@ -48,10 +48,12 @@ export function forceFarDepth(material) {
 // rim, self-shading is PSEUDO-VOLUME (density read as the height of a dome,
 // rotated relief bumps keeping the interior dappled, a real N.L against the
 // 3D sun — the moon after dark), and thin edges catch a warm silver lining
-// when they sit near a low sun. A second, faint cirrus plane rides higher
-// for depth (FLAT_SHEET: it skips the gradient taps). The pattern lives in
-// WORLD space (the plane follows the camera but the noise is sampled at
-// world coordinates plus the drift offset), so flying never slides the sky.
+// when they sit near a low sun. The pattern lives in WORLD space (the
+// plane follows the camera but the noise is sampled at world coordinates
+// plus the drift offset), so flying never slides the sky. The visible pass
+// draws the field SHRUNKEN to its cores (dens^2) — the raw field's flat
+// milky sheet and the old cirrus veil were cut by request; one bright
+// compact-puff layer is the whole look now.
 //
 // THE OCCLUSION CONTRACT (Phase 26): the sun, moon and stars are pinned to
 // the far plane and must vanish behind real cloud. Soft alpha and a single
@@ -64,9 +66,7 @@ export function forceFarDepth(material) {
 //   pass 2  COLOUR (renderOrder -1.1, no depth write), drawn AFTER the
 //           stars (-1.5) and sun/moon (-1.2): the soft rims BLEND over
 //           them, attenuating smoothly right up to the opaque core.
-// Terrain still occludes both passes through the ordinary depth test, and
-// the cirrus veil is colour-only — the sun showing THROUGH cirrus is the
-// realistic read.
+// Terrain still occludes both passes through the ordinary depth test.
 
 const CLOUD_VERT = /* glsl */ `
   varying vec3 vWorld;
@@ -76,7 +76,7 @@ const CLOUD_VERT = /* glsl */ `
   }
 `;
 
-// Density + shading shared by both passes and the cirrus (via defines).
+// Density + shading shared by both passes (via defines).
 const CLOUD_FRAG = /* glsl */ `
   uniform vec2 uOffset;      // drift, in noise units (wrapped)
   uniform vec3 uLit;         // sunlit cloud colour (linear, day/night applied)
@@ -126,9 +126,9 @@ const CLOUD_FRAG = /* glsl */ `
     np += (vec2(cnoise(np * 0.55 + 13.1), cnoise(np * 0.55 + 71.7)) - 0.5) * WARP;
     // The gate MODULATES coverage rather than zeroing it — a low weather
     // cell thins the sky out, it never empties it entirely.
-    float gate = smoothstep(0.30, 0.72,
+    float gate = smoothstep(0.32, 0.70,
       cnoise(np * GATE_SCALE) * 0.65 + cnoise(np * GATE_SCALE * 2.63 + 41.3) * 0.35);
-    float t = 1.0 - uCover * (0.58 + 0.42 * gate);
+    float t = 1.0 - uCover * (0.62 + 0.38 * gate);
     float body = smoothstep(t, t + SOFTNESS, cfbm(np));
     // Cauliflower erosion: high-frequency detail eats at the THIN parts
     // (weighted by 1-body, so cores keep their mass) — the crisp curdled
@@ -143,6 +143,15 @@ const CLOUD_FRAG = /* glsl */ `
   void main() {
     vec2 np = vWorld.xz * NOISE_SCALE + uOffset;
     float dens = cloudDensity(np);
+    #ifndef DEPTH_PASS
+      // The visible layer is the field shrunken toward its cores (dens^2):
+      // compact bright puffs with real blue between them. The raw field's
+      // colour pass painted a flat milky sheet at glancing angles and was
+      // cut by request ("remove the layer of bad cloud") — the depth pass
+      // below still occludes on the RAW field, with CORE_ALPHA raised so
+      // the occluding core stays inside visibly solid cloud.
+      dens = dens * dens;
+    #endif
     // Horizon fade: thin out before the far-plane clip ever shows an edge.
     float dist = distance(vWorld.xz, cameraPosition.xz);
     float fade = 1.0 - smoothstep(FADE_START, FADE_END, dist);
@@ -161,30 +170,24 @@ const CLOUD_FRAG = /* glsl */ `
       // weighted by density so it lives on the cloud and not the clear
       // sky: the body ramp saturates to 1 inside a puff (gradient zero),
       // and without the bumps a big cloud shades only at its rim and
-      // reads flat overhead. With them the base stays dappled.
-      #ifdef FLAT_SHEET
-        // The cirrus veil is a sheet, not puffs — skip the six gradient
-        // taps and light it like a horizontal plane.
-        float ndl = clamp(uSunDir.y, 0.0, 1.0);
-      #else
-        vec2 npR = np + vec2(NORMAL_EPS, 0.0);
-        vec2 npF = np + vec2(0.0, NORMAL_EPS);
-        float dR = cloudDensity(npR);
-        float dF = cloudDensity(npF);
-        float hC = dens + crelief(np) * RELIEF * dens;
-        float hR = dR + crelief(npR) * RELIEF * dR;
-        float hF = dF + crelief(npF) * RELIEF * dF;
-        vec3 nrm = normalize(vec3((hC - hR) * DOME_GAIN, NORMAL_EPS,
-                                  (hC - hF) * DOME_GAIN));
-        float ndl = clamp(dot(nrm, uSunDir), 0.0, 1.0);
-      #endif
+      // reads flat overhead. With them the interior stays dappled. The
+      // gradient taps are squared like the centre — one consistent field.
+      vec2 npR = np + vec2(NORMAL_EPS, 0.0);
+      vec2 npF = np + vec2(0.0, NORMAL_EPS);
+      float dR = cloudDensity(npR);
+      dR *= dR;
+      float dF = cloudDensity(npF);
+      dF *= dF;
+      float hC = dens + crelief(np) * RELIEF * dens;
+      float hR = dR + crelief(npR) * RELIEF * dR;
+      float hF = dF + crelief(npF) * RELIEF * dF;
+      vec3 nrm = normalize(vec3((hC - hR) * DOME_GAIN, NORMAL_EPS,
+                                (hC - hF) * DOME_GAIN));
+      float ndl = clamp(dot(nrm, uSunDir), 0.0, 1.0);
       float lit = AMBIENT + (1.0 - AMBIENT) * ndl;
       // Thin cloud reads brighter (light passes through it).
       lit = clamp(lit + (1.0 - dens) * THIN_LIFT, 0.0, 1.0);
       vec3 col = mix(uShade, uLit, lit);
-      // Optical depth: the deepest cores keep a flat grey belly no matter
-      // where the sun sits — thick cumulus never read paper-white all over.
-      col = mix(col, uShade, smoothstep(0.6, 1.0, dens) * CORE_SHADE);
       // Silver lining: thin edges glow toward the sun's direction.
       vec3 viewDir = normalize(vWorld - cameraPosition);
       float rim = pow(max(dot(viewDir, uSunDir), 0.0), SILVER_POWER);
@@ -229,7 +232,6 @@ export function createClouds() {
     RELIEF_SCALE: C.RELIEF_SCALE.toFixed(4),
     AMBIENT: C.AMBIENT.toFixed(4),
     THIN_LIFT: C.THIN_LIFT.toFixed(4),
-    CORE_SHADE: C.CORE_SHADE.toFixed(4),
     SILVER_POWER: C.SILVER_POWER.toFixed(1),
     CLOUD_SEED: C.SEED.toFixed(4),
   }, extra);
@@ -256,42 +258,30 @@ export function createClouds() {
   const depthMesh = new THREE.Mesh(geometry, depthMat);
   depthMesh.renderOrder = -1.95;
 
-  // Pass 2 — the visible layer, after the stars and sun/moon.
+  // Pass 2 — the visible layer, after the stars and sun/moon: ONE bright
+  // compact-puff pass (the base sheet and the cirrus veil were cut by
+  // request — "remove the layer of bad cloud. Only the upper good layer").
   const colorMat = makeMaterial({ depthWrite: false });
   const colorMesh = new THREE.Mesh(geometry, colorMat);
   colorMesh.renderOrder = -1.1;
 
-  // The cirrus veil: colour-only, its own scale/coverage, never occludes.
-  const cirrusMat = makeMaterial({ depthWrite: false }, {
-    NOISE_SCALE: C.CIRRUS.SCALE.toFixed(8),
-    OPACITY: C.CIRRUS.OPACITY.toFixed(4),
-    SOFTNESS: '0.34',
-    FLAT_SHEET: 1, // the high veil skips the dome-normal taps entirely
-    CLOUD_SEED: (C.SEED + 111.1).toFixed(4),
-  });
-  cirrusMat.uniforms.uCover.value = C.CIRRUS.COVER;
-  const cirrusMesh = new THREE.Mesh(geometry, cirrusMat);
-  cirrusMesh.renderOrder = -1.12;
-
   const group = new THREE.Group();
   group.add(depthMesh);
   group.add(colorMesh);
-  group.add(cirrusMesh);
-  for (const m of [depthMesh, colorMesh, cirrusMesh]) m.frustumCulled = false;
+  for (const m of [depthMesh, colorMesh]) m.frustumCulled = false;
 
-  const mats = [depthMat, colorMat, cirrusMat];
+  const mats = [depthMat, colorMat];
   // The drift wrap bounds float precision through arbitrarily long days.
   // It is NOT seamless: only cfbm's first octave shares the hash lattice's
   // 512 period — every scaled/rotated sampling (gate, higher octaves,
   // warp, detail, relief) lands elsewhere on the lattice after a wrap, so
   // the whole sky re-rolls to a fresh layout when one hits. That takes
-  // ~17h of continuous play (48h for cirrus), both passes pop coherently
-  // (same drift, same density code — occlusion holds), and clouds are
-  // weather, so the once-a-real-day reshuffle is accepted rather than
-  // paying for a true common period or a cross-fade.
+  // ~17h of continuous play, both passes pop coherently (same drift, same
+  // density code — occlusion holds), and clouds are weather, so the
+  // once-a-real-day reshuffle is accepted rather than paying for a true
+  // common period or a cross-fade.
   const NOISE_PERIOD = 512; // the hash lattice wrap (see chash)
   let drift = 0;
-  let cirrusDrift = 0;
   const white = new THREE.Color(1, 1, 1);
   const tinted = new THREE.Color();
   const silver = new THREE.Color();
@@ -303,13 +293,10 @@ export function createClouds() {
     // offset (wrapped — see NOISE_PERIOD above).
     update(delta, focus) {
       drift = (drift + delta * C.SPEED * C.SCALE) % NOISE_PERIOD;
-      cirrusDrift = (cirrusDrift + delta * C.CIRRUS.SPEED * C.CIRRUS.SCALE) % NOISE_PERIOD;
       depthMesh.position.set(focus.x, C.HEIGHT, focus.z);
       colorMesh.position.set(focus.x, C.HEIGHT, focus.z);
-      cirrusMesh.position.set(focus.x, C.CIRRUS.HEIGHT, focus.z);
       depthMat.uniforms.uOffset.value.set(drift, 0);
       colorMat.uniforms.uOffset.value.set(drift, 0);
-      cirrusMat.uniforms.uOffset.value.set(cirrusDrift, 0);
     },
     // Day/night: the lit/shade pair scales with the sun and blushes toward
     // the horizon colour at dawn/dusk. Maths in sRGB (the trap that bit the

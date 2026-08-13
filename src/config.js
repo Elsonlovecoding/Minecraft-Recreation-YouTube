@@ -225,14 +225,23 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 40,    // chunks loaded/rendered around the player
-                          // (Phase 27: 30 -> 40, 640 blocks, by request —
-                          // affordable because the LOD tier does the heavy
-                          // lifting and far chunks stopped storing light
-                          // data; measured numbers in the LOD note below)
+  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
+                          // the guaranteed radius WHEREVER the player
+                          // stands (streaming re-centres every border
+                          // crossing). Final request: "render 25 chunks
+                          // ... wherever I'm standing, 25 chunk radius" —
+                          // Phase 27's 40 was more than asked and its
+                          // 5025-chunk ring took real minutes to fill
+                          // after a move; 1961 chunks fills ~2.5x faster,
+                          // so the promised radius is actually THERE.
+                          // (Phase 27: 30 -> 40; measured numbers for
+                          // both in the LOD note below.)
   FOV: 70,
   NEAR: 0.1,
-  FAR: 1000,
+  FAR: 1700,              // must clear CLOUDS.FADE_END (1400) plus slack —
+                          // the cloud plane's far band was clipping at the
+                          // old 1000 (terrain never gets near this: the
+                          // ring ends at 400 and fog closes at 425)
 
   // Phase 26 — LEVEL OF DETAIL, so the 30-chunk ring doesn't cost 30 chunks
   // of full geometry. Chunks beyond DETAIL_CHUNKS mesh at a reduced tier:
@@ -247,14 +256,15 @@ export const VIEW = {
   // nothing visible to pop. HYSTERESIS keeps a chunk's tier sticky for 2
   // chunks of movement so walking along the boundary never remesh-thrashes.
   // Measured over the full ring (node, real generator + mesher):
+  //   r=25 full detail  1961 meshed   4605 draws  10.00M tris   820 MB geometry
+  //   r=25 with LOD     1961 meshed   4182 draws   5.58M tris   458 MB geometry
   //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
   //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
   //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
   //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
-  // -59% at r=40 — the shipped 40-chunk ring carries fewer triangles than
-  // the old fully-detailed r=20 ring drew per its own measurements, and
-  // far chunks stopped storing their 98KB light arrays on top (only
-  // full-detail chunks keep them; ~420 MB saved at r=40 — see chunks.js).
+  // The shipped r=25 ring carries less than half the r=40 cost, and far
+  // chunks stopped storing their 98KB light arrays on top (only
+  // full-detail chunks keep them — see chunks.js).
   // Per-mesh frustum culling (three.js bounding spheres, precomputed at
   // build) then trims the drawn set to the lens — a 70° view draws roughly
   // a quarter of it.
@@ -2132,11 +2142,11 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  // Phase 27 (view 480 -> 640 blocks): pushed out at the same fractions of
-  // the view — clear to ~72%, the ring edge sitting at ~80% haze so pop-in
-  // stays invisible.
-  FOG_NEAR: 460,
-  FOG_FAR: 680,
+  // Scaled with the view at the same fractions every retune (480 -> 640 ->
+  // the final 400): clear to ~72% of the view, the ring edge sitting at
+  // ~80% haze so pop-in stays invisible.
+  FOG_NEAR: 288,
+  FOG_FAR: 425,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
@@ -2267,9 +2277,11 @@ export const CELESTIAL = {
 // (a coarse weather-system gate grouping the masses, detail-noise erosion
 // curdling the thin edges, pseudo-volume dome lighting — density read as
 // height, relief-bumped normals, N.L against the sun or the night's moon —
-// and warm silver linings on thin edges near a low sun) plus a faint high
-// cirrus veil for depth. World-anchored and drifting along -x like the old
-// deck, day/night tinted, dawn-blushed.
+// and warm silver linings on thin edges near a low sun). The visible pass
+// draws the field SHRUNKEN to its cores (dens^2): one bright compact-puff
+// layer — the raw field's flat milky sheet and the old cirrus veil were
+// cut by request. World-anchored and drifting along -x like the old deck,
+// day/night tinted, dawn-blushed.
 //
 // THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
 // twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
@@ -2295,37 +2307,45 @@ export const CLOUDS = {
                                   // first cut put the WHOLE visible sky in
                                   // one gate cell and a low roll meant a
                                   // permanently empty sky)
-  COVER: 0.68,                    // how much of a weather system fills in
-                                  // (retuned when the erosion landed —
-                                  // detail noise eats some area back; node
-                                  // sweep holds ~40% visible / ~30% solid)
-  SOFTNESS: 0.22,                 // density ramp width (puffy vs crisp edges)
-  OPACITY: 0.94,                  // core opacity
-  CORE_ALPHA: 0.45,               // alpha above which a fragment writes depth
-                                  // and OCCLUDES the sun/moon/stars
-  FADE_START: 620,                // thin out toward the horizon so the far
-  FADE_END: 950,                  // plane clip never shows a hard edge
-  WARP: 0.7,                      // domain-warp strength (noise units) —
+  COVER: 0.70,                    // how much of a weather system fills in
+                                  // (the reference-image retune: node
+                                  // sweep holds ~52% visible / ~44% solid
+                                  // with EVERY sampled vantage >= 38% —
+                                  // clouds mostly SOLID white with thin
+                                  // rims, blue between the puffs, and the
+                                  // gate kept mild so no vantage ever
+                                  // rolls an empty sky)
+  SOFTNESS: 0.16,                 // density ramp width (puffy vs crisp edges)
+  OPACITY: 0.97,                  // core opacity
+  CORE_ALPHA: 0.60,               // RAW-field alpha above which a fragment
+                                  // writes depth and OCCLUDES the sun/moon/
+                                  // stars (the visible pass draws dens^2,
+                                  // so this keeps the occluding core inside
+                                  // visibly solid cloud)
+  FADE_START: 780,                // thin out toward the horizon so the far
+  FADE_END: 1400,                 // plane clip never shows a hard edge —
+                                  // pushed out with VIEW.FAR 1700 so the
+                                  // low stacked band of distant clouds
+                                  // (the reference image's horizon) shows
+  WARP: 0.55,                      // domain-warp strength (noise units) —
                                   // bends the sample space so puffs stop
                                   // being round fbm blobs
   DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
-  EROSION: 0.42,                  // how hard detail noise eats thin edges
+  EROSION: 0.38,                  // how hard detail noise eats thin edges
                                   // (the cauliflower rim; cores keep mass)
   NORMAL_EPS: 0.05,               // gradient step for the dome normal —
                                   // small enough not to alias the relief
-  DOME_GAIN: 1.0,                 // density-as-height slope: how strongly
+  DOME_GAIN: 1.3,                 // density-as-height slope: how strongly
                                   // the fake dome tilts into/away from sun
-  RELIEF: 0.4,                    // interior bump height (fraction of the
+  RELIEF: 0.5,                    // interior bump height (fraction of the
                                   // body): the dappled underbelly cells
   RELIEF_SCALE: 2.6,              // bump frequency, x base scale (~42
                                   // blocks per cell at SCALE 1/110)
-  AMBIENT: 0.42,                  // shading floor — sky light on the side
+  AMBIENT: 0.44,                  // shading floor — sky light on the side
                                   // the sun never touches
-  THIN_LIFT: 0.3,                 // thin cloud reads brighter (translucent)
-  CORE_SHADE: 0.32,               // flat grey belly held by the deepest
-                                  // cores regardless of sun angle
+  THIN_LIFT: 0.35,                 // thin cloud reads brighter (translucent)
   LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
-  SHADE_COLOR: 0x9aa8bb,          // ...and its shaded underbelly (sRGB)
+  SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
   SILVER_POWER: 9,                // ...tightness around the sun's direction
   NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)
@@ -2333,16 +2353,6 @@ export const CLOUDS = {
                                   // (what makes dawn clouds blush gold-pink)
   SEED: 37.73,                    // noise hash offset (clouds are weather,
                                   // not terrain — never world-seeded)
-  // The high thin veil above the cumulus: colour-only (never occludes —
-  // the sun THROUGH cirrus is the realistic read), slower features, faster
-  // apparent drift.
-  CIRRUS: {
-    HEIGHT: 252,
-    SCALE: 1 / 540,
-    COVER: 0.50,
-    OPACITY: 0.38,
-    SPEED: 1.6,
-  },
 };
 
 // Phase 24 — the night starfield: small fixed-size points on the celestial
