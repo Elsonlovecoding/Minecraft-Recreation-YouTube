@@ -135,10 +135,11 @@ const CLOUD_FRAG = /* glsl */ `
     // rim real cumulus have, instead of one smooth blurred contour.
     float detail = cnoise(np * DETAIL_SCALE) * 0.65
                  + cnoise(np * DETAIL_SCALE * 2.13 + 7.7) * 0.35;
-    body = clamp(body - (1.0 - body) * detail * EROSION, 0.0, 1.0);
-    // Steepen the interior: cores saturate to solid cloud while the outer
-    // ramp keeps its feathered edge — the puffy-cumulus read.
-    return body * body * (3.0 - 2.0 * body);
+    // No extra interior steepening here: the visible pass squares the
+    // field already, and stacking a second S-curve on top collapsed the
+    // edge ramp into visible terraced bands ("clouds shouldn't look like
+    // this" — the onion-ring contours in the dusk report).
+    return clamp(body - (1.0 - body) * detail * EROSION, 0.0, 1.0);
   }
   void main() {
     vec2 np = vWorld.xz * NOISE_SCALE + uOffset;

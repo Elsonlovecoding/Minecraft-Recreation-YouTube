@@ -2315,13 +2315,17 @@ export const CLOUDS = {
                                   // rims, blue between the puffs, and the
                                   // gate kept mild so no vantage ever
                                   // rolls an empty sky)
-  SOFTNESS: 0.16,                 // density ramp width (puffy vs crisp edges)
+  SOFTNESS: 0.24,                 // density ramp width (puffy vs crisp edges)
   OPACITY: 0.97,                  // core opacity
-  CORE_ALPHA: 0.60,               // RAW-field alpha above which a fragment
+  CORE_ALPHA: 0.90,               // RAW-field alpha above which a fragment
                                   // writes depth and OCCLUDES the sun/moon/
-                                  // stars (the visible pass draws dens^2,
-                                  // so this keeps the occluding core inside
-                                  // visibly solid cloud)
+                                  // stars — deliberately NEAR-OPAQUE: the
+                                  // visible pass has already dimmed a body
+                                  // behind such cloud to ~a tenth, so the
+                                  // depth cut is invisible. The old 0.60
+                                  // bit a hard cookie-edge silhouette out
+                                  // of the bright moon disc (the dusk
+                                  // report's ugliest artifact)
   FADE_START: 780,                // thin out toward the horizon so the far
   FADE_END: 1400,                 // plane clip never shows a hard edge —
                                   // pushed out with VIEW.FAR 1700 so the
@@ -2331,7 +2335,7 @@ export const CLOUDS = {
                                   // bends the sample space so puffs stop
                                   // being round fbm blobs
   DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
-  EROSION: 0.38,                  // how hard detail noise eats thin edges
+  EROSION: 0.34,                  // how hard detail noise eats thin edges
                                   // (the cauliflower rim; cores keep mass)
   NORMAL_EPS: 0.05,               // gradient step for the dome normal —
                                   // small enough not to alias the relief
