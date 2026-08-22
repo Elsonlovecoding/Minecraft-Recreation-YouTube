@@ -33,6 +33,7 @@ function scoreCandidate(gen, cx, cz) {
   let total = 0;
   let plains = 0;
   let water = 0;
+  let treeSum = 0;
   let minH = Infinity;
   let maxH = -Infinity;
   for (let dz = -r; dz <= r; dz += S.SAMPLE_STEP) {
@@ -52,19 +53,27 @@ function scoreCandidate(gen, cx, cz) {
       if (w.plains >= w.forest && w.plains >= w.desert && w.plains >= w.mountains) {
         plains++;
       }
+      // OPEN WILDERNESS (旷野, by request): plains-dominant is not enough —
+      // the Phase 24 tree-density FIELD varies within a biome, so a plains
+      // disc can still be dotted with a grove. Average the field over the
+      // disc and require a genuine clearing, so the player opens their eyes
+      // on open ground with a long view instead of standing among trunks.
+      treeSum += gen.treeDensityAt(x, z, w);
     }
   }
   const centreH = gen.heightAt(cx, cz);
   const relief = maxH - minH;
   const plainsFrac = plains / total;
   const waterFrac = water / total;
+  const treeDensity = treeSum / total;
   const ok =
     plainsFrac >= S.MIN_PLAINS &&
     waterFrac <= S.MAX_WATER &&
     relief <= S.MAX_RELIEF &&
+    treeDensity <= S.MAX_TREE_DENSITY &&
     centreH >= sea + 1 &&
     centreH <= sea + S.MAX_HEIGHT_ABOVE_SEA;
-  return { plainsFrac, waterFrac, relief, ok };
+  return { plainsFrac, waterFrac, relief, treeDensity, ok };
 }
 
 // Candidate centres of one square ring at grid radius `n` (in CAND_STEP
@@ -103,8 +112,15 @@ export function scanPlainsSpawn(gen) {
       const cw = gen.biomeWeightsAt(cx, cz);
       const centrePlains =
         cw.plains >= cw.forest && cw.plains >= cw.desert && cw.plains >= cw.mountains;
+      // The tree field joins the prescreen too. Without it the openness
+      // test only ran after a full disc scan, and asking for a CLEARING is
+      // selective enough that the scan spent 20 SECONDS of disc reads
+      // before finding one — at boot, where it blocks the load. One extra
+      // noise read per candidate keeps the whole scan in the milliseconds.
+      const centreTrees = gen.treeDensityAt(cx, cz, cw);
       if (
         ch < sea + 1 || ch > sea + S.MAX_HEIGHT_ABOVE_SEA || !centrePlains
+        || centreTrees > S.MAX_TREE_DENSITY * 1.3
       ) {
         // Crude fallback score so even a failed prescreen stays comparable.
         const score = cw.plains - (ch < sea ? 3 : 0) - 1;

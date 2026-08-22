@@ -312,6 +312,44 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**WORLD RESHAPE: 32 chunks, real mountains, open country** ("Increase
+render to 32 chunks. Add more mountains to make view look good, sometimes
+more plains, less tree in some place, make me spawn in 旷野, plain
+biome"):
+- **View ring 25 -> 32 chunks** (512 blocks), fog rescaled at the same
+  fractions (368/544). Measured with the LOD tiers: 3209 meshed / 6432
+  draws / **7.05M tris / 578 MB** (full detail would be 15.60M / 1279 MB
+  — a 55% saving), still under the r=40 ring the first Phase 27 cut
+  tried. The ring fills to 4489 chunks and the streamer parks.
+- **MOUNTAINS.** WEIGHT_START 0.30 -> 0.22 so ranges claim more land,
+  REGION_SCALE 1/560 -> 1/640 so they run longer, BASE_LIFT 14 -> 17 and
+  RIDGE_AMPLITUDE 58 -> 76 so they read as peaks. The old
+  OVERWORLD.PEAK_HEIGHT 140 was CLIPPING every summit to the same
+  altitude — ranges came out as plateaus — so it went to 168 (still
+  below the y=192 clouds). Measured: peaks reach y163, 10.0% of land is
+  above y110 and 3.9% above y130.
+- **Plains keep the majority** — the land mountains took came out of
+  forest (MOISTURE_START 0.10 -> 0.17) and desert (HEAT_START 0.02 ->
+  0.07), not out of plains. Measured over 2000x2000: **plains 57.7% /
+  mountains 19.3% / forest 14.2% / desert 8.8%** (was 55.7 / 15.6 / 17.8
+  / 10.8).
+- **Fewer trees in places.** The Phase 24 density FIELD's low end was
+  0.15 — thinner woods, never a clearing; it is 0.02 now, and the field
+  runs at 1/175 so the clearings are a few hundred blocks across.
+  Plains' own density 0.005 -> 0.003. Measured: **14.7% of land is now
+  genuinely open** (under 0.0016 trees/column).
+- **旷野 SPAWN.** Plains-dominant was not enough — the density field can
+  still stand a grove in the middle of one. The spawn scan now averages
+  the tree field over its disc and requires a clearing
+  (SPAWN_SCAN.MAX_TREE_DENSITY). The openness test also joined the
+  candidate PRESCREEN: without it the scan did full disc reads until it
+  found one and took **20 SECONDS at boot**; with it the scan is 63 ms.
+  The shipped seed spawns at (-176, 240): 100% plains over the disc,
+  mean density 0.0021 — about 21 trees scattered across the whole
+  56-block radius.
+- Browser-verified at 1920x1080: boots to playable in 7.8s, the r=32
+  ring fills completely, zero game console errors.
+
 **FINAL RETUNE: the view ring is 25 chunks, guaranteed** ("render 25
 chunks... wherever I'm standing, 25 chunk radius"):
 - `VIEW.DISTANCE_CHUNKS` 40 -> 25 (400 blocks), fog scaled at the same

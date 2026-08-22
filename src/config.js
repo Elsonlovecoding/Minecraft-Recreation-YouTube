@@ -13,7 +13,12 @@ export const OVERWORLD = {
   MAX_Y: 320,
   SEA_LEVEL: 62,
   HILL_HEIGHT: 100,       // typical hill tops
-  PEAK_HEIGHT: 140,       // occasional peaks
+  PEAK_HEIGHT: 168,       // occasional peaks. Raised 140 -> 168 with the
+                          // bigger mountain ranges: the ridge amplitude was
+                          // being clipped flat at 140, which capped every
+                          // summit at the same altitude and made ranges read
+                          // as plateaus. Well under MAX_Y and under the
+                          // y=192 cloud layer, so peaks stay below cloud.
   LAVA_POOL_MAX_Y: 10,    // lava pools generate below this
   BEDROCK_Y: -64,         // solid bedrock layer
   BEDROCK_JAGGED_LAYERS: 4, // jagged bedrock for this many blocks above
@@ -225,7 +230,7 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
+  DISTANCE_CHUNKS: 32,    // chunks loaded/rendered around the player —
                           // the guaranteed radius WHEREVER the player
                           // stands (streaming re-centres every border
                           // crossing). Final request: "render 25 chunks
@@ -234,8 +239,11 @@ export const VIEW = {
                           // 5025-chunk ring took real minutes to fill
                           // after a move; 1961 chunks fills ~2.5x faster,
                           // so the promised radius is actually THERE.
-                          // (Phase 27: 30 -> 40; measured numbers for
-                          // both in the LOD note below.)
+                          // (25 -> 32 by request, 512 blocks: the LOD
+                          // tiers and the parked streamer carry the extra
+                          // ring, and the taller mountains below want the
+                          // distance to be seen from. Measured numbers for
+                          // every radius in the LOD note below.)
   FOV: 70,
   NEAR: 0.1,
   FAR: 1700,              // must clear CLOUDS.FADE_END (1400) plus slack —
@@ -258,11 +266,14 @@ export const VIEW = {
   // Measured over the full ring (node, real generator + mesher):
   //   r=25 full detail  1961 meshed   4605 draws  10.00M tris   820 MB geometry
   //   r=25 with LOD     1961 meshed   4182 draws   5.58M tris   458 MB geometry
+  //   r=32 full detail  3209 meshed   7563 draws  15.60M tris  1279 MB geometry
+  //   r=32 with LOD     3209 meshed   6432 draws   7.05M tris   578 MB geometry
   //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
   //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
   //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
   //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
-  // The shipped r=25 ring carries less than half the r=40 cost, and far
+  // The shipped r=32 ring costs -55% with the tiers on, and still less
+  // than the r=40 ring the first Phase 27 cut tried. Far
   // chunks stopped storing their 98KB light arrays on top (only
   // full-detail chunks keep them — see chunks.js).
   // Per-mesh frustum culling (three.js bounding spheres, precomputed at
@@ -580,6 +591,13 @@ export const TERRAIN = {
                                // (0 — not on a coastline, not beside a lake)
     MAX_RELIEF: 9,             // max height spread across the disc (open and
                                // level, not a hillside)
+    MAX_TREE_DENSITY: 0.0021,  // mean trees-per-column over the disc. Plains
+                               // average ~0.003 and the density FIELD swings
+                               // that from ~0 to 2x, so this asks for the
+                               // low end of the swing: 旷野 — OPEN
+                               // wilderness, a clearing you can see across,
+                               // not merely plains-dominant ground with a
+                               // grove standing in it.
     MAX_HEIGHT_ABOVE_SEA: 26,  // centre column must sit in the lowland band
   },
 
@@ -619,18 +637,23 @@ export const TERRAIN = {
   // Mountains come from their own region mask, not climate, so ranges read
   // as coherent chains. Ridged noise supplies the relief inside a region.
   MOUNTAINS: {
-    REGION_SCALE: 1 / 560,
+    REGION_SCALE: 1 / 640,   // longer, more coherent ranges
     REGION_OCTAVES: 2,
     // Phase 25: 0.12 -> 0.25 (mountains took a quarter of all land).
     // Phase 26: 0.25 -> 0.30 — plains must be the clear majority biome, so
     // mountains hand back another slice while still forming coherent ranges.
-    WEIGHT_START: 0.30,        // region noise where mountains begin to blend in
+    // 0.30 -> 0.22 by request ("add more mountains to make view look
+    // good"): mountains claim more land, and the slice comes out of
+    // forest and desert below rather than out of plains.
+    WEIGHT_START: 0.22,        // region noise where mountains begin to blend in
     WEIGHT_FULL: 0.60,         // region noise where mountains fully dominate
     RIDGE_SCALE: 1 / 260,
     RIDGE_OCTAVES: 3,
     RIDGE_SHARPNESS: 2.2,      // exponent on the ridge profile; higher = sharper crests
-    BASE_LIFT: 14,             // flat height bonus inside a mountain region
-    RIDGE_AMPLITUDE: 58,       // ridge height on top of the lift (hills ~100, peaks ~140)
+    BASE_LIFT: 17,             // flat height bonus inside a mountain region
+    RIDGE_AMPLITUDE: 76,       // ridge height on top of the lift — raised
+                               // with WEIGHT_START so the new ranges read as
+                               // real peaks on the skyline, not swells
   },
 
   // Per-biome height contribution (OFFSET above the continent base plus
@@ -643,15 +666,15 @@ export const TERRAIN = {
   // land: plains 55.7% / forest 17.8% / desert 10.8% / mountains 15.6% —
   // a clear plains majority with all four biomes keeping real presence.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.003 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
-      MOISTURE_START: 0.10,    // moisture where forest starts blending in
+      MOISTURE_START: 0.17,    // moisture where forest starts blending in
       MOISTURE_FULL: 0.46,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
-      HEAT_START: 0.02,        // temperature where desert starts blending in
+      HEAT_START: 0.07,        // temperature where desert starts blending in
       HEAT_FULL: 0.36,
       DRY_START: -0.32,        // below this moisture the air is fully dry
       DRY_FULL: 0.30,          // above this moisture desert weight is zero
@@ -772,9 +795,13 @@ export const TERRAIN = {
     // has glades and thickets instead of uniform spacing, and a second field
     // biases trunk height so groves of taller trees appear together.
     DENSITY_FIELD: {
-      SCALE: 1 / 130,          // clearings/thickets a couple hundred blocks wide
-      MIN: 0.15,               // density multiplier at the field's low end...
-      MAX: 1.85,               // ...and its high end (mean stays ~1)
+      SCALE: 1 / 175,          // clearings/thickets, now a few hundred
+                               // blocks wide — big enough to stand in
+      MIN: 0.02,               // density multiplier at the field's low end —
+                               // by request ("less tree in some place"): the
+                               // low end is now a true CLEARING, effectively
+                               // treeless, instead of merely thinner
+      MAX: 2.05,               // ...and its high end (mean stays ~1)
     },
     HEIGHT_FIELD: {
       SCALE: 1 / 90,
@@ -2145,8 +2172,8 @@ export const SKY = {
   // Scaled with the view at the same fractions every retune (480 -> 640 ->
   // the final 400): clear to ~72% of the view, the ring edge sitting at
   // ~80% haze so pop-in stays invisible.
-  FOG_NEAR: 288,
-  FOG_FAR: 425,
+  FOG_NEAR: 368,
+  FOG_FAR: 544,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
