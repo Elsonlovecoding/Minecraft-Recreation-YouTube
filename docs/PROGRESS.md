@@ -243,6 +243,23 @@ SHADERS)"):
   same 34-frame sprint-jump run: blown-out pixels 646 -> 1, identical
   to a control run with the effect disabled, with the directional look
   intact.
+- **WHITE LINES on the ground, fixed** (reported off a screenshot): thin
+  bright dashes scattered through the middle distance. Bisected in the
+  browser — not the LOD cull, not anisotropy, not bloom or the post
+  grade (which only brightened them), not the mip chain's colours
+  (traced numerically: the grass tile stays green at every level), not
+  fog (forced magenta, dashes stayed pale). Removing the cross-plane
+  plants removed them entirely, and repainting the grass tuft with the
+  lava tile moved them — so they were the tufts sampling the WRONG
+  ATLAS TILE. Root cause: `ATLAS.UV_INSET` was 1/2048, an eighth of a
+  texel. That is safe at full resolution but at the coarse mip levels —
+  where a 16px tile is 2x2 texels, then 1 — it sits so close to the tile
+  boundary that rounding samples the NEIGHBOUR. Grass (atlas 65) sits
+  beside pale deepslate diamond ore (64), so distant tufts picked up its
+  pale grey and drew as bright dashes. UV_INSET is now 1/512 — exactly
+  half a texel, the textbook inset that puts every sample on a texel
+  CENTRE. Measured over three frames at the same vantage: 21/16/16
+  bright dashes -> 0/0/0, with block textures unchanged.
 - **Whole-stack visual sweep** (after the fix, "make sure no visual
   bugs"): 40 captured vantages scanned by detector for blown-out warm
   pixels, magenta/NaN garbage and black holes — 7 times of day x

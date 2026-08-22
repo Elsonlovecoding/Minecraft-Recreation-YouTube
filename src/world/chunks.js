@@ -15,7 +15,7 @@
 
 import * as THREE from 'three';
 import {
-  CHUNK, OVERWORLD, LIGHTING, RENDER, ATLAS, FLUIDS, PORTALS,
+  CHUNK, OVERWORLD, LIGHTING, RENDER, ATLAS, FLUIDS, PORTALS, VISUAL,
 } from '../config.js';
 import { BLOCK, BLOCKS, TORCH_LEAN, HAS_SHAPE } from './blocks.js';
 import { TILE } from '../render/atlas.js';
@@ -255,6 +255,9 @@ function newBucket() {
   // the vertex count at emit time / mesh build (padWave).
   return { pos: [], col: [], lig: [], uv: [], idx: [], count: 0, wav: [] };
 }
+
+// Leaf sway weight as a normalised byte (config VISUAL.WIND.LEAF_WEIGHT).
+const LEAF_WAVE = Math.round(255 * VISUAL.WIND.LEAF_WEIGHT);
 
 // Zero-fill a bucket's wave array up to its current vertex count — called
 // before pushing nonzero wave weights and once more when the geometry is
@@ -576,7 +579,7 @@ export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
           // a canopy moves as one body with no cracks.
           if (id === BLOCK.OAK_LEAVES) {
             padWave(bucket);
-            bucket.wav.push(140, 140, 140, 140);
+            bucket.wav.push(LEAF_WAVE, LEAF_WAVE, LEAF_WAVE, LEAF_WAVE);
           }
 
           // Split the quad along the diagonal with less occlusion (and less

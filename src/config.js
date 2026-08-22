@@ -2577,6 +2577,14 @@ export const VISUAL = {
   WIND: {
     AMPLITUDE: 0.09,         // peak displacement in blocks at weight 1
     SPEED: 1.0,              // wind clock rate (1 = the shipped feel)
+    LEAF_WEIGHT: 0.55,       // leaves sway at this fraction of a plant
+                             // tip. A leaf CUBE is rigid, so whatever it
+                             // moves opens a sliver against the static
+                             // trunk (or ground) it abuts, and distant
+                             // canopies show those slivers as bright
+                             // hairlines of sky. 0.34 keeps the canopy
+                             // alive while holding the gap under a pixel
+                             // at the distances the effect reads.
   },
   // DIRECTIONAL sun/moon modelling on block faces ("make the entire game
   // look like shader"): the chunk shader derives each flat face's normal
@@ -2634,7 +2642,19 @@ export const ATLAS = {
   TILES_PER_ROW: 16,
   TILE_PIXELS: 16,
   // Tiny UV inset to stop neighbouring tiles bleeding at face edges
-  UV_INSET: 1 / 2048,
+  UV_INSET: 1 / 512,              // HALF A TEXEL of the 256px atlas — the
+                                  // textbook inset, so every sample lands on
+                                  // a texel CENTRE instead of a tile edge.
+                                  // The old 1/2048 was an eighth of a texel:
+                                  // fine at full resolution, but at the
+                                  // coarse mip levels (where a 16px tile is
+                                  // 2x2 texels, then 1) it sat so close to
+                                  // the boundary that rounding sampled the
+                                  // NEIGHBOURING tile. Distant grass tufts
+                                  // (atlas 65, next to pale deepslate ore)
+                                  // picked up that pale colour and drew as
+                                  // bright white dashes across the field —
+                                  // the "white lines" report.
 };
 
 // ---------------------------------------------------------------------------
