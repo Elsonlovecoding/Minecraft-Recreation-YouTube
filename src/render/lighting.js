@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import {
   SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK, VISUAL,
+  CLOUDS,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
 // Phase 24: clouds, stars and the generated sun/moon art live in their own
@@ -188,6 +189,28 @@ export const CHUNK_LIGHT_UNIFORMS = {
   uShadowCoolStrength: { value: VISUAL.SHADOW.COOL_STRENGTH },
   uBounceColor: { value: new THREE.Color(VISUAL.SHADOW.BOUNCE_COLOR) },
   uBounceStrength: { value: VISUAL.SHADOW.BOUNCE_STRENGTH },
+  // Cloud SHADOWS drifting over the terrain (the "lively, like shaders"
+  // pass): the chunk shader samples a cheap copy of the sky's cloud field
+  // at the fragment's column projected along the sun, and dims the SKY
+  // contribution only — torchlight and caves are untouched. The cycle
+  // writes drift/slant/strength every frame; strength is 0 at night and
+  // under the fixed-sky dimensions.
+  uCloudShadow: { value: 0 },
+  uCloudDrift: { value: new THREE.Vector2(0, 0) },
+  uCloudSlant: { value: new THREE.Vector2(0, 0) },
+  // Wind ("lively leaves"): the vertex stage displaces wave-weighted
+  // vertices (leaves, cross-plant tops — a per-vertex attribute baked by
+  // the mesher) through a world-space wind field. Time accumulates in the
+  // cycle; amplitude is one config knob.
+  uWindTime: { value: 0 },
+  uWindAmp: { value: VISUAL.WIND.AMPLITUDE },
+  // Directional sun/moon modelling (the shader look, config
+  // VISUAL.SUNLIGHT): faces toward the light brighten, faces away fall
+  // into shade, swinging with the sun through the day and handing over to
+  // a fainter moon at night. The cycle writes both every frame; strength
+  // is 0 under fixed dimension skies.
+  uSunFace: { value: 0 },
+  uSunFaceDir: { value: new THREE.Vector3(0, 1, 0) },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -213,11 +236,34 @@ export function patchChunkMaterial(material) {
     Object.assign(shader.uniforms, CHUNK_LIGHT_UNIFORMS);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>',
-        'attribute vec2 light;\nvarying vec2 vLight;\nvarying vec3 vHeldWorldPos;\n#include <common>')
-      .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\n'
-        + 'vLight = light;\n'
-        + 'vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        'attribute vec2 light;\n'
+        + 'attribute float wave;\n'
+        + 'varying vec2 vLight;\n'
+        + 'varying vec3 vHeldWorldPos;\n'
+        + 'uniform float uWindTime;\n'
+        + 'uniform float uWindAmp;\n'
+        + '#include <common>')
+      .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
+        vLight = light;
+        vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        // WIND (the "lively leaves" pass): wave-weighted vertices (leaves,
+        // cross-plant tops) sway through a world-space field — several
+        // incommensurate sines plus a slow travelling gust, so a canopy
+        // ripples rather than rocking in one rhythm. World-space phase
+        // keeps neighbouring blocks and chunks moving as one body.
+        if (wave > 0.003) {
+          vec3 wp = vHeldWorldPos;
+          float t = uWindTime;
+          float sway = sin(wp.x * 0.31 + wp.y * 0.13 + t * 1.9)
+                     * cos(wp.z * 0.27 + t * 1.4) * 0.6
+                     + sin((wp.x + wp.z) * 0.09 + t * 0.7) * 0.4;
+          float gust = 0.66 + 0.34 * sin(wp.x * 0.021 + wp.z * 0.017 + t * 0.31);
+          float amp = wave * uWindAmp * gust;
+          transformed.x += sway * amp;
+          transformed.z += cos(wp.x * 0.23 + wp.y * 0.11 + t * 1.1) * sway * amp * 0.8;
+          transformed.y += sin(wp.z * 0.29 + wp.x * 0.07 + t * 1.6) * amp * 0.3;
+          vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        }`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
         'varying vec2 vLight;\n'
@@ -234,12 +280,65 @@ export function patchChunkMaterial(material) {
         + 'uniform float uShadowCoolStrength;\n'
         + 'uniform vec3 uBounceColor;\n'
         + 'uniform float uBounceStrength;\n'
+        + 'uniform float uCloudShadow;\n'
+        + 'uniform vec2 uCloudDrift;\n'
+        + 'uniform vec2 uCloudSlant;\n'
+        + 'uniform float uSunFace;\n'
+        + 'uniform vec3 uSunFaceDir;\n'
+        // A cheap 3-octave copy of the sky's cloud field (same hash, same
+        // seed, same gate/threshold layout — no warp or erosion; shadows
+        // are blurry) so cloud shadows land under the clouds that cast
+        // them and DRIFT with them. Constants baked from config at patch
+        // time; ~5 noise evaluations per terrain fragment.
+        + `float csHash(vec2 c) {
+          c = mod(c, 512.0);
+          return fract(sin(dot(c, vec2(127.1, 311.7)) + ${CLOUDS.SEED.toFixed(4)}) * 43758.5453);
+        }
+        float csNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u2 = f * f * (3.0 - 2.0 * f);
+          return mix(mix(csHash(i), csHash(i + vec2(1.0, 0.0)), u2.x),
+                     mix(csHash(i + vec2(0.0, 1.0)), csHash(i + vec2(1.0, 1.0)), u2.x), u2.y);
+        }
+        float csCloud(vec2 wxz) {
+          vec2 np = (wxz + uCloudSlant) * ${CLOUDS.SCALE.toFixed(8)} + uCloudDrift;
+          float gate = smoothstep(0.32, 0.70,
+            csNoise(np * ${CLOUDS.GATE_SCALE.toFixed(5)}) * 0.65
+            + csNoise(np * ${(CLOUDS.GATE_SCALE * 2.63).toFixed(5)} + 41.3) * 0.35);
+          float t = 1.0 - ${CLOUDS.COVER.toFixed(4)} * (0.62 + 0.38 * gate);
+          float f2 = (csNoise(np) * 0.5 + csNoise(np * 2.03 + 17.7) * 0.25
+            + csNoise(np * 4.1209 + 53.6) * 0.125) * 1.14;
+          return smoothstep(t, t + ${VISUAL.CLOUD_SHADOW.SOFTNESS.toFixed(4)}, f2);
+        }
+        `
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
           float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
           float blockLevel = vLight.y * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
+          // How open to the sky this column is — scales every outdoor
+          // effect below so interiors and caves feel nothing.
+          float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+          // Drifting cloud shadows (see csCloud above): dim the sky's
+          // contribution under cloud.
+          if (uCloudShadow > 0.001) {
+            skyLum *= 1.0 - uCloudShadow * openCol * csCloud(vHeldWorldPos.xz);
+          }
+          // DIRECTIONAL sun/moon modelling (the shader look): the flat
+          // face normal comes from screen-space derivatives — the meshes
+          // carry no normals — and faces toward the light brighten while
+          // faces away fall into shade, swinging as the sun crosses the
+          // sky. Wind-swayed leaves get gently varying normals for free,
+          // so canopies shimmer as they move.
+          if (uSunFace > 0.001) {
+            vec3 fn = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
+            if (!gl_FrontFacing) fn = -fn;
+            float facing = dot(fn, uSunFaceDir);
+            skyLum *= 1.0 + uSunFace * openCol *
+              (facing > 0.0 ? facing : facing * 0.7);
+          }
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
           // Held-torch dynamic light (Phase 14): one level lost per block of
           // euclidean distance from the player — the same falloff curve as
@@ -660,6 +759,11 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
       }
       const t = time / TIME.DAY_LENGTH_SECONDS;
 
+      // Wind clock for the waving leaves/plants — wrapped so the shader's
+      // sine arguments never lose float precision over long sessions.
+      CHUNK_LIGHT_UNIFORMS.uWindTime.value =
+        (CHUNK_LIGHT_UNIFORMS.uWindTime.value + delta * VISUAL.WIND.SPEED) % 6283.185;
+
       // Bracketing keyframes (wrapping past the last one back to the first).
       let a = frames[frames.length - 1];
       let b = frames[0];
@@ -755,6 +859,25 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         clouds?.update(delta, focus);
         clouds?.setLight(sunLevel, horizon);
         clouds?.setSun?.(sunDir, sunLevel);
+        // Cloud shadows on the terrain track the SAME drifting field the
+        // sky renders, projected along the sun. Off at night (the moon is
+        // too dim to cast readable cloud shade) and under fixed skies.
+        const CS = VISUAL.CLOUD_SHADOW;
+        CHUNK_LIGHT_UNIFORMS.uCloudDrift.value.set(clouds?.getDrift?.() ?? 0, 0);
+        const sy = Math.max(sunDir.y, CS.MIN_SUN_Y);
+        CHUNK_LIGHT_UNIFORMS.uCloudSlant.value.set(
+          (sunDir.x / sy) * CS.PROJECT_HEIGHT,
+          (sunDir.z / sy) * CS.PROJECT_HEIGHT,
+        );
+        CHUNK_LIGHT_UNIFORMS.uCloudShadow.value =
+          sunDir.y > 0 ? CS.STRENGTH * sunLevel : 0;
+        // Directional face modelling rides the same light the shadows and
+        // the directional scene light use: the sun by day, a fainter moon
+        // by night (lightDir is already flipped above the horizon).
+        CHUNK_LIGHT_UNIFORMS.uSunFaceDir.value.copy(lightDir);
+        CHUNK_LIGHT_UNIFORMS.uSunFace.value = sunDir.y > 0
+          ? VISUAL.SUNLIGHT.STRENGTH * sunLevel
+          : VISUAL.SUNLIGHT.STRENGTH * VISUAL.SUNLIGHT.MOON_FACTOR * starAlpha;
       }
 
       // Dimension override (Phase 15): everything above still ran — the
@@ -773,6 +896,8 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = dimSky.SKY_DARKEN;
         CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = dimSky.AMBIENT_LIGHT ?? 0;
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
+        CHUNK_LIGHT_UNIFORMS.uCloudShadow.value = 0;
+        CHUNK_LIGHT_UNIFORMS.uSunFace.value = 0;
       }
     },
   };

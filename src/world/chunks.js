@@ -250,7 +250,19 @@ export function createChunkMaterials(atlasTexture) {
 // ---------------------------------------------------------------------------
 
 function newBucket() {
-  return { pos: [], col: [], lig: [], uv: [], idx: [], count: 0 };
+  // `wav` is SPARSE while meshing: only wind-swayed vertices (leaves,
+  // cross-plant tops) push values, everything else is zero-padded up to
+  // the vertex count at emit time / mesh build (padWave).
+  return { pos: [], col: [], lig: [], uv: [], idx: [], count: 0, wav: [] };
+}
+
+// Zero-fill a bucket's wave array up to its current vertex count — called
+// before pushing nonzero wave weights and once more when the geometry is
+// built, so the attribute stays in sync with every emit path without any
+// of them having to know about it.
+export function padWave(bucket) {
+  const w = bucket.wav;
+  for (let n = bucket.count - w.length; n > 0; n--) w.push(0);
 }
 
 // Builds the merged meshes for one chunk. getChunkAt(cx, cz) must return the
@@ -558,6 +570,14 @@ export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
             bucket.col.push(shade, shade, shade);
             bucket.lig.push(vSky[k], vBlk[k]);
           }
+          // Wind sway (the "lively leaves" pass): leaf vertices carry a
+          // wave weight the chunk shader displaces by a world-space wind
+          // field — the phase is continuous across blocks and chunks, so
+          // a canopy moves as one body with no cracks.
+          if (id === BLOCK.OAK_LEAVES) {
+            padWave(bucket);
+            bucket.wav.push(140, 140, 140, 140);
+          }
 
           // Split the quad along the diagonal with less occlusion (and less
           // light) so shading interpolates without the classic anisotropy
@@ -592,6 +612,10 @@ export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(bucket.col, 3));
     geometry.setAttribute('light', new THREE.Float32BufferAttribute(bucket.lig, 2));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uv, 2));
+    // Wind weights (normalised Uint8 -> 0..1 in the shader): one byte per
+    // vertex, zero everywhere except leaves and cross-plant tops.
+    padWave(bucket);
+    geometry.setAttribute('wave', new THREE.Uint8BufferAttribute(bucket.wav, 1, true));
     geometry.setIndex(bucket.idx);
     // Phase 26: the bounding sphere feeds three.js's per-mesh FRUSTUM
     // CULLING (frustumCulled defaults true on every chunk mesh — a 70°

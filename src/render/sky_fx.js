@@ -41,19 +41,20 @@ export function forceFarDepth(material) {
 // this file carried since Phase 24 is gone)
 // ---------------------------------------------------------------------------
 //
-// A noise-shaded cloud LAYER: a camera-following plane at CLOUDS.HEIGHT whose
-// fragment shader grows soft cumulus from domain-warped fbm value noise — a
-// very-low-frequency weather gate groups the masses with real clear sky
-// between, detail noise erodes the thin edges into the curdled cauliflower
-// rim, self-shading is PSEUDO-VOLUME (density read as the height of a dome,
-// rotated relief bumps keeping the interior dappled, a real N.L against the
-// 3D sun — the moon after dark), and thin edges catch a warm silver lining
-// when they sit near a low sun. The pattern lives in WORLD space (the
-// plane follows the camera but the noise is sampled at world coordinates
-// plus the drift offset), so flying never slides the sky. The visible pass
-// draws the field SHRUNKEN to its cores (dens^2) — the raw field's flat
-// milky sheet and the old cirrus veil were cut by request; one bright
-// compact-puff layer is the whole look now.
+// VOLUMETRIC clouds: a camera-following trigger plane at CLOUDS.HEIGHT
+// whose fragment shader RAYMARCHES the slab [HEIGHT, HEIGHT+THICKNESS]
+// through one drifting 2D coverage field (domain-warped fbm inside a
+// very-low-frequency weather gate, thin edges eroded by detail noise into
+// the curdled cauliflower rim). The field is read as density-as-height
+// columns — rounded crowns, softened flat bases — so clouds have real
+// sides and their silhouettes change with the viewing angle; shading is a
+// height gradient (shaded base to sunlit crown, uLit/uShade tracking the
+// cycle) and thin parts catch a silver lining toward the sun (the moon
+// after dark). The pattern lives in WORLD space (the plane follows the
+// camera but the noise is sampled at world coordinates plus the drift
+// offset), so flying never slides the sky. The terrain's drifting cloud
+// shadows (lighting.js patchChunkMaterial) sample a cheap copy of this
+// SAME field, synced through clouds.getDrift().
 //
 // THE OCCLUSION CONTRACT (Phase 26): the sun, moon and stars are pinned to
 // the far plane and must vanish behind real cloud. Soft alpha and a single
@@ -110,16 +111,10 @@ const CLOUD_FRAG = /* glsl */ `
                       // (erosion only works the edges), and the dome
                       // normals turn it into dappled self-shading
   }
-  // Relief bumps for the dome normal: two octaves on a ROTATED grid —
-  // bare value noise shows its axis-aligned lattice when it drives
-  // lighting (the first cut of the bumps read as a quilted blanket).
-  float crelief(vec2 p) {
-    vec2 r = vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
-    return cnoise(r * RELIEF_SCALE) * 0.65
-         + cnoise(r.yx * RELIEF_SCALE * 2.3 + 31.7) * 0.35;
-  }
-  // Cloud density 0..1 at a noise-space point: a domain-warped fbm body
+  // Cloud coverage 0..1 at a noise-space point: a domain-warped fbm body
   // thresholded inside the weather gate, its edges eroded by detail noise.
+  // The VOLUME is built from this one 2D field: a column holds cloud from
+  // the slab base up to fraction F of THICKNESS (density-as-height).
   float cloudDensity(vec2 np) {
     // Domain warp first — pure fbm puffs are round and samey; bending the
     // sample space gives every mass its own drawn-out, organic outline.
@@ -141,58 +136,74 @@ const CLOUD_FRAG = /* glsl */ `
     // this" — the onion-ring contours in the dusk report).
     return clamp(body - (1.0 - body) * detail * EROSION, 0.0, 1.0);
   }
+  // The vertical puff profile at a 3D point, given the column's coverage F:
+  // cloud fills the slab from its base up to fraction F of THICKNESS, with
+  // a rounded falloff at the puff's crown, a softened flat base, and thin
+  // wisps kept optically thin.
+  float profile(float F, float h) {
+    float d = smoothstep(0.0, ROUND, F - h);   // rounded crown
+    d *= smoothstep(0.0, 0.06, h + 0.02);      // soften the flat base
+    d *= smoothstep(0.02, 0.3, F);             // wisps stay thin
+    return d;
+  }
   void main() {
-    vec2 np = vWorld.xz * NOISE_SCALE + uOffset;
-    float dens = cloudDensity(np);
-    #ifndef DEPTH_PASS
-      // The visible layer is the field shrunken toward its cores (dens^2):
-      // compact bright puffs with real blue between them. The raw field's
-      // colour pass painted a flat milky sheet at glancing angles and was
-      // cut by request ("remove the layer of bad cloud") — the depth pass
-      // below still occludes on the RAW field, with CORE_ALPHA raised so
-      // the occluding core stays inside visibly solid cloud.
-      dens = dens * dens;
-    #endif
-    // Horizon fade: thin out before the far-plane clip ever shows an edge.
-    float dist = distance(vWorld.xz, cameraPosition.xz);
-    float fade = 1.0 - smoothstep(FADE_START, FADE_END, dist);
-    float alpha = dens * OPACITY * fade;
     #ifdef DEPTH_PASS
-      // Dense core only — this pass exists to occlude the celestials.
-      if (alpha < CORE_ALPHA) discard;
+      // Dense core only — this pass exists to occlude the celestials. It
+      // stays 2D (the raw coverage at the base plane): with CORE_ALPHA at
+      // 0.90 the cut only lands where the marched cloud above is visually
+      // near-opaque, so a bright disc dims smoothly before it can bite.
+      vec2 np = vWorld.xz * NOISE_SCALE + uOffset;
+      float dens = cloudDensity(np);
+      float dist = distance(vWorld.xz, cameraPosition.xz);
+      float fade = 1.0 - smoothstep(FADE_START, FADE_END, dist);
+      if (dens * OPACITY * fade < CORE_ALPHA) discard;
       gl_FragColor = vec4(0.0);
     #else
+      // VOLUMETRIC clouds ("like real life, like shaders"): raymarch a
+      // slab [BASE_H, BASE_H + THICK] through the drifting 2D field.
+      // Real thickness is what a flat plane can never fake — sides seen
+      // from afar, bright crowns, shaded flat bases, silhouettes that
+      // change with the viewing angle as you move.
+      vec3 ro = cameraPosition;
+      vec3 rd = normalize(vWorld - ro);
+      float ry = abs(rd.y) < 1e-4 ? (rd.y < 0.0 ? -1e-4 : 1e-4) : rd.y;
+      float tA = (BASE_H - ro.y) / ry;
+      float tB = (BASE_H + THICK - ro.y) / ry;
+      float t0 = max(min(tA, tB), 0.0);
+      float t1 = max(tA, tB);
+      // Horizon fade keyed to the ENTRY distance; also cap the marched
+      // span so grazing rays stay affordable.
+      float distXZ = distance((ro + rd * t0).xz, ro.xz);
+      float fade = 1.0 - smoothstep(FADE_START, FADE_END, distXZ);
+      if (fade <= 0.001 || t1 <= t0) discard;
+      t1 = min(t1, t0 + MAX_SPAN);
+      float dt = (t1 - t0) / float(STEPS);
+      // Per-pixel jitter on the start offset hides the step banding.
+      float jit = chash(gl_FragCoord.xy * 0.6180339);
+      float T = 1.0;      // transmittance
+      vec3 acc = vec3(0.0);
+      for (int i = 0; i < STEPS; i++) {
+        float t = t0 + (float(i) + jit) * dt;
+        vec3 p = ro + rd * t;
+        float F = cloudDensity(p.xz * NOISE_SCALE + uOffset);
+        float h = clamp((p.y - BASE_H) / THICK, 0.0, 1.0);
+        float d = profile(F, h);
+        if (d < 0.004) continue;
+        float a = 1.0 - exp(-d * DENSITY * dt);
+        // Height gradient carries the real-cloud read: sunlit crowns,
+        // shaded flat bases. uLit/uShade already track time of day.
+        vec3 cs = mix(uShade, uLit, mix(BOTTOM_LIT, 1.0, h));
+        acc += T * a * cs;
+        T *= 1.0 - a;
+        if (T < 0.03) break;
+      }
+      float alpha = (1.0 - T) * OPACITY * fade;
       if (alpha < 0.004) discard;
-      // Pseudo-volume: treat density as the height of a dome and light it
-      // with a real N.L against the 3D sun — sun-facing swells brighten,
-      // the far sides fall into shade, which is what makes a flat plane
-      // read as a field of solid puffs. (At night uSunDir is the moon.)
-      // A high-frequency RELIEF term rides on top of the body height,
-      // weighted by density so it lives on the cloud and not the clear
-      // sky: the body ramp saturates to 1 inside a puff (gradient zero),
-      // and without the bumps a big cloud shades only at its rim and
-      // reads flat overhead. With them the interior stays dappled. The
-      // gradient taps are squared like the centre — one consistent field.
-      vec2 npR = np + vec2(NORMAL_EPS, 0.0);
-      vec2 npF = np + vec2(0.0, NORMAL_EPS);
-      float dR = cloudDensity(npR);
-      dR *= dR;
-      float dF = cloudDensity(npF);
-      dF *= dF;
-      float hC = dens + crelief(np) * RELIEF * dens;
-      float hR = dR + crelief(npR) * RELIEF * dR;
-      float hF = dF + crelief(npF) * RELIEF * dF;
-      vec3 nrm = normalize(vec3((hC - hR) * DOME_GAIN, NORMAL_EPS,
-                                (hC - hF) * DOME_GAIN));
-      float ndl = clamp(dot(nrm, uSunDir), 0.0, 1.0);
-      float lit = AMBIENT + (1.0 - AMBIENT) * ndl;
-      // Thin cloud reads brighter (light passes through it).
-      lit = clamp(lit + (1.0 - dens) * THIN_LIFT, 0.0, 1.0);
-      vec3 col = mix(uShade, uLit, lit);
-      // Silver lining: thin edges glow toward the sun's direction.
-      vec3 viewDir = normalize(vWorld - cameraPosition);
-      float rim = pow(max(dot(viewDir, uSunDir), 0.0), SILVER_POWER);
-      col += uSilverColor * (rim * (1.0 - dens));
+      vec3 col = acc / max(1.0 - T, 1e-4);
+      // Silver lining: the thin parts glow toward the sun (the moon at
+      // night — uSunDir flips below the horizon).
+      float rim = pow(max(dot(rd, uSunDir), 0.0), SILVER_POWER);
+      col += uSilverColor * rim * T;
       gl_FragColor = vec4(col, alpha);
     #endif
   }
@@ -227,12 +238,13 @@ export function createClouds() {
     WARP: C.WARP.toFixed(4),
     DETAIL_SCALE: C.DETAIL_SCALE.toFixed(4),
     EROSION: C.EROSION.toFixed(4),
-    NORMAL_EPS: C.NORMAL_EPS.toFixed(4),
-    DOME_GAIN: C.DOME_GAIN.toFixed(4),
-    RELIEF: C.RELIEF.toFixed(4),
-    RELIEF_SCALE: C.RELIEF_SCALE.toFixed(4),
-    AMBIENT: C.AMBIENT.toFixed(4),
-    THIN_LIFT: C.THIN_LIFT.toFixed(4),
+    BASE_H: C.HEIGHT.toFixed(1),
+    THICK: C.THICKNESS.toFixed(1),
+    ROUND: C.ROUND.toFixed(4),
+    DENSITY: C.DENSITY.toFixed(5),
+    STEPS: String(C.STEPS),
+    BOTTOM_LIT: C.BOTTOM_LIT.toFixed(4),
+    MAX_SPAN: C.MAX_SPAN.toFixed(1),
     SILVER_POWER: C.SILVER_POWER.toFixed(1),
     CLOUD_SEED: C.SEED.toFixed(4),
   }, extra);
@@ -330,6 +342,11 @@ export function createClouds() {
     },
     setVisible(v) {
       group.visible = v;
+    },
+    // The drifting field's current offset (noise units) — the terrain's
+    // cloud-shadow term samples the SAME field so shadows track the sky.
+    getDrift() {
+      return drift;
     },
   };
 }
