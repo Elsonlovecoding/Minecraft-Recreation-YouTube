@@ -167,6 +167,11 @@ const COMPOSITE_FRAG = /* glsl */ `
     float shadow = pow(clamp(1.0 - luma, 0.0, 1.0), 2.0);
     col = mix(col, col * uCoolTint, ${VISUAL.GRADING.SHADOW_COOL.toFixed(3)} * shadow);
 
+    // Vignette (the shader-pack frame): a gentle darkening toward the
+    // corners that pulls the eye to the centre of the screen.
+    float vig = distance(vUv, vec2(0.5)) * 1.4142;
+    col *= 1.0 - ${VISUAL.GRADING.VIGNETTE.toFixed(4)} * smoothstep(0.55, 1.05, vig);
+
     // Output dither — the sky dome's own anti-banding trick, applied once
     // at the 8-bit boundary.
     col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5)

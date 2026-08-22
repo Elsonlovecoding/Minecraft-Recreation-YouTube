@@ -204,6 +204,13 @@ export const CHUNK_LIGHT_UNIFORMS = {
   // cycle; amplitude is one config knob.
   uWindTime: { value: 0 },
   uWindAmp: { value: VISUAL.WIND.AMPLITUDE },
+  // Directional sun/moon modelling (the shader look, config
+  // VISUAL.SUNLIGHT): faces toward the light brighten, faces away fall
+  // into shade, swinging with the sun through the day and handing over to
+  // a fainter moon at night. The cycle writes both every frame; strength
+  // is 0 under fixed dimension skies.
+  uSunFace: { value: 0 },
+  uSunFaceDir: { value: new THREE.Vector3(0, 1, 0) },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -276,6 +283,8 @@ export function patchChunkMaterial(material) {
         + 'uniform float uCloudShadow;\n'
         + 'uniform vec2 uCloudDrift;\n'
         + 'uniform vec2 uCloudSlant;\n'
+        + 'uniform float uSunFace;\n'
+        + 'uniform vec3 uSunFaceDir;\n'
         // A cheap 3-octave copy of the sky's cloud field (same hash, same
         // seed, same gate/threshold layout — no warp or erosion; shadows
         // are blurry) so cloud shadows land under the clouds that cast
@@ -309,12 +318,26 @@ export function patchChunkMaterial(material) {
           float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
           float blockLevel = vLight.y * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
+          // How open to the sky this column is — scales every outdoor
+          // effect below so interiors and caves feel nothing.
+          float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
           // Drifting cloud shadows (see csCloud above): dim the sky's
-          // contribution under cloud, scaled by how open this column is —
-          // interiors and caves feel nothing.
+          // contribution under cloud.
           if (uCloudShadow > 0.001) {
-            float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
             skyLum *= 1.0 - uCloudShadow * openCol * csCloud(vHeldWorldPos.xz);
+          }
+          // DIRECTIONAL sun/moon modelling (the shader look): the flat
+          // face normal comes from screen-space derivatives — the meshes
+          // carry no normals — and faces toward the light brighten while
+          // faces away fall into shade, swinging as the sun crosses the
+          // sky. Wind-swayed leaves get gently varying normals for free,
+          // so canopies shimmer as they move.
+          if (uSunFace > 0.001) {
+            vec3 fn = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
+            if (!gl_FrontFacing) fn = -fn;
+            float facing = dot(fn, uSunFaceDir);
+            skyLum *= 1.0 + uSunFace * openCol *
+              (facing > 0.0 ? facing : facing * 0.7);
           }
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
           // Held-torch dynamic light (Phase 14): one level lost per block of
@@ -848,6 +871,13 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         );
         CHUNK_LIGHT_UNIFORMS.uCloudShadow.value =
           sunDir.y > 0 ? CS.STRENGTH * sunLevel : 0;
+        // Directional face modelling rides the same light the shadows and
+        // the directional scene light use: the sun by day, a fainter moon
+        // by night (lightDir is already flipped above the horizon).
+        CHUNK_LIGHT_UNIFORMS.uSunFaceDir.value.copy(lightDir);
+        CHUNK_LIGHT_UNIFORMS.uSunFace.value = sunDir.y > 0
+          ? VISUAL.SUNLIGHT.STRENGTH * sunLevel
+          : VISUAL.SUNLIGHT.STRENGTH * VISUAL.SUNLIGHT.MOON_FACTOR * starAlpha;
       }
 
       // Dimension override (Phase 15): everything above still ran — the
@@ -867,6 +897,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = dimSky.AMBIENT_LIGHT ?? 0;
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
         CHUNK_LIGHT_UNIFORMS.uCloudShadow.value = 0;
+        CHUNK_LIGHT_UNIFORMS.uSunFace.value = 0;
       }
     },
   };

@@ -151,11 +151,15 @@ src/
                          at each open-sky column projected along the sun,
                          dims the SKY light only — synced to the sky's
                          drift by per-frame uniforms, off at night and
-                         under fixed dimension skies — and WIND: vertices
+                         under fixed dimension skies — WIND: vertices
                          carrying the mesher's per-vertex wave weight
                          (leaves; cross-plant tips) sway through a
                          world-space wind field (config VISUAL.WIND),
-                         phase-continuous across blocks and chunks
+                         phase-continuous across blocks and chunks — and
+                         DIRECTIONAL SUNLIGHT (VISUAL.SUNLIGHT): face
+                         normals from screen derivatives brighten faces
+                         toward the sun/moon and shade faces away,
+                         swinging through the day, scaled by sky access
     sky_fx.js            the sky furniture (Phase 24; clouds rebuilt
                          through the Phase 27 follow-ups, ending
                          VOLUMETRIC): the colour pass RAYMARCHES a slab

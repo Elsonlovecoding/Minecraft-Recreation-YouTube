@@ -2505,6 +2505,8 @@ export const VISUAL = {
     SHADOW_COOL_COLOR: 0x4a66a8, // the tone shadows lean toward...
     SHADOW_COOL: 0.12,       // ...and how far the darkest tones lean
     DITHER: 1 / 255,         // composite output dither (kills sky banding)
+    VIGNETTE: 0.16,          // corner darkening (the shader-pack frame);
+                             // 0 disables
   },
 
   // The water surface (render/water_fx.js — a patch on the same lit chunk
@@ -2568,6 +2570,20 @@ export const VISUAL = {
   WIND: {
     AMPLITUDE: 0.09,         // peak displacement in blocks at weight 1
     SPEED: 1.0,              // wind clock rate (1 = the shipped feel)
+  },
+  // DIRECTIONAL sun/moon modelling on block faces ("make the entire game
+  // look like shader"): the chunk shader derives each flat face's normal
+  // from screen derivatives (the meshes carry none) and brightens faces
+  // toward the light while faces away fall into shade — east faces glow
+  // in the morning, west faces at dusk, the moon takes over faintly at
+  // night. Scales with the column's sky access, so caves and interiors
+  // keep their baked look; 0 under fixed dimension skies. Textures are
+  // untouched — this modulates the light on them.
+  SUNLIGHT: {
+    STRENGTH: 0.26,          // lit-face boost at full day (away faces
+                             // drop by 0.7x this)
+    MOON_FACTOR: 0.35,       // night-time strength, x STRENGTH, fading
+                             // in with the stars
   },
   CLOUD_SHADOW: {
     STRENGTH: 0.30,          // sky-light dimming under a solid cloud
