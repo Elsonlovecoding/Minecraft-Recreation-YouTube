@@ -144,28 +144,34 @@ src/
                          main.js (the CHUNK_LIGHT_UNIFORMS pattern)
     atlas.js             texture atlas loading and UV lookup
     lighting.js          light propagation, AO, day/night (the cycle drives
-                         the Phase 24 sky furniture below)
+                         the Phase 24 sky furniture below). The chunk
+                         shader patch also carries DRIFTING CLOUD SHADOWS
+                         (the Phase 27 "like shaders" follow-up): a cheap
+                         3-octave copy of the sky's cloud field, sampled
+                         at each open-sky column projected along the sun,
+                         dims the SKY light only — synced to the sky's
+                         drift by per-frame uniforms, off at night and
+                         under fixed dimension skies
     sky_fx.js            the sky furniture (Phase 24; clouds rebuilt
-                         REALISTIC in the Phase 27 follow-ups): the cloud
-                         layer as a camera-following plane whose fragment
-                         shader grows soft cumulus from domain-warped
-                         5-octave fbm value noise (weather-gate grouping,
-                         detail-noise edge erosion, pseudo-volume dome
-                         lighting — density-as-height normals with rotated
-                         relief bumps, N.L against the real sun/moon —
-                         silver linings) — ONE visible colour pass drawing
-                         the field shrunken to its cores (dens^2: compact
-                         bright puffs, no flat sheet; the raw-field base
-                         pass and the cirrus veil were cut by request),
-                         plus the Phase 26 occlusion contract's depth-only
-                         core pass on the RAW field (CORE_ALPHA 0.60);
-                         the starfield; the generated sun (round disc in a
-                         rim-windowed additive glow, linear-filtered), the
-                         moon's cool halo glow, and the eight-phase ROUND
-                         moon (AA disc, seeded maria + craters shared by
-                         every phase, soft elliptical terminator, faint
-                         earthshine dark side) — split from lighting.js
-                         per the size cap
+                         through the Phase 27 follow-ups, ending
+                         VOLUMETRIC): the colour pass RAYMARCHES a slab
+                         [HEIGHT, HEIGHT+THICKNESS] through the drifting
+                         domain-warped/gated/eroded 2D field —
+                         density-as-height columns, STEPS jittered
+                         samples, front-to-back transmittance, height-
+                         gradient shading (shaded flat bases, sunlit
+                         crowns), silver linings — so clouds have real
+                         sides, and silhouettes change as you move; the
+                         Phase 26 occlusion contract keeps its depth-only
+                         2D core pass (CORE_ALPHA 0.90 — a bright disc
+                         dims smoothly through the blend before the cut
+                         can bite); the starfield; the generated sun
+                         (round disc in a rim-windowed additive glow,
+                         linear-filtered), the moon's cool halo glow, and
+                         the eight-phase ROUND moon (AA disc, seeded
+                         maria + craters shared by every phase, soft
+                         elliptical terminator, faint earthshine dark
+                         side) — split from lighting.js per the size cap
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
                          — textured cubes cropped from a block's own atlas

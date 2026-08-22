@@ -2277,11 +2277,11 @@ export const CELESTIAL = {
 // (a coarse weather-system gate grouping the masses, detail-noise erosion
 // curdling the thin edges, pseudo-volume dome lighting — density read as
 // height, relief-bumped normals, N.L against the sun or the night's moon —
-// and warm silver linings on thin edges near a low sun). The visible pass
-// draws the field SHRUNKEN to its cores (dens^2): one bright compact-puff
-// layer — the raw field's flat milky sheet and the old cirrus veil were
-// cut by request. World-anchored and drifting along -x like the old deck,
-// day/night tinted, dawn-blushed.
+// and warm silver linings on thin edges near a low sun). The colour pass
+// is a VOLUMETRIC RAYMARCH now (the "like real life, like shaders"
+// request): the slab knobs below march the field as density-as-height
+// columns with real sides and crowns. World-anchored and drifting along
+// -x like the old deck, day/night tinted, dawn-blushed.
 //
 // THE OCCLUSION CONTRACT SURVIVES (the Phase 26 bug fix): the layer draws
 // twice — a DEPTH-ONLY pass whose fragments survive only where the cloud
@@ -2292,7 +2292,11 @@ export const CELESTIAL = {
 export const CLOUDS = {
   HEIGHT: 192,                    // cloud base height (the vanilla altitude)
   PLANE_RADIUS: 1600,             // half-extent of the camera-following plane
-  SPEED: 0.9,                     // drift in blocks per second, along -x
+  SPEED: 1.3,                     // drift in blocks per second, along -x
+                                  // (nudged up with the volumetric pass —
+                                  // visible motion, with the terrain's
+                                  // cloud shadows drifting in step, is
+                                  // half of what reads as "alive")
   SCALE: 1 / 110,                 // noise-space units per block — the size
                                   // of individual cumulus features (the
                                   // first cut at 1/260 made one puff-cell
@@ -2337,17 +2341,20 @@ export const CLOUDS = {
   DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
   EROSION: 0.34,                  // how hard detail noise eats thin edges
                                   // (the cauliflower rim; cores keep mass)
-  NORMAL_EPS: 0.05,               // gradient step for the dome normal —
-                                  // small enough not to alias the relief
-  DOME_GAIN: 1.3,                 // density-as-height slope: how strongly
-                                  // the fake dome tilts into/away from sun
-  RELIEF: 0.5,                    // interior bump height (fraction of the
-                                  // body): the dappled underbelly cells
-  RELIEF_SCALE: 2.6,              // bump frequency, x base scale (~42
-                                  // blocks per cell at SCALE 1/110)
-  AMBIENT: 0.44,                  // shading floor — sky light on the side
-                                  // the sun never touches
-  THIN_LIFT: 0.35,                 // thin cloud reads brighter (translucent)
+  // VOLUMETRIC slab (the "like real life, like shaders" pass): the colour
+  // pass raymarches [HEIGHT, HEIGHT + THICKNESS] through the drifting 2D
+  // field — density-as-height columns, so clouds have visible sides,
+  // rounded crowns and shaded flat bases from every angle.
+  THICKNESS: 48,                  // slab depth in blocks
+  STEPS: 10,                      // march samples per ray (the quality/cost
+                                  // knob; ~11 noise evals per step)
+  DENSITY: 0.05,                  // extinction per block of dense cloud —
+                                  // how fast a ray goes opaque inside
+  ROUND: 0.22,                    // crown falloff width (fraction of the
+                                  // column's coverage): puffy vs boxy tops
+  BOTTOM_LIT: 0.32,               // shading at the slab base (1 at crowns)
+  MAX_SPAN: 620,                  // cap on the marched path for grazing
+                                  // rays (they are horizon-faded anyway)
   LIT_COLOR: 0xffffff,            // sunlit faces of a cloud...
   SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
@@ -2542,6 +2549,24 @@ export const VISUAL = {
     BOUNCE_STRENGTH: 0.10,   // added light at full shade in full day
     COOL_COLOR: 0x8fa8d8,    // the cool lean of daylight shadows
     COOL_STRENGTH: 0.14,
+  },
+  // Cloud SHADOWS drifting over the terrain (the "lively, like shaders"
+  // pass): the chunk shader dims each open-sky column's SKY light by a
+  // cheap copy of the cloud field, projected along the sun and synced to
+  // the sky's drift — patches of shade wander across the plains exactly
+  // under the clouds that cast them. Torch light, caves and the fixed-sky
+  // dimensions are untouched; strength fades with the sun and is 0 at
+  // night.
+  CLOUD_SHADOW: {
+    STRENGTH: 0.30,          // sky-light dimming under a solid cloud
+    SOFTNESS: 0.34,          // shadow edge width (field units) — soft,
+                             // like real cloud shade, and wider than the
+                             // sky's own edges so the match never has to
+                             // be exact
+    PROJECT_HEIGHT: 120,     // blocks of sun-slant projection (cloud base
+                             // minus typical terrain height)
+    MIN_SUN_Y: 0.35,         // clamp on the slant divisor so a low sun
+                             // never smears shadows kilometres sideways
   },
 };
 

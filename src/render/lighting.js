@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import {
   SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK, VISUAL,
+  CLOUDS,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
 // Phase 24: clouds, stars and the generated sun/moon art live in their own
@@ -188,6 +189,15 @@ export const CHUNK_LIGHT_UNIFORMS = {
   uShadowCoolStrength: { value: VISUAL.SHADOW.COOL_STRENGTH },
   uBounceColor: { value: new THREE.Color(VISUAL.SHADOW.BOUNCE_COLOR) },
   uBounceStrength: { value: VISUAL.SHADOW.BOUNCE_STRENGTH },
+  // Cloud SHADOWS drifting over the terrain (the "lively, like shaders"
+  // pass): the chunk shader samples a cheap copy of the sky's cloud field
+  // at the fragment's column projected along the sun, and dims the SKY
+  // contribution only — torchlight and caves are untouched. The cycle
+  // writes drift/slant/strength every frame; strength is 0 at night and
+  // under the fixed-sky dimensions.
+  uCloudShadow: { value: 0 },
+  uCloudDrift: { value: new THREE.Vector2(0, 0) },
+  uCloudSlant: { value: new THREE.Vector2(0, 0) },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -234,12 +244,49 @@ export function patchChunkMaterial(material) {
         + 'uniform float uShadowCoolStrength;\n'
         + 'uniform vec3 uBounceColor;\n'
         + 'uniform float uBounceStrength;\n'
+        + 'uniform float uCloudShadow;\n'
+        + 'uniform vec2 uCloudDrift;\n'
+        + 'uniform vec2 uCloudSlant;\n'
+        // A cheap 3-octave copy of the sky's cloud field (same hash, same
+        // seed, same gate/threshold layout — no warp or erosion; shadows
+        // are blurry) so cloud shadows land under the clouds that cast
+        // them and DRIFT with them. Constants baked from config at patch
+        // time; ~5 noise evaluations per terrain fragment.
+        + `float csHash(vec2 c) {
+          c = mod(c, 512.0);
+          return fract(sin(dot(c, vec2(127.1, 311.7)) + ${CLOUDS.SEED.toFixed(4)}) * 43758.5453);
+        }
+        float csNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u2 = f * f * (3.0 - 2.0 * f);
+          return mix(mix(csHash(i), csHash(i + vec2(1.0, 0.0)), u2.x),
+                     mix(csHash(i + vec2(0.0, 1.0)), csHash(i + vec2(1.0, 1.0)), u2.x), u2.y);
+        }
+        float csCloud(vec2 wxz) {
+          vec2 np = (wxz + uCloudSlant) * ${CLOUDS.SCALE.toFixed(8)} + uCloudDrift;
+          float gate = smoothstep(0.32, 0.70,
+            csNoise(np * ${CLOUDS.GATE_SCALE.toFixed(5)}) * 0.65
+            + csNoise(np * ${(CLOUDS.GATE_SCALE * 2.63).toFixed(5)} + 41.3) * 0.35);
+          float t = 1.0 - ${CLOUDS.COVER.toFixed(4)} * (0.62 + 0.38 * gate);
+          float f2 = (csNoise(np) * 0.5 + csNoise(np * 2.03 + 17.7) * 0.25
+            + csNoise(np * 4.1209 + 53.6) * 0.125) * 1.14;
+          return smoothstep(t, t + ${VISUAL.CLOUD_SHADOW.SOFTNESS.toFixed(4)}, f2);
+        }
+        `
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
           float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
           float blockLevel = vLight.y * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
+          // Drifting cloud shadows (see csCloud above): dim the sky's
+          // contribution under cloud, scaled by how open this column is —
+          // interiors and caves feel nothing.
+          if (uCloudShadow > 0.001) {
+            float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+            skyLum *= 1.0 - uCloudShadow * openCol * csCloud(vHeldWorldPos.xz);
+          }
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
           // Held-torch dynamic light (Phase 14): one level lost per block of
           // euclidean distance from the player — the same falloff curve as
@@ -755,6 +802,18 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         clouds?.update(delta, focus);
         clouds?.setLight(sunLevel, horizon);
         clouds?.setSun?.(sunDir, sunLevel);
+        // Cloud shadows on the terrain track the SAME drifting field the
+        // sky renders, projected along the sun. Off at night (the moon is
+        // too dim to cast readable cloud shade) and under fixed skies.
+        const CS = VISUAL.CLOUD_SHADOW;
+        CHUNK_LIGHT_UNIFORMS.uCloudDrift.value.set(clouds?.getDrift?.() ?? 0, 0);
+        const sy = Math.max(sunDir.y, CS.MIN_SUN_Y);
+        CHUNK_LIGHT_UNIFORMS.uCloudSlant.value.set(
+          (sunDir.x / sy) * CS.PROJECT_HEIGHT,
+          (sunDir.z / sy) * CS.PROJECT_HEIGHT,
+        );
+        CHUNK_LIGHT_UNIFORMS.uCloudShadow.value =
+          sunDir.y > 0 ? CS.STRENGTH * sunLevel : 0;
       }
 
       // Dimension override (Phase 15): everything above still ran — the
@@ -773,6 +832,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSkyDarken.value = dimSky.SKY_DARKEN;
         CHUNK_LIGHT_UNIFORMS.uMinSkyLevel.value = dimSky.AMBIENT_LIGHT ?? 0;
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
+        CHUNK_LIGHT_UNIFORMS.uCloudShadow.value = 0;
       }
     },
   };
