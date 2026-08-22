@@ -145,9 +145,14 @@ const COMPOSITE_FRAG = /* glsl */ `
   uniform float uRayStrength;   // elevation/visibility ramp, computed per frame
   uniform vec3 uRayTint;
   uniform float uWarm;          // GRADING.WARMTH * sunLevel, per frame
+  uniform float uSunBoost;      // sunLevel while the overworld sky is up —
+                                // drives the DAYLIGHT POP below
   varying vec2 vUv;
   void main() {
-    vec3 col = texture2D(tScene, vUv).rgb * ${VISUAL.GRADING.EXPOSURE.toFixed(3)};
+    // Day exposure: sunlight lifts the whole frame a touch (linear space).
+    vec3 col = texture2D(tScene, vUv).rgb
+      * ${VISUAL.GRADING.EXPOSURE.toFixed(3)}
+      * (1.0 + ${VISUAL.GRADING.DAY_EXPOSURE.toFixed(4)} * uSunBoost);
     col += texture2D(tBloom, vUv).rgb * ${VISUAL.BLOOM.STRENGTH.toFixed(3)};
     col += uRayTint * (texture2D(tRays, vUv).r * uRayStrength);
 
@@ -159,9 +164,18 @@ const COMPOSITE_FRAG = /* glsl */ `
 
     // The grade (perceptual space): warm sunlight, saturation, richer
     // greens, cooler shadows. All strengths in config VISUAL.GRADING.
+    // THE DAYLIGHT POP ("whenever sun is present, more vibrant"): with
+    // the sun up, contrast takes a gentle S-curve and saturation climbs
+    // — the shader-pack sunny-day look — easing back to the neutral
+    // grade through dusk, night, caves-at-night and the fixed-sky
+    // dimensions (uSunBoost 0).
+    col = mix(col, col * col * (3.0 - 2.0 * col),
+      ${VISUAL.GRADING.DAY_CONTRAST.toFixed(4)} * uSunBoost);
     col *= vec3(1.0 + uWarm, 1.0 + uWarm * 0.35, 1.0 - uWarm);
     float luma = dot(col, ${LUMA});
-    col = mix(vec3(luma), col, ${VISUAL.GRADING.SATURATION.toFixed(3)});
+    col = mix(vec3(luma), col,
+      ${VISUAL.GRADING.SATURATION.toFixed(3)}
+      + ${VISUAL.GRADING.DAY_VIBRANCE.toFixed(4)} * uSunBoost);
     float greenness = clamp((col.g - max(col.r, col.b)) * 2.5, 0.0, 1.0);
     col.g *= mix(1.0, ${VISUAL.GRADING.GREEN_GAIN.toFixed(3)}, greenness);
     float shadow = pow(clamp(1.0 - luma, 0.0, 1.0), 2.0);
@@ -276,6 +290,7 @@ export function createPostPipeline({ renderer }) {
       uRayStrength: { value: 0 },
       uRayTint: { value: new THREE.Color(G.TINT) },
       uWarm: { value: 0 },
+      uSunBoost: { value: 0 },
     },
   );
 
@@ -352,6 +367,7 @@ export function createPostPipeline({ renderer }) {
     // 4. Composite + grade to the canvas.
     composite.uniforms.uWarm.value = VISUAL.GRADING.WARMTH *
       (state.skyActive ? state.sunLevel : 0);
+    composite.uniforms.uSunBoost.value = state.skyActive ? state.sunLevel : 0;
     runPass(composite, null);
   }
 

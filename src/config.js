@@ -2507,6 +2507,13 @@ export const VISUAL = {
     DITHER: 1 / 255,         // composite output dither (kills sky banding)
     VIGNETTE: 0.16,          // corner darkening (the shader-pack frame);
                              // 0 disables
+    // THE DAYLIGHT POP ("whenever sun is present, more vibrant"): all
+    // three scale with sunLevel while the overworld sky is up, easing to
+    // the neutral grade through dusk and to zero at night / in the
+    // fixed-sky dimensions.
+    DAY_EXPOSURE: 0.07,      // extra exposure at full sun (linear space)
+    DAY_CONTRAST: 0.16,      // S-curve contrast at full sun
+    DAY_VIBRANCE: 0.22,      // extra saturation at full sun
   },
 
   // The water surface (render/water_fx.js — a patch on the same lit chunk
