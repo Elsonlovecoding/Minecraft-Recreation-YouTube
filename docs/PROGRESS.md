@@ -312,6 +312,77 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**VANILLA PLAINS, AND NO SAND ON MOUNTAINS** ("Search online real minecraft
+plain looking. I want the plains to look the same, and no sand should be on
+mountains"). What vanilla actually does, checked against the worldgen rules
+rather than guessed, then matched:
+- **NO SAND ON MOUNTAINS.** Root cause: mountains come from their own
+  REGION mask, not from climate, so a column can be both mountain-shaped
+  and desert-climate — and `surfaceLayersFor` applied desert sand on the
+  biome NAME, before any mountain test. Sand is lowland now: real mountain
+  influence (`SAND_MAX_MOUNTAIN_WEIGHT`) or simply standing well above the
+  sea (`SAND_MAX_ABOVE_SEA`) disqualifies it, and the bare-stone rule fires
+  for any mountainous column whatever the climate says. Measured over
+  800x800: on mountain-dominant land the surface is **58.7% stone / 39.7%
+  grass / 1.3% sand — and every one of those sand columns is at y<=64**,
+  two blocks above sea, with water in beach reach. That is shoreline where
+  a range meets a lake, which vanilla sands too. Zero desert sand survives
+  on a slope or a summit.
+- The mountains looked wrong for a second reason: `STONE_LINE.HEIGHT` was
+  128, only 40 blocks under the world ceiling, so a range wore grass nearly
+  to its cap and every steep flank showed the grass block's DIRT SIDE —
+  brown cones, not rock. 108 (46 above sea) keeps lower slopes green and
+  bares the shoulders and summits.
+- **GRASS: vanilla's actual rule.** `patch_grass_plain` sits under a
+  `noise_threshold_count` modifier — a noise field picks between a LOW
+  patch count and a HIGH one, two levels, not a smooth ramp. Ours ramped
+  smoothly to a 0.88 peak and laid a solid shag carpet that hid the grass
+  block entirely. Now two levels (0.40 / 0.78) eased across a narrow band
+  so no density seam shows. Measured: **54% coverage**, patchy, ground
+  visible between tufts.
+- **TREES: the plains rate was 12x what the config asked.** Vanilla plains
+  place trees with `countExtra(0, 0.05, 1)` — about 0.05 trees per chunk.
+  Ours blended tree density LINEARLY across biome weights, and forest
+  carries 200x the plains rate, so plains-dominant ground with 40% forest
+  weight came out at near-forest density: **0.63 trunks per plains chunk**.
+  Density now comes from ONE biome — the column's dithered biome, the same
+  map the ground blocks use, which is how vanilla assigns features — so the
+  hash dither still feathers the border into a jagged treeline. Measured
+  per dithered biome: **plains 0.102/chunk, forest 14.9, mountains 0.55,
+  desert 0** — each exactly what config sets.
+- Plains flattened to match "few terrain features, a wide open view":
+  HILL_AMPLITUDE 4 -> 1.8 (every block of hill noise puts another 1-block
+  step in the ground, and a step shows its dirt side), TREE_DENSITY 0.003
+  -> 0.0004, flowers eased back up (FLOWER_FIELD_MIN 0.42 -> 0.36) now that
+  they show against open ground.
+
+**BUG: the black square on distant terrain.** A 60x64 pixel black rectangle
+sat on far mountainsides. Earlier in this session it was written off as a
+swiftshader artifact — that was WRONG, and five consecutive frames of one
+pinned camera settled it: pixel-identical every frame, so deterministic.
+Bisected by hiding scene children (chunk group), then by binary search over
+one chunk's index buffer, down to a single triangle: a 1-block-tall vertical
+face 480 blocks away, seen nearly edge-on. Its vertex data was clean.
+- **Root cause:** `pow(uLightFalloff, 15.0 - vLight.x * 15.0)` used the
+  RAW interpolated light varying. On a triangle that degenerate the
+  perspective divide can push the varying outside [0, 1]; a wild value
+  makes the exponent hugely negative and the power overflows to +inf. The
+  inf reached the fragment colour, the bloom bright pass carried it, and
+  the separable blur — 5 taps reaching +-7 texels at quarter resolution —
+  smeared ONE bad pixel into an exact 60x64 block, which the composite's
+  `clamp` then mapped to 0. Confirmed by measurement at every step: 5 pure
+  black scene pixels at the rectangle's centre with bloom off, and the
+  rectangle disappearing with `BLOOM.STRENGTH` at 0.
+- **Fixed at both ends.** The light varying is clamped before anything
+  raises a power to it, so every term is finite by construction; and the
+  bright pass now sanitises its scene read (comparisons against NaN are
+  always false, so `greaterThanEqual` doubles as the NaN test, with an
+  upper bound for +inf) — that is the choke point where one bad pixel
+  becomes a visible block, so nothing of this class can reappear there.
+- Verified: **0 near-black pixels** anywhere in frame, and 0 black blobs
+  across eight views (plains at eye level, ground, two summit overlooks, a
+  mountain face, golden hour and dawn), zero game console errors.
+
 **WORLD RESHAPE: 32 chunks, real mountains, open country** ("Increase
 render to 32 chunks. Add more mountains to make view look good, sometimes
 more plains, less tree in some place, make me spawn in 旷野, plain

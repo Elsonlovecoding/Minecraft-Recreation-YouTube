@@ -666,7 +666,18 @@ export const TERRAIN = {
   // land: plains 55.7% / forest 17.8% / desert 10.8% / mountains 15.6% —
   // a clear plains majority with all four biomes keeping real presence.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.003 },
+    // Vanilla plains are FLAT ("grassy with few terrain features, a wide
+    // open view") — HILL_AMPLITUDE 4 -> 1.8, because every extra block of
+    // hill noise puts another 1-block step in the ground, and a step shows
+    // the grass block's DIRT SIDE: that is what drew the brown ledges
+    // snaking across our grassland. Trees 0.003 -> 0.0012: vanilla plains
+    // carry the odd lone oak, not one per chunk. Then 0.0012 -> 0.0004
+    // against the real number: vanilla plains place trees with
+    // `countExtra(0, 0.05, 1)` — zero trees per chunk plus a 5% chance of
+    // one, about 0.05 trees/chunk. 0.0004 per column is 0.10/chunk, still
+    // twice vanilla so a walk finds the odd oak, but far from the one-per-
+    // chunk scatter that was closing the "wide, open view".
+    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 1.8, TREE_DENSITY: 0.0004 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
       MOISTURE_START: 0.17,    // moisture where forest starts blending in
@@ -753,6 +764,11 @@ export const TERRAIN = {
     // Underwater floors: sand in the shallows, dirt with gravel patches
     // deeper down (riverbeds sit in the shallow band, so they get the
     // sand/gravel mix the brief asks for).
+    // Sand is a LOWLAND surface: a column with real mountain influence, or
+    // one standing this far above the sea, never takes desert sand however
+    // hot and dry its climate reads ("no sand should be on mountains").
+    SAND_MAX_MOUNTAIN_WEIGHT: 0.10,
+    SAND_MAX_ABOVE_SEA: 26,
     UNDERWATER_SAND_DEPTH: 4,  // floor within this depth of sea level is sandy
     // Gravel patches on beaches and riverbeds: a low-frequency field picks
     // patch regions, a per-column hash roughens their edges.
@@ -773,7 +789,12 @@ export const TERRAIN = {
     // the rest, and STEEP_DROP 3 -> 4 stops ordinary ridged relief from
     // counting as a cliff. Measured after: 91% grass / 7.6% stone.
     STONE_LINE: {
-      HEIGHT: 128,             // mean height where slopes turn to bare stone
+      // 128 -> 108. At 128 the stone line sat only 40 blocks below the world
+      // ceiling, so a mountain wore grass almost to its cap and every steep
+      // flank showed the grass block's DIRT SIDE — the ranges read as brown
+      // cones rather than rock. 108 is 46 above sea: lower slopes stay green,
+      // the shoulders and summits are stone, which is the vanilla read.
+      HEIGHT: 108,             // mean height where slopes turn to bare stone
       JITTER: 7,               // ± blocks of noise on that line
       SCALE: 1 / 70,           // jitter field frequency
     },
@@ -821,12 +842,36 @@ export const TERRAIN = {
   // appear, a hash picks the columns inside it); dead bushes speckle the
   // desert. Densities are per eligible column.
   PLANTS: {
-    GRASS_FIELD_SCALE: 1 / 45, // patch size of the grass density field
-    // Peak per-column short-grass chance per biome (the field scales it 0..1)
-    GRASS_DENSITY: { plains: 0.60, forest: 0.45, mountains: 0.18, desert: 0 },
+    // Vanilla places plains grass with `patch_grass_plain` under a
+    // `noise_threshold_count` modifier: a noise field sampled at 1/200
+    // picks between a LOW patch count and a HIGH one (5 or 10 patches per
+    // chunk) — two levels, not a smooth ramp. That two-level rule is what
+    // gives real plains their look: mostly open sward you can see the
+    // ground through, with denser meadows where the field crosses over.
+    // Our previous smooth ramp peaked at 0.88 and laid a solid shag carpet
+    // that hid the grass block entirely, which is the main reason the
+    // plains did not read as vanilla.
+    GRASS_FIELD_SCALE: 1 / 100,     // vanilla samples its grass noise at 1/200
+    GRASS_FIELD_THRESHOLD: 0.08,    // the `noise_level` the two levels split on
+    GRASS_FIELD_BLEND: 0.14,        // ease band, so no density seam shows along
+                                    // the contour (vanilla hides its own step
+                                    // behind per-chunk patch placement)
+    // Per-column short-grass chance at each level, per biome.
+    GRASS_DENSITY: {
+      plains: { low: 0.40, high: 0.78 },
+      forest: { low: 0.26, high: 0.52 },
+      mountains: { low: 0.08, high: 0.20 },
+      desert: { low: 0, high: 0 },
+    },
     FLOWER_FIELD_SCALE: 1 / 65,
-    FLOWER_FIELD_MIN: 0.30,    // field value where flower clusters begin
-    FLOWER_CHANCE: 0.075,      // per-column chance inside a cluster
+    FLOWER_FIELD_MIN: 0.36,    // field value where flower clusters begin —
+                               // raised from 0.30 with the chance below
+                               // (vanilla scatters flowers SPORADICALLY and
+                               // ours read as a poppy field), then eased back
+                               // to 0.36 once the grass thinned out: plains
+                               // is one of vanilla's flowerier biomes and the
+                               // blooms need to show against open ground
+    FLOWER_CHANCE: 0.045,      // per-column chance inside a cluster
     DEAD_BUSH_CHANCE: 0.012,   // per desert sand column
     // (the seed drop chance is per-block data — it lives in short grass's
     // drop table in world/plants.js, like every other drop roll)

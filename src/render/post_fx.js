@@ -103,7 +103,15 @@ const BRIGHT_FRAG = /* glsl */ `
   void main() {
     float depth = texture2D(tDepth, vUv).x;
     float sky = step(${SKY_DEPTH}, depth);
-    vec3 c = texture2D(tScene, vUv).rgb;
+    // SANITISE before the blur. This pass is the choke point where ONE bad
+    // pixel becomes a visible block: the separable gaussian below reaches
+    // +-7 texels each way at quarter resolution, so a single NaN or inf
+    // spreads into a 60x64 rectangle of the final image (it was showing up
+    // as a black square on distant terrain). Comparisons against NaN are
+    // always false, so greaterThanEqual doubles as the NaN test; the upper
+    // bound catches +inf and keeps the half-float target in range.
+    vec3 raw = texture2D(tScene, vUv).rgb;
+    vec3 c = min(mix(vec3(0.0), raw, vec3(greaterThanEqual(raw, vec3(0.0)))), vec3(64.0));
     float lum = dot(c, ${LUMA});
     // Soft knee under the threshold, hard growth above it.
     float knee = ${VISUAL.BLOOM.SOFT_KNEE.toFixed(3)} * uThreshold + 1e-4;

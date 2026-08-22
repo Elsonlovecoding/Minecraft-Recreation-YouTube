@@ -284,9 +284,23 @@ export class TerrainGenerator {
     // desert speckled with grass is not a desert. Grass-family borders
     // (plains/forest/mountains) keep the wide feather — grass dithered into
     // grass is invisible by design.
+    const [biome, surfaceBiome] = this.ditheredBiome(x, z, weights);
+
+    return {
+      x, z, height, weights,
+      biome,
+      surfaceBiome,
+      surface: surfaceLayersFor(this, x, z, surfaceBiome, height, weights),
+    };
+  }
+
+  // The biome a column's FEATURES come from: the strongest weight, flipped
+  // to the runner-up by a per-column hash when the two are close. Returns
+  // [dominant, dithered]. Extracted from columnAt so decoration can use the
+  // same map the ground blocks use — see treeDensityAt.
+  ditheredBiome(x, z, weights) {
     const names = ['plains', 'forest', 'desert', 'mountains'];
     names.sort((a, b) => weights[b] - weights[a]);
-    let surfaceBiome = names[0];
     const gap = weights[names[0]] - weights[names[1]];
     const ditherRange = names[0] === 'desert' || names[1] === 'desert'
       ? TERRAIN.BIOME_DITHER_DESERT_RANGE
@@ -294,15 +308,9 @@ export class TerrainGenerator {
     if (gap < ditherRange) {
       // Probability of flipping to the runner-up rises to 50% as gap → 0.
       const flip = 0.5 * (1 - gap / ditherRange);
-      if (hash01(this.seed ^ SALT_DITHER, x, z) < flip) surfaceBiome = names[1];
+      if (hash01(this.seed ^ SALT_DITHER, x, z) < flip) return [names[0], names[1]];
     }
-
-    return {
-      x, z, height, weights,
-      biome: names[0],
-      surfaceBiome,
-      surface: surfaceLayersFor(this, x, z, surfaceBiome, height),
-    };
+    return [names[0], names[0]];
   }
 
   // (The Phase 24 surface rules — gravel patches, beach reach, the mountain
@@ -447,16 +455,25 @@ export class TerrainGenerator {
   treeDensityAt(x, z, w) {
     const F = TERRAIN.TREES.DENSITY_FIELD;
     const f01 = (fbm(this.treeDensityNoise, x * F.SCALE, z * F.SCALE, 2) + 1) * 0.5;
-    return this.treeDensityFromWeights(w) * (F.MIN + (F.MAX - F.MIN) * f01);
+    return this.treeDensityFromWeights(w, x, z) * (F.MIN + (F.MAX - F.MIN) * f01);
   }
 
-  treeDensityFromWeights(w) {
+  // Tree density comes from ONE biome — the column's dithered biome, the
+  // same map the ground blocks use — not from a weighted blend of all four.
+  // Forest carries 200x the plains rate, and at that ratio any smooth blend
+  // leaks: plains-dominant ground with 40% forest weight is still 95% plains
+  // by weight yet came out at near-forest tree density. Measured 0.63 trunks
+  // per plains chunk against the 0.10 the config asks for, which is what was
+  // closing vanilla's "wide, open view". Vanilla gives a column exactly one
+  // biome's features; the hash dither in ditheredBiome keeps the border
+  // feathered so the change is a jagged treeline, not a straight cut.
+  treeDensityFromWeights(w, x, z) {
     const B = TERRAIN.BIOMES;
-    return (
-      w.plains * B.PLAINS.TREE_DENSITY +
-      w.forest * B.FOREST.TREE_DENSITY +
-      w.mountains * B.MOUNTAINS.TREE_DENSITY
-    );
+    const biome = this.ditheredBiome(x, z, w)[1];
+    if (biome === 'forest') return B.FOREST.TREE_DENSITY;
+    if (biome === 'mountains') return B.MOUNTAINS.TREE_DENSITY;
+    if (biome === 'plains') return B.PLAINS.TREE_DENSITY;
+    return 0; // desert
   }
 
   placeTrees(chunk, colAt) {
@@ -590,10 +607,23 @@ export class TerrainGenerator {
               ? BLOCK.DANDELION
               : BLOCK.POPPY;
           } else {
-            const density = (P.GRASS_DENSITY[surfaceBiome] ?? 0) * (fbm(
-              this.plantNoise, x * P.GRASS_FIELD_SCALE, z * P.GRASS_FIELD_SCALE, 2,
-            ) + 1) * 0.5;
-            if (hash01(this.seed ^ SALT_PLANT, x, z) < density) id = BLOCK.SHORT_GRASS;
+            // Vanilla's noise_threshold_count: one noise field choosing
+            // between a low and a high grass level. Eased across a narrow
+            // band so the changeover never draws a visible density edge
+            // through an open field.
+            const g = P.GRASS_DENSITY[surfaceBiome];
+            if (g) {
+              const field = fbm(
+                this.plantNoise, x * P.GRASS_FIELD_SCALE, z * P.GRASS_FIELD_SCALE, 2,
+              );
+              const t = smoothstep(
+                P.GRASS_FIELD_THRESHOLD - P.GRASS_FIELD_BLEND,
+                P.GRASS_FIELD_THRESHOLD + P.GRASS_FIELD_BLEND,
+                field,
+              );
+              const density = g.low + (g.high - g.low) * t;
+              if (hash01(this.seed ^ SALT_PLANT, x, z) < density) id = BLOCK.SHORT_GRASS;
+            }
           }
         } else if (surfaceBiome === 'desert' && surface.top === BLOCK.SAND) {
           if (hash01(this.seed ^ SALT_BUSH, x, z) < P.DEAD_BUSH_CHANCE) {

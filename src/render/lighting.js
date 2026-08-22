@@ -315,12 +315,27 @@ export function patchChunkMaterial(material) {
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
-          float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
-          float blockLevel = vLight.y * 15.0;
+          // The baked light attribute, CLAMPED before anything raises a
+          // power to it. vLight is a varying: on a triangle seen nearly
+          // edge-on at long range the perspective divide is numerically
+          // brutal and the interpolated value can land outside [0, 1].
+          // Feed that to pow(0.8, 15 - 15 * L) and a value only slightly
+          // over 1 is harmless, but a wild one makes the exponent hugely
+          // NEGATIVE and the power overflows to +inf. That inf reached
+          // the fragment colour, the bloom bright pass carried it, and
+          // the separable blur — 5 taps reaching +-7 texels at quarter
+          // resolution — smeared one bad pixel into an exact 60x64 BLACK
+          // RECTANGLE on distant mountainsides (clamp() maps a non-finite
+          // value to 0). Clamping the light here costs nothing and closes
+          // the whole class: every term below is now finite by
+          // construction.
+          float light01 = clamp(vLight.x, 0.0, 1.0);
+          float skyLevel = clamp(max(light01 * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
+          float blockLevel = clamp(vLight.y, 0.0, 1.0) * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
           // How open to the sky this column is — scales every outdoor
           // effect below so interiors and caves feel nothing.
-          float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+          float openCol = pow(uLightFalloff, 15.0 - light01 * 15.0);
           // Drifting cloud shadows (see csCloud above): dim the sky's
           // contribution under cloud.
           if (uCloudShadow > 0.001) {
@@ -382,7 +397,7 @@ export function patchChunkMaterial(material) {
             float shade = clamp(1.0 - vColor.r, 0.0, 1.0);
             float dayF = clamp(1.0 - uSkyDarken / 11.0, 0.0, 1.0) *
               step(uMinSkyLevel, 0.5); // no bounce under a fixed dimension sky
-            float openSky = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+            float openSky = openCol;
             lum = mix(lum, lum * uShadowCool, uShadowCoolStrength * shade * dayF);
             lum += uBounceColor * (uBounceStrength * shade * dayF * openSky);
           #endif
