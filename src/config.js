@@ -2557,6 +2557,18 @@ export const VISUAL = {
   // under the clouds that cast them. Torch light, caves and the fixed-sky
   // dimensions are untouched; strength fades with the sun and is 0 at
   // night.
+  // WIND on the foliage ("make those leaves look lively, like a shader"):
+  // the mesher bakes a per-vertex wave weight (leaves ~0.55 everywhere;
+  // cross-plane grass/flowers 0 at the root, 1 at the tip) and the chunk
+  // vertex shader sways those vertices through a world-space wind field —
+  // several incommensurate sines plus a slow travelling gust, phase
+  // continuous across blocks and chunks so a canopy ripples as one body.
+  // Textures untouched; static blocks pay one attribute byte per vertex
+  // and a uniform branch.
+  WIND: {
+    AMPLITUDE: 0.09,         // peak displacement in blocks at weight 1
+    SPEED: 1.0,              // wind clock rate (1 = the shipped feel)
+  },
   CLOUD_SHADOW: {
     STRENGTH: 0.30,          // sky-light dimming under a solid cloud
     SOFTNESS: 0.34,          // shadow edge width (field units) — soft,

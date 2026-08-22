@@ -480,6 +480,13 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
       }
       bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
       bucket.count += 4;
+      // Wind sway: the blade is PINNED at the root and waves at the tip
+      // (verts 0,1 sit at y, 2,3 at y+1 — see the corner pushes above).
+      // Zero-pad the sparse wave array to this quad's base first; the
+      // chunk mesher's padWave keeps every other emit path in sync.
+      const w = bucket.wav;
+      for (let n = base - w.length; n > 0; n--) w.push(0);
+      w.push(0, 0, 255, 255);
     }
   };
 

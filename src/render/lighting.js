@@ -198,6 +198,12 @@ export const CHUNK_LIGHT_UNIFORMS = {
   uCloudShadow: { value: 0 },
   uCloudDrift: { value: new THREE.Vector2(0, 0) },
   uCloudSlant: { value: new THREE.Vector2(0, 0) },
+  // Wind ("lively leaves"): the vertex stage displaces wave-weighted
+  // vertices (leaves, cross-plant tops — a per-vertex attribute baked by
+  // the mesher) through a world-space wind field. Time accumulates in the
+  // cycle; amplitude is one config knob.
+  uWindTime: { value: 0 },
+  uWindAmp: { value: VISUAL.WIND.AMPLITUDE },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -223,11 +229,34 @@ export function patchChunkMaterial(material) {
     Object.assign(shader.uniforms, CHUNK_LIGHT_UNIFORMS);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>',
-        'attribute vec2 light;\nvarying vec2 vLight;\nvarying vec3 vHeldWorldPos;\n#include <common>')
-      .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\n'
-        + 'vLight = light;\n'
-        + 'vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        'attribute vec2 light;\n'
+        + 'attribute float wave;\n'
+        + 'varying vec2 vLight;\n'
+        + 'varying vec3 vHeldWorldPos;\n'
+        + 'uniform float uWindTime;\n'
+        + 'uniform float uWindAmp;\n'
+        + '#include <common>')
+      .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
+        vLight = light;
+        vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        // WIND (the "lively leaves" pass): wave-weighted vertices (leaves,
+        // cross-plant tops) sway through a world-space field — several
+        // incommensurate sines plus a slow travelling gust, so a canopy
+        // ripples rather than rocking in one rhythm. World-space phase
+        // keeps neighbouring blocks and chunks moving as one body.
+        if (wave > 0.003) {
+          vec3 wp = vHeldWorldPos;
+          float t = uWindTime;
+          float sway = sin(wp.x * 0.31 + wp.y * 0.13 + t * 1.9)
+                     * cos(wp.z * 0.27 + t * 1.4) * 0.6
+                     + sin((wp.x + wp.z) * 0.09 + t * 0.7) * 0.4;
+          float gust = 0.66 + 0.34 * sin(wp.x * 0.021 + wp.z * 0.017 + t * 0.31);
+          float amp = wave * uWindAmp * gust;
+          transformed.x += sway * amp;
+          transformed.z += cos(wp.x * 0.23 + wp.y * 0.11 + t * 1.1) * sway * amp * 0.8;
+          transformed.y += sin(wp.z * 0.29 + wp.x * 0.07 + t * 1.6) * amp * 0.3;
+          vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        }`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
         'varying vec2 vLight;\n'
@@ -706,6 +735,11 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         day++; // a new day — the moon turns a phase
       }
       const t = time / TIME.DAY_LENGTH_SECONDS;
+
+      // Wind clock for the waving leaves/plants — wrapped so the shader's
+      // sine arguments never lose float precision over long sessions.
+      CHUNK_LIGHT_UNIFORMS.uWindTime.value =
+        (CHUNK_LIGHT_UNIFORMS.uWindTime.value + delta * VISUAL.WIND.SPEED) % 6283.185;
 
       // Bracketing keyframes (wrapping past the last one back to the first).
       let a = frames[frames.length - 1];
