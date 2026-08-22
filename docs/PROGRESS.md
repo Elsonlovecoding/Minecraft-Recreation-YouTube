@@ -225,6 +225,24 @@ SHADERS)"):
   composite gained a gentle corner vignette (GRADING.VIGNETTE 0.16).
   Verified at one viewpoint across morning/noon/dusk — the lit side of
   the same tree flips with the sun; zero game console errors.
+  **Bug fixed from a live-play report** ("a yellow circle appears for a
+  split second when I jump and sprint"): reproduced headlessly by
+  driving W+Ctrl+Space and scanning frames — a lattice of blown-out
+  warm dots on tree trunks the player brushed past, 646 hot pixels at
+  its worst. TWO causes, both fixed: (1) the derivative normal
+  DEGENERATES on a face seen edge-on (both screen derivatives run along
+  one world line, the cross product collapses and normalize() returns
+  inf/NaN) — the length is now tested before dividing and the dot
+  product clamped, so an unusable normal simply skips the term; and
+  (2) even a valid +26% boost pushed warm surfaces (wood, dirt — which
+  sit just under BLOOM.WARM_FLOOR by design) over the bloom pass's
+  emissive detector, which smeared them into the glowing lattice. The
+  term is ENERGY-NEUTRAL now: the multiplier peaks at exactly 1.0 on a
+  sun-facing surface and only darkens from there, so face modelling can
+  never brighten anything past the baked sky light. Measured over the
+  same 34-frame sprint-jump run: blown-out pixels 646 -> 1, identical
+  to a control run with the effect disabled, with the directional look
+  intact.
 - **THE DAYLIGHT POP** ("Shader has: Good sunlight. Whenever sun is
   present, more vibrant"): three sun-scaled terms in the composite grade
   (GRADING.DAY_EXPOSURE 0.07 in linear, DAY_CONTRAST 0.16 as a gentle

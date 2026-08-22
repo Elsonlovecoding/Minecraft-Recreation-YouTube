@@ -333,11 +333,34 @@ export function patchChunkMaterial(material) {
           // sky. Wind-swayed leaves get gently varying normals for free,
           // so canopies shimmer as they move.
           if (uSunFace > 0.001) {
-            vec3 fn = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
-            if (!gl_FrontFacing) fn = -fn;
-            float facing = dot(fn, uSunFaceDir);
-            skyLum *= 1.0 + uSunFace * openCol *
-              (facing > 0.0 ? facing : facing * 0.7);
+            // The cross product DEGENERATES on a face seen edge-on: both
+            // screen derivatives then run along the same world line, so
+            // the cross collapses toward zero and normalize() returns
+            // inf/NaN — which blew the fragment out and bloom smeared it
+            // into a lattice of glowing dots (the "yellow circle" seen
+            // while sprint-jumping past tree trunks). Test the length
+            // BEFORE dividing, and clamp the result: no valid normal
+            // means no directional term for that pixel, never a blowout.
+            vec3 cn = cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos));
+            float cl = length(cn);
+            if (cl > 1e-7) {
+              vec3 fn = cn / cl;
+              if (!gl_FrontFacing) fn = -fn;
+              float facing = clamp(dot(fn, uSunFaceDir), -1.0, 1.0);
+              // ENERGY-NEUTRAL: the multiplier peaks at exactly 1.0 on a
+              // fully sun-facing surface and only DARKENS from there, so
+              // the modelling can never push a surface BRIGHTER than the
+              // baked sky light. That matters beyond taste: brightening
+              // warm surfaces (wood, dirt) nudged them over the bloom
+              // pass's emissive detector, which then smeared them into a
+              // lattice of glowing dots — the "yellow circle" flashing
+              // past tree trunks while sprint-jumping. Contrast comes
+              // from the shaded side, which is how the effect reads
+              // anyway.
+              float shade = facing > 0.0 ? facing : facing * 0.7;
+              skyLum *= (1.0 + uSunFace * openCol * shade)
+                      / (1.0 + uSunFace * openCol);
+            }
           }
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
           // Held-torch dynamic light (Phase 14): one level lost per block of
