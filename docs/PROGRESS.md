@@ -243,6 +243,23 @@ SHADERS)"):
   same 34-frame sprint-jump run: blown-out pixels 646 -> 1, identical
   to a control run with the effect disabled, with the directional look
   intact.
+- **Whole-stack visual sweep** (after the fix, "make sure no visual
+  bugs"): 40 captured vantages scanned by detector for blown-out warm
+  pixels, magenta/NaN garbage and black holes — 7 times of day x
+  {horizon, straight up, straight down, at the sun}, a deep unlit cave,
+  fully submerged water, a chunk-border straddle, a canopy closeup, the
+  Nether, the End, and the return swap to the overworld. Findings:
+  ZERO artifacts (the only "blowout" hits are the sun's own disc),
+  zero magenta/NaN, caves correctly pitch black with no directional or
+  cloud-shadow leak, the fixed-sky dimensions correctly carry no
+  clouds/shadows/face light, the overworld sky restores intact after
+  nether -> end -> overworld, and zero game console errors in every
+  run. A second node census placed 17 awkward block kinds (torch,
+  fence, door, trapdoor, sign, bars, brewing stand, portal, wart,
+  ladder, wall, stairs, pot, bed, glass, water, lava, chest, frame) and
+  rebuilt 41 geometries across BOTH LOD tiers: the wind `wave`
+  attribute matches the position count everywhere and only ever holds
+  its three legal values — no emit path can desync it.
 - **THE DAYLIGHT POP** ("Shader has: Good sunlight. Whenever sun is
   present, more vibrant"): three sun-scaled terms in the composite grade
   (GRADING.DAY_EXPOSURE 0.07 in linear, DAY_CONTRAST 0.16 as a gentle
