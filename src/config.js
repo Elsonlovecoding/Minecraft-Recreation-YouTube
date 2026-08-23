@@ -304,6 +304,18 @@ export const STREAMING = {
                           // moving through unbuilt terrain visibly hitchy at
                           // 60fps; the ring fills a touch slower instead)
   UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
+  // Chunk APPEAR animation ("make the far parts smooth, like a real
+  // render"): a chunk meshed for the FIRST time beyond MIN_CHUNKS rises
+  // out of the ground over SECONDS instead of popping in whole. In normal
+  // play the frontier meshes at the ring edge, already inside full fog —
+  // this is for the moments streaming is visibly behind: after /tp, fast
+  // flight, a dimension return. Retier and edit remeshes never animate
+  // (the chunk already had a mesh), so building is never bouncy.
+  APPEAR: {
+    MIN_CHUNKS: 6,        // no animation inside this radius (player's arena)
+    DROP: 10,             // blocks the mesh starts below its true height
+    SECONDS: 0.45,        // rise duration, ease-out
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -908,11 +920,14 @@ export const TERRAIN = {
     GRASS_FIELD_BLEND: 0.14,        // ease band, so no density seam shows along
                                     // the contour (vanilla hides its own step
                                     // behind per-chunk patch placement)
-    // Per-column short-grass chance at each level, per biome.
+    // Per-column short-grass chance at each level, per biome. Halved by
+    // request ("grass not that common, not like every block, maybe half
+    // the rarity") from 0.40/0.78 etc — the sward now reads as tufts ON
+    // the ground rather than a second surface over it.
     GRASS_DENSITY: {
-      plains: { low: 0.40, high: 0.78 },
-      forest: { low: 0.26, high: 0.52 },
-      mountains: { low: 0.08, high: 0.20 },
+      plains: { low: 0.20, high: 0.39 },
+      forest: { low: 0.13, high: 0.26 },
+      mountains: { low: 0.04, high: 0.10 },
       desert: { low: 0, high: 0 },
     },
     FLOWER_FIELD_SCALE: 1 / 65,
@@ -2266,11 +2281,21 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  // Scaled with the view at the same fractions every retune (480 -> 640 ->
-  // the final 400): clear to ~72% of the view, the ring edge sitting at
-  // ~80% haze so pop-in stays invisible.
-  FOG_NEAR: 368,
-  FOG_FAR: 544,
+  // ("make the far and un-rendered parts smooth, like a real render.")
+  // Two rules make the world edge read as atmosphere instead of a cutoff:
+  //  1. Fog is RADIAL (render/lighting.js patches fogDepth to the true
+  //     distance). Stock three.js fogs by view-space Z, so at FOV 70 a
+  //     chunk at the CORNER of the screen carried ~37% less fog depth
+  //     than the same chunk dead ahead — turning the camera visibly
+  //     un-fogged the periphery and the ring edge popped in and out.
+  //     Radial fog is a circle around the player, exactly the shape of
+  //     the streaming ring it must hide.
+  //  2. FOG_FAR sits INSIDE the ring edge (512 blocks at r=32), not past
+  //     it: the old 544 left the outermost chunks silhouetted against
+  //     the sky at ~80% fog. Full opacity at 496 dissolves them entirely
+  //     — clear to ~69% of the view, gone at ~97%.
+  FOG_NEAR: 352,
+  FOG_FAR: 496,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every

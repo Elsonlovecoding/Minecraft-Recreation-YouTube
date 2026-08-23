@@ -52,6 +52,7 @@ export class World {
     //                  re-checking thousands of finished chunks
     this._streamIdle = false;
     this._scanFrom = 0;
+    this._appearing = []; // chunk groups mid-rise (STREAMING.APPEAR)
   }
 
   static chunkKey(cx, cz) {
@@ -259,6 +260,9 @@ export class World {
   // whatever fell out of range — all within STREAMING.FRAME_BUDGET_MS.
   updateStreaming(pos) {
     if (!this.scene) return;
+    // The appear rise ticks BEFORE the idle early-out: the last chunks of
+    // a burst finish rising after the ring has already gone idle.
+    this._tickAppear();
     const pcx = Math.floor(pos.x / SIZE);
     const pcz = Math.floor(pos.z / SIZE);
     if (pcx !== this._pcx || pcz !== this._pcz) {
@@ -295,6 +299,7 @@ export class World {
     const genR = meshRadius + 1;
     const detailR2 = VIEW.LOD.DETAIL_CHUNKS ** 2;
     const demoteR2 = (VIEW.LOD.DETAIL_CHUNKS + VIEW.LOD.HYSTERESIS) ** 2;
+    const appearR2 = STREAMING.APPEAR.MIN_CHUNKS ** 2;
     // Phase 27: tier-change remeshes TRICKLE (VIEW.LOD.RETIER_PER_PASS) so a
     // border crossing's whole arc of promotions can't camp on the budget,
     // and the scan resumes at the first offset the previous pass left
@@ -343,7 +348,10 @@ export class World {
         this._scanFrom = firstIncomplete;
         return;
       }
-      this._remesh(chunk, lod);
+      // FIRST-ever mesh beyond the appear radius rises in (the "real
+      // render" smoothness); retier and edit remeshes (chunk.mesh set)
+      // swap in place so building is never bouncy.
+      this._remesh(chunk, lod, !chunk.mesh && o.d2 > appearR2);
     }
     // Scanned to the end of the ring: park on the first thing still
     // unfinished (a capped retier, a chunk waiting on neighbours), or go
@@ -368,7 +376,7 @@ export class World {
     return true;
   }
 
-  _remesh(chunk, lod = 0) {
+  _remesh(chunk, lod = 0, animate = false) {
     if (chunk.mesh) {
       disposeChunkMesh(chunk);
       this.meshedCount--;
@@ -380,8 +388,42 @@ export class World {
       lod,
     );
     this.scene.add(chunk.mesh.group);
+    if (animate) {
+      // Start the group sunk DROP blocks; _tickAppear eases it up to rest.
+      const group = chunk.mesh.group;
+      group.position.y = -STREAMING.APPEAR.DROP;
+      group.updateMatrix();
+      this._appearing.push({ group, start: performance.now() });
+    }
     this.meshedCount++;
     chunk.dirty = false;
+  }
+
+  // Eases every mid-rise chunk group toward rest (cubic ease-out over
+  // STREAMING.APPEAR.SECONDS) and drops finished or unloaded entries.
+  // Wall-clock timed: the rise is cosmetic, runs a fraction of a second,
+  // and must keep moving even on frames the streamer spends fully parked.
+  _tickAppear() {
+    const list = this._appearing;
+    if (list.length === 0) return;
+    const A = STREAMING.APPEAR;
+    const now = performance.now();
+    let keep = 0;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (!e.group.parent) continue; // unloaded (or disposed) mid-rise
+      const t = (now - e.start) / (A.SECONDS * 1000);
+      if (t >= 1) {
+        e.group.position.y = 0;
+        e.group.updateMatrix();
+        continue;
+      }
+      const ease = 1 - (1 - t) ** 3;
+      e.group.position.y = -A.DROP * (1 - ease);
+      e.group.updateMatrix();
+      list[keep++] = e;
+    }
+    list.length = keep;
   }
 
   // Drops meshes outside the view circle and chunk data outside the load

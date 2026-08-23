@@ -263,7 +263,21 @@ export function patchChunkMaterial(material) {
           transformed.z += cos(wp.x * 0.23 + wp.y * 0.11 + t * 1.1) * sway * amp * 0.8;
           transformed.y += sin(wp.z * 0.29 + wp.x * 0.07 + t * 1.6) * amp * 0.3;
           vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        }`);
+        }`)
+      // RADIAL FOG ("make the far parts smooth, like a real render").
+      // Stock three.js fogs by view-space Z (vFogDepth = -mvPosition.z),
+      // which is a PLANE across the view: at FOV 70 a chunk in the corner
+      // of a widescreen frame carries ~37% less fog depth than the same
+      // chunk straight ahead, so turning the camera visibly un-fogged the
+      // periphery and the world edge popped in and out of the haze. True
+      // distance makes the fade a circle around the player — the exact
+      // shape of the streaming ring it exists to hide. SKY.FOG_FAR sits
+      // just inside the ring radius, so the outermost chunks dissolve
+      // fully into sky in EVERY direction.
+      .replace('#include <fog_vertex>', /* glsl */ `
+        #ifdef USE_FOG
+          vFogDepth = length(mvPosition.xyz);
+        #endif`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
         'varying vec2 vLight;\n'

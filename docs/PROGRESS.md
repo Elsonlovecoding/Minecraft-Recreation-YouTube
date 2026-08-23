@@ -312,6 +312,39 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**HALF THE GRASS, AND A SMOOTH WORLD EDGE** ("grass not that common, maybe
+half the rarity" / "make far render parts and un-rendered parts more
+smooth, like it's a real render"):
+- Short-grass levels halved across the board (plains 0.40/0.78 ->
+  0.20/0.39 etc). Measured: plains coverage 54.0% -> **26.9%** — tufts ON
+  the ground instead of a second surface over it.
+- **RADIAL FOG.** Stock three.js fogs by view-space Z — a PLANE across the
+  view — so at FOV 70 a chunk in the corner of a widescreen frame carried
+  ~37% less fog depth than the same chunk dead ahead: turning the camera
+  visibly un-fogged the periphery, and the world edge popped in and out of
+  the haze. The chunk shader patch now sets fogDepth to true distance
+  (`length(mvPosition.xyz)`), making the fade a circle around the player —
+  the exact shape of the streaming ring it exists to hide. Water inherits
+  via its patch; mobs keep stock fog (they cap at ~96 blocks, where fog is
+  zero either way).
+- **FOG_FAR moved INSIDE the ring edge** (544 -> 496 against the 512-block
+  r=32 ring; NEAR 368 -> 352). At 544 the outermost chunks sat silhouetted
+  against the sky at ~80% fog — the "hard cutoff" look. Now they dissolve
+  fully into sky in every direction before the geometry actually ends.
+- **CHUNK APPEAR RISE (STREAMING.APPEAR).** A chunk meshed for the FIRST
+  time beyond 6 chunks starts 10 blocks low and eases up over 0.45s
+  (cubic ease-out) instead of popping in whole — the Bedrock-style
+  assembly. In normal play the frontier meshes at the ring edge, already
+  under full fog; this covers the moments streaming is visibly behind
+  (/tp, fast flight, dimension return). Retier and edit remeshes never
+  animate (the chunk already had a mesh), so building is never bouncy;
+  the tick runs before the streamer's idle early-out so the last chunks
+  of a burst finish rising after the ring parks. Verified live: groups
+  observed mid-rise in 48 of 56 fill-loop checks, and after settling all
+  3209 meshed chunks sit at exactly y=0.
+- Full sweep after: 0 black blobs across five views, zero game console
+  errors.
+
 **FOLIAGE COLOUR — the biome colormap** ("using existing blocks and
 textures, how to make it more lively"). The single biggest gap between this
 world and a real one, and it needed no new art: vanilla ships grass and
