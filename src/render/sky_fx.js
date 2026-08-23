@@ -364,41 +364,69 @@ export function createClouds() {
 export function createStars(sky) {
   const S = STARS;
   const rng = mulberry32(S.SEED);
-  const positions = new Float32Array(S.COUNT * 3);
-  for (let i = 0; i < S.COUNT; i++) {
-    const y = rng() * 2 - 1; // uniform over the whole sphere
-    const a = rng() * Math.PI * 2;
-    const r = Math.sqrt(Math.max(0, 1 - y * y));
-    positions[i * 3] = Math.cos(a) * r * S.RADIUS;
-    positions[i * 3 + 1] = y * S.RADIUS;
-    positions[i * 3 + 2] = Math.sin(a) * r * S.RADIUS;
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const material = new THREE.PointsMaterial({
-    color: 0xffffff,
-    size: S.SIZE,
-    sizeAttenuation: false,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    fog: false,
-    toneMapped: false,
-  });
-  // Phase 26: stars sit at the far plane and depth-test, so the cloud deck
-  // (which now writes depth, above) occludes them per pixel.
-  forceFarDepth(material);
-  const points = new THREE.Points(geometry, material);
-  points.frustumCulled = false;
-  points.renderOrder = -1.5; // after the dome AND the clouds, before sun/moon
+  // The real sky's trick (the "stars better" retune): stars are not one
+  // flat sheet of identical white points. Two layers — a dense faint field
+  // under a sparse bright one — and every star carries its own brightness
+  // and a slight temperature colour: most white, the hot ones leaning
+  // blue, the old ones leaning warm.
+  const buildLayer = (count, size) => {
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const y = rng() * 2 - 1; // uniform over the whole sphere
+      const a = rng() * Math.PI * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      positions[i * 3] = Math.cos(a) * r * S.RADIUS;
+      positions[i * 3 + 1] = y * S.RADIUS;
+      positions[i * 3 + 2] = Math.sin(a) * r * S.RADIUS;
+      // Brightness spread (dim stars far outnumber bright ones — square
+      // the roll) with a temperature lean on a third of them.
+      const v = 0.35 + 0.65 * rng() * rng();
+      let cr = v;
+      let cg = v;
+      let cb = v;
+      const roll = rng();
+      if (roll < 0.18) { cr *= 0.82; cg *= 0.9; }        // blue-white
+      else if (roll < 0.34) { cb *= 0.78; cg *= 0.93; }  // warm white
+      colors[i * 3] = cr;
+      colors[i * 3 + 1] = cg;
+      colors[i * 3 + 2] = cb;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size,
+      vertexColors: true,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false,
+      blending: THREE.AdditiveBlending, // stars ADD light; overlaps glow
+    });
+    // Phase 26: stars sit at the far plane and depth-test, so the cloud
+    // deck (which writes depth) occludes them per pixel.
+    forceFarDepth(material);
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    points.renderOrder = -1.5; // after dome AND clouds, before sun/moon
+    return { points, material };
+  };
+  const faint = buildLayer(S.COUNT, S.SIZE);
+  const bright = buildLayer(S.BRIGHT_COUNT, S.BRIGHT_SIZE);
   const group = new THREE.Group();
-  group.add(points);
+  group.add(faint.points);
+  group.add(bright.points);
   sky.add(group);
   return {
     group,
     setAlpha(a) {
-      material.opacity = a;
-      points.visible = a > 0.002;
+      faint.material.opacity = a * 0.85;
+      bright.material.opacity = a;
+      faint.points.visible = a > 0.002;
+      bright.points.visible = a > 0.002;
     },
     // The wheel: rotate with the sun's orbit angle around its own axis.
     setAngle(ang) {

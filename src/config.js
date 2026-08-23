@@ -2241,7 +2241,8 @@ export const LIGHTING = {
   // LIGHT_FALLOFF^(15-L), so level 0 bottoms out near-black, not pure black.
   LIGHT_FALLOFF: 0.8,
   TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
-  NIGHT_SKY_TINT: 0xa9bef2,       // cool moonlight tint on skylight at night
+  NIGHT_SKY_TINT: 0xbccff8,       // cool moonlight tint on skylight at night
+                                  // (lifted with the night retune)
                                   // (Phase 27 follow-up: brightened toward
                                   // silver — moonlit ground should READ)
   // Held-item dynamic light (Phase 14, deliberately beyond vanilla): a torch
@@ -2353,15 +2354,16 @@ export const DAY_NIGHT = {
     { T: 0.5125, ZENITH: 0x3a3670, MID: 0x8a6a9a, HORIZON: 0xff9a54,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
-    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10 and the tint pushed
-    // toward silver — a full-moon night should read, not swallow the world;
-    // gameplay unchanged: night surfaces sit at effective light 5, still
-    // under the hostile-spawn gate of 7, and torches still protect at 14).
-    { T: 0.525, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
-      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10; final night retune:
+    // 10 -> 9 with the whole palette lifted a step — "not TOO dark" — a
+    // moonlit night you can walk by. Gameplay still unchanged: night
+    // surfaces sit at effective light 6, under the hostile-spawn gate of
+    // 7, and torches still protect at 14).
+    { T: 0.525, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+      BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
-    { T: 0.975, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
-      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+    { T: 0.975, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+      BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
     { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
@@ -2399,17 +2401,21 @@ export const CELESTIAL = {
                                   // to keep the old apparent diameter
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
-  MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
+  MOON_PHASES: 1,                 // final night retune ("circle moon"): the
+                                  // moon shows its full circular disc every
+                                  // night. The 8-phase pipeline is intact —
+                                  // set back to 8 for vanilla's cycle
   // Phase 27 follow-up — MOONLIGHT ("moon light should also good"). The
   // round moon disc hangs in a soft cool halo (an additive glow quad
   // behind it, the sun-glow treatment at night temperature), the sky dome
   // carries a gentle wash of light around its position, and the water
   // picks up a moon glint (main.js feeds the water uniforms the moon's
   // direction after sunset).
-  MOON_GLOW_SCALE: 3.0,           // halo quad as a multiple of the moon
-  MOON_GLOW_STRENGTH: 0.55,       // halo alpha at the moon's edge
+  MOON_GLOW_SCALE: 3.6,           // halo quad as a multiple of the moon
+  MOON_GLOW_STRENGTH: 0.78,       // halo alpha at the moon's edge ("a bit
+                                  // shiny": brighter, wider halo)
   MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
-  MOON_SKY_GLOW: 0.32,            // the dome's night wash around the moon
+  MOON_SKY_GLOW: 0.42,            // the dome's night wash around the moon
   MOON_SKY_GLOW_COLOR: 0x9db8e8,  // ...and its colour
   MOON_SKY_GLOW_BAND: 1.6,        // dome-height reach of the wash (the day
                                   // glow hugs the horizon at 0.45; the moon
@@ -2460,7 +2466,10 @@ export const CLOUDS = {
                                   // first cut put the WHOLE visible sky in
                                   // one gate cell and a low roll meant a
                                   // permanently empty sky)
-  COVER: 0.70,                    // how much of a weather system fills in
+  COVER: 0.62,                    // how much of a weather system fills in
+                                  // (0.70 -> 0.62 with the shape retune:
+                                  // separated puffs instead of one merged
+                                  // shelf)
                                   // (the reference-image retune: node
                                   // sweep holds ~52% visible / ~44% solid
                                   // with EVERY sampled vantage >= 38% —
@@ -2484,12 +2493,18 @@ export const CLOUDS = {
                                   // pushed out with VIEW.FAR 1700 so the
                                   // low stacked band of distant clouds
                                   // (the reference image's horizon) shows
-  WARP: 0.55,                      // domain-warp strength (noise units) —
-                                  // bends the sample space so puffs stop
-                                  // being round fbm blobs
-  DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
-  EROSION: 0.34,                  // how hard detail noise eats thin edges
-                                  // (the cauliflower rim; cores keep mass)
+  WARP: 0.22,                      // domain-warp strength (noise units).
+                                  // 0.55 -> 0.22 ("shape too weird, make
+                                  // regular cloud shape"): heavy warp
+                                  // smeared puffs into ragged shelves and
+                                  // hooks; a light touch keeps them
+                                  // organic while the shapes stay the
+                                  // rounded cumulus a real sky carries
+  DETAIL_SCALE: 2.7,              // erosion detail frequency, x base scale
+  EROSION: 0.24,                  // how hard detail noise eats thin edges
+                                  // (the cauliflower rim; cores keep mass —
+                                  // eased with WARP so rims stop looking
+                                  // moth-eaten)
   // VOLUMETRIC slab (the "like real life, like shaders" pass): the colour
   // pass raymarches [HEIGHT, HEIGHT + THICKNESS] through the drifting 2D
   // field — density-as-height columns, so clouds have visible sides,
@@ -2499,8 +2514,10 @@ export const CLOUDS = {
                                   // knob; ~11 noise evals per step)
   DENSITY: 0.05,                  // extinction per block of dense cloud —
                                   // how fast a ray goes opaque inside
-  ROUND: 0.22,                    // crown falloff width (fraction of the
+  ROUND: 0.30,                    // crown falloff width (fraction of the
                                   // column's coverage): puffy vs boxy tops
+                                  // (raised with the shape retune — rounder
+                                  // domes, like fair-weather cumulus)
   BOTTOM_LIT: 0.32,               // shading at the slab base (1 at crowns)
   MAX_SPAN: 620,                  // cap on the marched path for grazing
                                   // rays (they are horizon-faded anyway)
@@ -2508,7 +2525,7 @@ export const CLOUDS = {
   SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
   SILVER_POWER: 9,                // ...tightness around the sun's direction
-  NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)
+  NIGHT_BRIGHTNESS: 0.30,         // colour scale at deep night (1.0 at noon)
   HORIZON_TINT: 0.45,             // fraction of the horizon colour mixed in
                                   // (what makes dawn clouds blush gold-pink)
   SEED: 37.73,                    // noise hash offset (clouds are weather,
@@ -2519,10 +2536,17 @@ export const CLOUDS = {
 // sphere, wheeling with the sun's orbit, alpha driven by the KEYFRAMES'
 // STARS channel so they fade in through dusk and out through dawn.
 export const STARS = {
-  COUNT: 800,                     // over the FULL sphere — roughly half are
-                                  // above the horizon at any moment of the
-                                  // wheel's turn
-  SIZE: 1.8,                      // screen pixels (no distance attenuation)
+  // Final night retune ("stars better"): TWO layers instead of one flat
+  // sheet of identical white points — a dense field of faint stars under a
+  // sparse layer of bright ones, every star carrying its own brightness
+  // and a slight colour (blue-white hot, warm-white old), which is what a
+  // real night sky actually looks like.
+  COUNT: 1500,                    // faint layer, over the FULL sphere —
+                                  // roughly half are above the horizon at
+                                  // any moment of the wheel's turn
+  SIZE: 1.6,                      // faint-layer screen pixels
+  BRIGHT_COUNT: 240,              // the standouts...
+  BRIGHT_SIZE: 3.0,               // ...bigger and unmistakable
   RADIUS: 850,                    // just inside the sky dome
   SEED: 0x57a125,
 };

@@ -312,6 +312,26 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**NIGHT & CLOUD RETUNE** ("stars better, moon a bit shiny, circle moon,
+not TOO dark; clouds more regular like real life"):
+- STARS are two layers now instead of one flat sheet of identical white
+  points: 1500 faint under 240 bright standouts, every star with its own
+  brightness (dim ones far outnumber bright — squared roll) and a slight
+  temperature colour (blue-white hot / warm-white old), additive-blended.
+- The MOON shows its full circular disc every night (MOON_PHASES 8 -> 1;
+  the phase pipeline is intact — set back to 8 for vanilla's cycle), and
+  it is shinier: halo strength 0.55 -> 0.78, scale 3.0 -> 3.6, the dome's
+  night wash 0.32 -> 0.42.
+- NIGHT is a step brighter everywhere: SKY_DARKEN 10 -> 9 (surfaces at
+  effective light 6, still under the hostile-spawn gate of 7), the whole
+  night palette lifted, moonlight tint brightened, night clouds 0.22 ->
+  0.30. A moonlit night you can walk by.
+- CLOUD SHAPES ("too weird") — the domain warp was the culprit: at 0.55
+  it smeared puffs into ragged shelves and hooks. WARP 0.22, COVER 0.70
+  -> 0.62 (separated puffs, not one merged shelf), EROSION 0.34 -> 0.24,
+  DETAIL 3.1 -> 2.7, ROUND 0.22 -> 0.30: distinct rounded fair-weather
+  cumulus, verified from the ground at noon and under the moon at night.
+
 **THE FINAL PASS — a lively world with music** ("upgrade the entire game
 visual... add some grass particles, leaves in air, whatever you want. Just
 make it look lively... also add soft peaceful minecraft music. This is the
