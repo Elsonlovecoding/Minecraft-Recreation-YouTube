@@ -53,6 +53,27 @@ function deepslateChance(y) {
   return (D.TOP_Y - y) / (D.TOP_Y - D.FULL_Y);
 }
 
+// One colormap read: bilinear over a table's four hot/cold x dry/wet corner
+// colours at (t, m), both 0..1. The blend of four brightest-channel-1
+// colours is NOT itself brightest-channel-1, so the result is rescaled —
+// the mesher folds this into the vertex colour alongside per-face shade and
+// the shader recovers the shade as max(r, g, b), which only works while the
+// brightest channel is exactly 1. Scaling rather than clamping keeps the hue.
+function foliageTintFrom(t, m, table) {
+  const out = [0, 0, 0];
+  for (let c = 0; c < 3; c++) {
+    const shift = 16 - c * 8;
+    const cd = ((table.COLD_DRY >> shift) & 0xff) / 255;
+    const cw = ((table.COLD_WET >> shift) & 0xff) / 255;
+    const hd = ((table.HOT_DRY >> shift) & 0xff) / 255;
+    const hw = ((table.HOT_WET >> shift) & 0xff) / 255;
+    out[c] = (cd * (1 - m) + cw * m) * (1 - t) + (hd * (1 - m) + hw * m) * t;
+  }
+  const peak = Math.max(out[0], out[1], out[2]);
+  if (peak > 0) { out[0] /= peak; out[1] /= peak; out[2] /= peak; }
+  return out;
+}
+
 export class TerrainGenerator {
   constructor(seed = TERRAIN.SEED) {
     this.seed = seed | 0;
@@ -177,6 +198,72 @@ export class TerrainGenerator {
       desert: raw.desert / sum,
       mountains: raw.mountains / sum,
     };
+  }
+
+  // --- foliage colour -------------------------------------------------------
+
+  // Vanilla's grass/foliage colormap rule (config TERRAIN.FOLIAGE_TINT): a
+  // colour looked up from the column's TEMPERATURE and MOISTURE, with
+  // temperature falling as the column rises, multiplied over the tile art.
+  // Returns [r, g, b] in 0..1 with the brightest channel at 1.0 — see the
+  // config note, the mesher depends on that.
+  //
+  // Reads the climate fields THROUGH the same warps biomeWeightsAt uses, so
+  // the colour and the biome it belongs to move together: a forest never
+  // ends up wearing the shade of the plains beside it.
+  foliageTintAt(x, z, y, table) {
+    const c = this.foliageClimateAt(x, z, y);
+    return foliageTintFrom(c.t, c.m, table);
+  }
+
+  // The (temperature, moisture) pair the colormap is indexed by, split out
+  // from the lookup so a column can pay for the four warp fBms ONCE and
+  // then read both tables (grass and leaves) off the same climate — doing
+  // it twice cost 12% of chunk generation for nothing.
+  foliageClimateAt(x, z, y) {
+    const F = TERRAIN.FOLIAGE_TINT;
+    const WP = TERRAIN.BIOME_WARP;
+    const wx = x + fbm(this.warpXNoise, x * WP.SCALE, z * WP.SCALE, WP.OCTAVES) * WP.AMPLITUDE;
+    const wz = z + fbm(this.warpZNoise, x * WP.SCALE, z * WP.SCALE, WP.OCTAVES) * WP.AMPLITUDE;
+    const mx = x +
+      fbm(this.mWarpXNoise, x * WP.MOISTURE_SCALE, z * WP.MOISTURE_SCALE, WP.OCTAVES) *
+      WP.MOISTURE_AMPLITUDE;
+    const mz = z +
+      fbm(this.mWarpZNoise, x * WP.MOISTURE_SCALE, z * WP.MOISTURE_SCALE, WP.OCTAVES) *
+      WP.MOISTURE_AMPLITUDE;
+    const { temperature, moisture } = this.climateAt(wx, wz, mx, mz);
+    const lapse = Math.min(
+      F.LAPSE_MAX,
+      Math.max(0, y - OVERWORLD.SEA_LEVEL) * F.LAPSE_PER_BLOCK,
+    );
+    const span01 = (v) => Math.min(1, Math.max(0, v));
+    return {
+      t: span01((temperature - F.TEMP_LOW) / (F.TEMP_HIGH - F.TEMP_LOW) - lapse),
+      m: span01((moisture - F.MOIST_LOW) / (F.MOIST_HIGH - F.MOIST_LOW)),
+    };
+  }
+
+  // Bakes the chunk's per-column grass and leaf tints into the byte arrays
+  // the mesher reads (world/chunks.js). One lookup per column, not per
+  // vertex, and the whole pair costs 1.5 KB a chunk.
+  fillFoliageTint(chunk, colAt) {
+    const size = CHUNK.SIZE;
+    const F = TERRAIN.FOLIAGE_TINT;
+    const grass = chunk.grassTint ?? (chunk.grassTint = new Uint8Array(size * size * 3));
+    const leaves = chunk.leafTint ?? (chunk.leafTint = new Uint8Array(size * size * 3));
+    for (let lz = 0; lz < size; lz++) {
+      for (let lx = 0; lx < size; lx++) {
+        const col = colAt(chunk.cx * size + lx, chunk.cz * size + lz);
+        const { t, m } = this.foliageClimateAt(col.x, col.z, col.height);
+        const i = (lz * size + lx) * 3;
+        const g = foliageTintFrom(t, m, F.GRASS);
+        const l = foliageTintFrom(t, m, F.LEAVES);
+        for (let c = 0; c < 3; c++) {
+          grass[i + c] = Math.round(g[c] * 255);
+          leaves[i + c] = Math.round(l[c] * 255);
+        }
+      }
+    }
   }
 
   // Dominant biome name — coarse lookup for spawning/debug. The surface
@@ -354,6 +441,11 @@ export class TerrainGenerator {
         this.fillColumn(chunk, lx, lz, colAt(x0 + lx, z0 + lz));
       }
     }
+
+    // Foliage colour, per column, once (see foliageTintAt). Only the
+    // overworld generator sets these — the Nether and the End leave them
+    // null and the mesher tints nothing there.
+    this.fillFoliageTint(chunk, colAt);
 
     // Caves/ravines/ores carve before decorations so trees and cacti can
     // refuse anchors whose surface block was carved away (surfaceOpenAt).

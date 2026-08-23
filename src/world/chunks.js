@@ -47,6 +47,12 @@ export class Chunk {
     // Uint8Array starts zeroed = all BLOCK.AIR. Indexed y-fastest so a
     // vertical column is contiguous (generation and lighting walk columns).
     this.blocks = new Uint8Array(SIZE * SIZE * HEIGHT);
+    // Per-column foliage colour, RGB bytes, indexed (lz * SIZE + lx) * 3.
+    // The overworld generator bakes these (terrain.js fillFoliageTint) and
+    // the mesher multiplies them into grass, plant and leaf vertices; the
+    // fixed-palette dimensions leave them null, which means "no tint".
+    this.grassTint = null;
+    this.leafTint = null;
     this.dirty = true;    // block data changed since the mesh was last built
     this.mesh = null;     // { group, geometries } once meshed (world.js owns it)
     this.modified = false; // touched by setBlock — data is never discarded
@@ -562,15 +568,33 @@ export function buildChunkMesh(chunk, getChunkAt, materials, lod = 0) {
             vBlk[k] = (fBlk + blk1 + blk2 + (sealed ? fBlk : sBlk)) * (1 / 60);
           }
 
-          const { u0, v0, u1, v1 } = tileUV(tiles[fi]);
+          const tile = tiles[fi];
+          const { u0, v0, u1, v1 } = tileUV(tile);
           const base = bucket.count;
           const brightness = face.brightness;
+          // Foliage colour (the "wallpaper" fix): grass TOPS and leaves are
+          // multiplied by the column's baked tint, so the same tile art
+          // reads yellow-green across open plains and deep green in wet
+          // woods. The grass block's SIDE is deliberately left alone — our
+          // atlas bakes the dirt and the green cap into one tile, and
+          // tinting that would swing the dirt orange.
+          const tintSrc = tile === TILE.GRASS_TOP ? chunk.grassTint
+            : (id === BLOCK.OAK_LEAVES ? chunk.leafTint : null);
+          let tr = 1;
+          let tg = 1;
+          let tb = 1;
+          if (tintSrc) {
+            const ti = (lz * SIZE + lx) * 3;
+            tr = tintSrc[ti] / 255;
+            tg = tintSrc[ti + 1] / 255;
+            tb = tintSrc[ti + 2] / 255;
+          }
           for (let k = 0; k < 4; k++) {
             const c = face.corners[k];
             bucket.pos.push(lx + c[0] + ox, c[1] ? topY : y, lz + c[2] + oz);
             bucket.uv.push(c[3] ? u1 : u0, c[4] ? v1 : v0);
             const shade = brightness * ao[k];
-            bucket.col.push(shade, shade, shade);
+            bucket.col.push(shade * tr, shade * tg, shade * tb);
             bucket.lig.push(vSky[k], vBlk[k]);
           }
           // Wind sway (the "lively leaves" pass): leaf vertices carry a

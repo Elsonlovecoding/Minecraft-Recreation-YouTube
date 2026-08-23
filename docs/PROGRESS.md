@@ -312,6 +312,49 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**FOLIAGE COLOUR — the biome colormap** ("using existing blocks and
+textures, how to make it more lively"). The single biggest gap between this
+world and a real one, and it needed no new art: vanilla ships grass and
+leaves as tiles that get MULTIPLIED by a colour looked up from a colormap
+indexed by the column's temperature and downfall, which is why a real world
+shifts continuously — yellow-green open grassland, deep green wet woods,
+pale grey-green up a cold mountainside — with no hard edge anywhere. Ours
+had NO tint at all: one fixed emerald everywhere, which is what made the
+landscape read as wallpaper.
+- We already carry the two climate fields the lookup wants, so this is the
+  same rule and not an imitation: `terrain.js foliageClimateAt` reads
+  temperature and moisture THROUGH the same warps `biomeWeightsAt` uses (so
+  a forest never wears the shade of the plains beside it), drops temperature
+  with altitude the way vanilla does, and `foliageTintFrom` blends four
+  corner colours bilinearly over (temp, moisture). Leaves read a SECOND
+  table, as vanilla does, which is what keeps a canopy reading as its own
+  mass instead of ground-colour on stilts.
+- **Zero extra memory in the mesh.** The vertex colour was already three
+  floats carrying the same monochrome shade x AO three times over — two dead
+  channels. The tint multiplies into them. The catch is that the shader also
+  reads that colour back as "shade" for the cool-shadow and bounce terms, so
+  every corner colour is normalised to a brightest channel of exactly 1.0
+  and the shader recovers the shade as `max(r, g, b)`. Verified exact:
+  **worst deviation 0.00e+0 over 33073 columns**. A tint can therefore only
+  shift hue, never brighten a face past its baked light.
+- Corner colours are vanilla's own biome grass colours (savanna #bfb755,
+  forest, taiga #86b783) divided by their brightest channel, so what
+  survives is the hue RELATIONSHIP. A first pass picked by eye landed the
+  corners so close together that plains and forest rendered rgb(61,108,44)
+  and rgb(53,108,45) — a difference nobody could see. Measured now, the
+  grass tile renders across the world from **rgb(40,103,22) deep green to
+  rgb(71,108,49) pale olive**; photographed at the two extreme columns the
+  on-screen red-to-green ratio differs by 27% (0.404 vs 0.514).
+- Cost: the tint is baked once per column at generation (1.5 KB a chunk).
+  The first cut recomputed the four warp fBms twice per column, once per
+  table, for **+12.1% chunk generation**; splitting the climate read out of
+  the table lookup brought that to **+3.8%** with bit-identical output.
+- Grass block SIDES are deliberately left untinted: our atlas bakes the dirt
+  and the green cap into one tile, so tinting it would swing the dirt
+  orange. Flowers are untinted too — vanilla tints the grass family only.
+  The Nether and the End leave `chunk.grassTint` null, which the mesher
+  reads as "no tint"; both verified rendering clean.
+
 **VANILLA PLAINS, AND NO SAND ON MOUNTAINS** ("Search online real minecraft
 plain looking. I want the plains to look the same, and no sand should be on
 mountains"). What vanilla actually does, checked against the worldgen rules

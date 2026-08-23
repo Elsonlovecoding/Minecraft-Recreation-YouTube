@@ -841,6 +841,58 @@ export const TERRAIN = {
   // flowers are rarer and cluster (a threshold field gates WHERE they can
   // appear, a hash picks the columns inside it); dead bushes speckle the
   // desert. Densities are per eligible column.
+  // Foliage colour. THE reason a real Minecraft world looks alive while a
+  // fixed-texture one looks like wallpaper: vanilla ships grass and leaves
+  // as art that gets MULTIPLIED by a colour looked up from a colormap
+  // indexed by the column's temperature and downfall, so the ground shifts
+  // continuously — yellow-green open plains, deep green wet woods, pale
+  // grey-green up a cold mountainside — with no hard edge anywhere.
+  //
+  // We already have the two climate fields the lookup wants, so this is the
+  // same rule rather than an imitation of it: bilinear blend of four corner
+  // colours over (temperature, moisture), with temperature dropping as the
+  // column rises (vanilla's altitude lapse — that is why mountain grass
+  // goes pale). The result MULTIPLIES the atlas tile, so it re-colours the
+  // texture without replacing it.
+  //
+  // Every corner is normalised so its brightest channel is exactly 1.0.
+  // That is load-bearing, not cosmetic: the mesher folds the tint into the
+  // vertex colour, which also carries per-face shade x AO, and the shader
+  // recovers the shade as max(r, g, b). Brightest-channel-1 makes that
+  // exact, and it also means a tint can only shift HUE, never brighten a
+  // face past its baked light.
+  FOLIAGE_TINT: {
+    LAPSE_PER_BLOCK: 0.011,   // temperature lost per block above sea level
+    LAPSE_MAX: 0.85,          // ...capped, so summits do not go colourless
+    // Climate is fBm in [-1, 1]; these map it to the 0..1 lookup axes.
+    TEMP_LOW: -0.45,
+    TEMP_HIGH: 0.45,
+    MOIST_LOW: -0.45,
+    MOIST_HIGH: 0.45,
+    // Corner multipliers: hot/cold x dry/wet. Taken from vanilla's own
+    // biome grass colours, each divided by its brightest channel so what
+    // survives is the HUE RELATIONSHIP between them (savanna #bfb755,
+    // forest/jungle, taiga #86b783) rather than a brightness the baked
+    // light already owns. A first pass at these was picked by eye and the
+    // corners landed so close together that plains and forest rendered
+    // rgb(61,108,44) and rgb(53,108,45) — a difference nobody could see.
+    GRASS: {
+      HOT_DRY: 0xfff471,      // savanna olive: sun-dried open grassland
+      HOT_WET: 0x8fff5e,      // deep saturated green, warm and wet
+      COLD_DRY: 0xdbffcc,     // pale washed grey-green — high bare ground
+      COLD_WET: 0xb0ffb2,     // taiga: cool green leaning blue
+    },
+    // Vanilla reads leaves from a SEPARATE colormap, which is what keeps a
+    // canopy reading as its own mass instead of ground-colour on stilts.
+    // Same corners pushed a touch darker and more saturated.
+    LEAVES: {
+      HOT_DRY: 0xffe97a,
+      HOT_WET: 0x7dff55,
+      COLD_DRY: 0xd0ffc4,
+      COLD_WET: 0x9dffb4,
+    },
+  },
+
   PLANTS: {
     // Vanilla places plains grass with `patch_grass_plain` under a
     // `noise_threshold_count` modifier: a noise field sampled at 1/200

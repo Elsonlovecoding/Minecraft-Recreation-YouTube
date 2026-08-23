@@ -394,7 +394,13 @@ export function patchChunkMaterial(material) {
           // overhead and by the column's sky access, so caves, the night
           // and the fixed-sky dimensions are untouched.
           #ifdef USE_COLOR
-            float shade = clamp(1.0 - vColor.r, 0.0, 1.0);
+            // The vertex colour carries per-face shade x AO, and on grass,
+            // plants and leaves it ALSO carries the column's foliage tint
+            // multiplied in. Every tint is normalised to a brightest
+            // channel of exactly 1.0 (config TERRAIN.FOLIAGE_TINT), so the
+            // largest channel is still the untinted shade — max() recovers
+            // it exactly and an untinted white vertex is unchanged.
+            float shade = clamp(1.0 - max(vColor.r, max(vColor.g, vColor.b)), 0.0, 1.0);
             float dayF = clamp(1.0 - uSkyDarken / 11.0, 0.0, 1.0) *
               step(uMinSkyLevel, 0.5); // no bounce under a fixed dimension sky
             float openSky = openCol;
