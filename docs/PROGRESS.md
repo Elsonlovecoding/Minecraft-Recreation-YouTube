@@ -312,6 +312,52 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**THE FINAL PASS — a lively world with music** ("upgrade the entire game
+visual... add some grass particles, leaves in air, whatever you want. Just
+make it look lively... also add soft peaceful minecraft music. This is the
+last change"). Four additions, no texture touched:
+- **OUTDOOR AMBIENT PARTICLES**, all riding the same random display tick
+  that already finds torches (systems/ambience.js), so density self-scales
+  with what is actually around the player: LEAVES flutter down from oak
+  canopies (cropped from the leaf tile, tumbling, colliding so they settle
+  on the ground), SEED MOTES ride the daylight over open grass (pale
+  specks, barely rising — the pollen-in-the-air look), and FIREFLIES wake
+  over the same grass at night (warm green-gold points, wandering,
+  pulsing; full-brightness on purpose so the bloom pass gives each one a
+  soft halo). Overworld only, chances in PARTICLES.AMBIENT. Measured live:
+  13 particles by day / 18 at night / 20 under a forest canopy.
+- **PER-BLOCK BRIGHTNESS JITTER** (VISUAL.BLOCK_JITTER, ±4.5%): every face
+  scaled by a hash of the block coordinate behind it (derivative face
+  normal picks the cell; coordinates wrapped mod 289 so the classic
+  fract(sin(dot)) hash keeps precision far from origin). A large stone or
+  dirt slope stops reading as one 16px tile stamped in a grid. Water opts
+  out — a lake is ONE surface, and per-block patches would shatter its
+  reflection.
+- **DAWN VALLEY MIST** (VISUAL.MIST): during a window around sunrise (and
+  a fainter one at dusk) ground below sea+16 multiplies its RADIAL fog
+  depth up to 2.1x, so valleys and water flats drown in horizon-coloured
+  haze while hilltops stand clear — the classic shader-pack morning. One
+  uniform, driven by the cycle, zero outside the windows and under fixed
+  dimension skies. Verified: uMist 1.001 at t=0.995, exactly 0 at noon.
+- **GENERATIVE MUSIC** (systems/music.js — a NEW module, listed in
+  ARCHITECTURE.md): original, soft, peaceful music in the Minecraft
+  spirit, synthesised like every other sound in this project — nothing is
+  a recording and copying C418's actual compositions was deliberately NOT
+  done. A four-voice maj7/min7 chord pad breathes underneath (11-19s per
+  chord, walking a progression graph in C major that always resolves
+  gently); a sparse felt-piano melody wanders the C major pentatonic on
+  top, biased onto the current chord's tones, phrased 3-7 notes with long
+  rests. Night stretches the gaps, drops the register an octave and
+  softens the bus. Scheduled a second ahead each frame through audioBus()
+  (compressor + master volume), so the pause suspend freezes it with
+  everything else. Verified live in the harness: context running, chords
+  walking C→G→Em, notes scheduling, zero console errors.
+- Full sweep after: 0 artifacts across five day/night/dawn views (the
+  night shot's dark patches are night), zero game console errors, 84/84
+  modules import. `render/lighting.js` is 1010 lines now — the mandated
+  patchChunkMaterial split into render/chunk_shader.js remains the
+  standing debt for whoever comes next.
+
 **HALF THE GRASS, AND A SMOOTH WORLD EDGE** ("grass not that common, maybe
 half the rarity" / "make far render parts and un-rendered parts more
 smooth, like it's a real render"):

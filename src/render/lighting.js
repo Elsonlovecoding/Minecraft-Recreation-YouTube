@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import {
   SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK, VISUAL,
-  CLOUDS,
+  CLOUDS, OVERWORLD,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
 // Phase 24: clouds, stars and the generated sun/moon art live in their own
@@ -211,6 +211,12 @@ export const CHUNK_LIGHT_UNIFORMS = {
   // is 0 under fixed dimension skies.
   uSunFace: { value: 0 },
   uSunFaceDir: { value: new THREE.Vector3(0, 1, 0) },
+  // Dawn valley mist (final pass, config VISUAL.MIST): low ground
+  // multiplies its radial fog depth up by (1 + uMist * heightFactor), so
+  // valleys drown in horizon-coloured haze while hilltops stand clear.
+  // The cycle raises it through a window around sunrise (fainter at dusk)
+  // and holds it at 0 the rest of the day and in the fixed-sky dimensions.
+  uMist: { value: 0 },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -230,8 +236,29 @@ export function heldLightBrightness(level, dist) {
 // multiplied into the vertex colour (which already carries per-face
 // brightness x AO). Sky light dims with time of day; block light doesn't —
 // torches hold their brightness through the night, exactly like the game.
-export function patchChunkMaterial(material) {
+export function patchChunkMaterial(material, { jitter = true } = {}) {
   material.toneMapped = false; // see the sky-dome comment: keeps fog exact
+  // Per-block brightness jitter (config VISUAL.BLOCK_JITTER): every face is
+  // scaled by a hash of the block coordinate BEHIND it, so a large stone or
+  // dirt slope stops reading as one 16px tile stamped in a grid. The cell
+  // comes from the derivative face normal (the meshes carry none); the mod
+  // keeps the hash's sine argument small far from the origin, where the
+  // classic fract(sin(dot)) hash otherwise dissolves into float noise.
+  // Water opts out — a lake is ONE surface and per-block patches would
+  // shatter its reflection.
+  const jitterGlsl = !jitter ? '' : /* glsl */ `
+          {
+            vec3 jn = cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos));
+            float jl = length(jn);
+            if (jl > 1e-7) {
+              jn /= jl;
+              if (!gl_FrontFacing) jn = -jn;
+              vec3 jc = mod(floor(vHeldWorldPos - jn * 0.5), 289.0);
+              float jh = fract(sin(dot(jc, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+              diffuseColor.rgb *= 1.0
+                + ${VISUAL.BLOCK_JITTER.toFixed(4)} * (jh * 2.0 - 1.0);
+            }
+          }`;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, CHUNK_LIGHT_UNIFORMS);
     shader.vertexShader = shader.vertexShader
@@ -242,6 +269,7 @@ export function patchChunkMaterial(material) {
         + 'varying vec3 vHeldWorldPos;\n'
         + 'uniform float uWindTime;\n'
         + 'uniform float uWindAmp;\n'
+        + 'uniform float uMist;\n'
         + '#include <common>')
       .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
         vLight = light;
@@ -277,6 +305,15 @@ export function patchChunkMaterial(material) {
       .replace('#include <fog_vertex>', /* glsl */ `
         #ifdef USE_FOG
           vFogDepth = length(mvPosition.xyz);
+          // Dawn valley mist (config VISUAL.MIST): below the mist top the
+          // fog depth multiplies up, so low ground fades into the horizon
+          // colour far sooner than its true distance — haze lying in the
+          // valleys. uMist is 0 outside the dawn/dusk windows, making this
+          // a single multiply-by-one the rest of the day.
+          vFogDepth *= 1.0 + uMist * (1.0 - smoothstep(
+            ${OVERWORLD.SEA_LEVEL.toFixed(1)},
+            ${(OVERWORLD.SEA_LEVEL + VISUAL.MIST.TOP_ABOVE_SEA).toFixed(1)},
+            vHeldWorldPos.y));
         #endif`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
@@ -421,7 +458,7 @@ export function patchChunkMaterial(material) {
             lum = mix(lum, lum * uShadowCool, uShadowCoolStrength * shade * dayF);
             lum += uBounceColor * (uBounceStrength * shade * dayF * openSky);
           #endif
-          diffuseColor.rgb *= lum;
+          diffuseColor.rgb *= lum;${jitterGlsl}
         }`);
   };
 }
@@ -936,6 +973,16 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSunFace.value = sunDir.y > 0
           ? VISUAL.SUNLIGHT.STRENGTH * sunLevel
           : VISUAL.SUNLIGHT.STRENGTH * VISUAL.SUNLIGHT.MOON_FACTOR * starAlpha;
+        // Dawn valley mist (config VISUAL.MIST): a triangular window
+        // around sunrise (t=0, wrapping) and a fainter one at dusk
+        // (t=0.5). Low ground multiplies its fog depth up by this in the
+        // vertex patch, so valleys drown while hilltops stand clear.
+        const M = VISUAL.MIST;
+        const dawnDist = Math.min(t, 1 - t); // wrapped distance to sunrise
+        const dawn = Math.max(0, 1 - dawnDist / M.DAWN_WIDTH);
+        const dusk = Math.max(0, 1 - Math.abs(t - 0.5) / M.DUSK_WIDTH);
+        CHUNK_LIGHT_UNIFORMS.uMist.value =
+          M.STRENGTH * Math.max(dawn, dusk * M.DUSK_FACTOR);
       }
 
       // Dimension override (Phase 15): everything above still ran — the
@@ -956,6 +1003,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
         CHUNK_LIGHT_UNIFORMS.uCloudShadow.value = 0;
         CHUNK_LIGHT_UNIFORMS.uSunFace.value = 0;
+        CHUNK_LIGHT_UNIFORMS.uMist.value = 0; // no dawn under a fixed sky
       }
     },
   };

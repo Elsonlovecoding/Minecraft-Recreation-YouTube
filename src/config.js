@@ -2760,6 +2760,25 @@ export const VISUAL = {
     MIN_SUN_Y: 0.35,         // clamp on the slant divisor so a low sun
                              // never smears shadows kilometres sideways
   },
+  // Per-block brightness jitter (final pass): every block face is scaled by
+  // a hash of its block coordinate, so a big stone or dirt slope stops
+  // reading as one 16px tile stamped in a grid — the "wallpaper" look.
+  // Small on purpose: variety you feel, not a checkerboard you see. Water
+  // opts out (a lake is ONE surface, and per-block patches would shatter
+  // its reflection).
+  BLOCK_JITTER: 0.045,
+  // Dawn valley mist (final pass): during a window around sunrise (and a
+  // fainter one at dusk) low ground multiplies its RADIAL fog depth up, so
+  // valleys and water flats drown in horizon-coloured haze while hilltops
+  // stand clear of it — the classic shader-pack morning. Costs one uniform
+  // and two vertex-shader lines.
+  MIST: {
+    STRENGTH: 1.1,           // extra fog-depth multiplier at ground level
+    TOP_ABOVE_SEA: 16,       // blocks above sea level where mist thins to 0
+    DAWN_WIDTH: 0.055,       // day-fraction half-width of the sunrise window
+    DUSK_WIDTH: 0.04,        // ...and the dusk window
+    DUSK_FACTOR: 0.45,       // dusk mist strength relative to dawn
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -3108,6 +3127,16 @@ export const PARTICLES = {
   // long-lived specks that catch the light where a cave opens to the sky.
   DUST: { SIZE: 0.035, SINK: 0.16, DRIFT: 0.05, LIFE: [2.5, 5.0],
           COLOR: 0xd8ccae },
+  // The final liveliness pass — OUTDOOR ambience (systems/ambience.js
+  // spawns all three off the same random display tick that finds torches):
+  // leaves flutter down from canopies, seed motes ride the daylight over
+  // grass, fireflies wander above it at night.
+  LEAF: { SIZE: 0.085, LIFE: [3.0, 6.0], DRIFT: 0.22, SINK: 0.55,
+          SPIN: 2.2 },
+  SEED_MOTE: { SIZE: 0.032, LIFE: [4.0, 8.0], DRIFT: 0.30, RISE: 0.05,
+               COLOR: 0xf5eecf },
+  FIREFLY: { SIZE: 0.045, LIFE: [5.0, 9.0], DRIFT: 0.35,
+             COLOR: 0xd8ff6e },
 
   // The random "display tick" that finds torches, lava, glowstone and end
   // portals near the player (systems/ambience.js — vanilla's randomDisplayTick).
@@ -3131,6 +3160,14 @@ export const PARTICLES = {
     DUST_CHANCE: 0.05,            // per eligible air-cell hit
     DUST_MIN_SKY: 6,              // baked sky light that counts as a shaft
     DUST_MIN_DEPTH: 5,            // cell at least this far under the surface
+    // The outdoor ambience (final pass). Chances are per random-tick hit on
+    // the eligible block, so density self-scales with how much canopy or
+    // open grass is actually around the player.
+    LEAF_CHANCE: 0.06,            // per leaf-block hit with air below
+    SEED_CHANCE: 0.030,           // per grass-top hit, daylight
+    FIREFLY_CHANCE: 0.05,         // per grass-top hit, night
+    SEED_MIN_SUN: 0.55,           // sunLevel above which seeds drift
+    FIREFLY_MAX_SUN: 0.12,        // sunLevel below which fireflies wake
   },
 };
 
@@ -3145,6 +3182,23 @@ export const PARTICLES = {
 
 export const AUDIO = {
   MASTER_VOLUME: 0.55,            // the whole game's output level
+  // Generative music (systems/music.js — the final pass). ORIGINAL music in
+  // the peaceful-Minecraft spirit, synthesised like every other sound in
+  // this project: a slow maj7 chord pad underneath, a sparse felt-piano
+  // melody wandering the C major pentatonic on top, long silences between
+  // phrases. Nothing is a recording and nothing loops — the piece is a
+  // random walk with musical weights, so it never repeats and never ends.
+  MUSIC: {
+    VOLUME: 0.32,                 // music bus gain (under the master/compressor)
+    PAD_LEVEL: 0.16,              // chord pad level within the music bus
+    NOTE_LEVEL: 0.42,             // melody level within the music bus
+    CHORD_SECONDS: [11, 19],      // how long one chord breathes
+    NOTE_GAP: [1.4, 4.5],         // seconds between melody notes in a phrase
+    PHRASE_NOTES: [3, 7],         // notes per phrase...
+    PHRASE_REST: [5, 13],         // ...and the silence after one
+    NIGHT_SPARSE: 1.7,            // night: gaps and rests stretch by this
+    NIGHT_LEVEL: 0.7,             // ...and the whole bus softens to this
+  },
   MAX_VOICES: 24,                 // concurrent one-shots; the rest are dropped
   VOICE_MIN_GAP: 0.012,           // seconds between two copies of one sound
   HEARING_RANGE: 26,              // blocks: silence beyond this

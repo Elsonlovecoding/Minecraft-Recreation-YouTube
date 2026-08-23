@@ -312,6 +312,14 @@ src/
                          end-portal swirls + hum), the looping water/lava
                          ambience beds and the rare underground cave tone.
                          Purely reactive — it reads state, never writes it
+    music.js             generative background music (the final pass):
+                         ORIGINAL peaceful music in the Minecraft spirit,
+                         synthesised like every other sound — a maj7 chord
+                         pad walking a progression graph under a sparse
+                         pentatonic felt-piano melody, scheduled a second
+                         ahead each frame through audioBus(), thinning and
+                         dropping an octave at night. Nothing loops and
+                         nothing is a recording; the piece never repeats
     commands.js          chat commands (Phase 27, split out of main.js at
                          birth per the size cap): /tp <x> <z> lands the
                          player at a SAFE spot — the surface in open-sky

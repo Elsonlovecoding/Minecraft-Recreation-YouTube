@@ -55,6 +55,7 @@ import { createCommands } from './systems/commands.js';
 import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat, rayAABB } from './systems/combat.js';
 import { createAmbience } from './systems/ambience.js';
+import { createMusic } from './systems/music.js';
 import { audio } from './systems/audio.js';
 import { particles } from './render/particles.js';
 
@@ -483,7 +484,11 @@ async function init() {
   // Phase 22: the ambience driver — player footsteps/landings/splashes and
   // the world's random display ticks. It reads state only; nothing else
   // depends on it, so it is created last and updated last.
-  const ambience = createAmbience({ world, player, dimensions });
+  const ambience = createAmbience({ world, player, dimensions, dayNight });
+  // The generative music (final pass) — schedules itself a second ahead
+  // each frame; the shared AudioContext's pause suspend freezes it with
+  // everything else.
+  const music = createMusic();
   portals = createPortals({ world, scene, player, stats, camera, dimensions });
   world.addBlockListener(portals.onBlockChanged);
   // Phase 19: end-portal runtime — frame filling, activation on the 12th
@@ -541,6 +546,7 @@ async function init() {
   window.__enderEyes = enderEyes;
   window.__enderPearls = enderPearls;
   window.__particles = particles;
+  window.__music = music;
   window.__ambience = ambience;
   window.__audio = audio;
   window.__chests = chests;
@@ -712,6 +718,7 @@ async function init() {
       // that finds torches, lava and portals nearby, the fluid ambience
       // beds and the cave tones. Last, so it reads this frame's body state.
       ambience.update(delta);
+      music.update(dayNight.sunLevel);
     }
     // Phase 23 bug fix: pausing the game pauses the SOUND. Freezing the
     // update loop never silenced the looping ambience beds — a running
