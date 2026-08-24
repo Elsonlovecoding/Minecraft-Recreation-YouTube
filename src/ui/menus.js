@@ -1,11 +1,8 @@
-// ui/menus.js — Phase 25: the two menus that frame a session.
-//
-//   START SCREEN   shown on load, before anything is playable: Survival or
-//                  Creative. Nothing runs until one is picked (main.js's
-//                  pause state already freezes the world whenever the
-//                  pointer is unlocked, and this overlay is what keeps it
-//                  unlocked), so the choice is genuinely made before the
-//                  first frame of play.
+// ui/menus.js — Phase 25: the menus that frame a session. The save pass
+// moved the old START SCREEN's job one screen earlier: the world-select
+// title screen (ui/world_select.js) now picks the world AND its mode
+// before init() even builds the generator, so this module keeps only the
+// in-game pause menu (plus a chooseMode shim for the old harnesses).
 //
 //   PAUSE MENU     Esc mid-game. Says which mode is running and offers the
 //                  other one. Switching is applied the moment the button is
@@ -37,23 +34,10 @@ export function createMenus({ canvas }) {
     /* Both menus own the screen while they are up, so the old click-to-play
        hint would only double them. */
     body.mc-menu-open #lock-hint { display: none; }
-    /* Nothing has begun yet behind the start screen, so the HUD has nothing
-       to say — an empty hotbar and a full heart row under the title would
-       only read as clutter. */
-    body.mc-start-open #hud-hotbar, body.mc-start-open #hud-hearts,
-    body.mc-start-open #hud-hunger, body.mc-start-open #hud-armour,
-    body.mc-start-open #hud-absorb, body.mc-start-open #hud-breath,
-    body.mc-start-open #hud-mode, body.mc-start-open #hud-crosshair,
-    body.mc-start-open #hud-toast, body.mc-start-open #hud-effects {
-      display: none !important;
-    }
     .mc-menu {
       position: fixed; inset: 0; z-index: 25; display: none;
       flex-direction: column; align-items: center; justify-content: center;
       user-select: none;
-    }
-    #start-menu {
-      background: linear-gradient(180deg, rgba(8, 12, 22, 0.92), rgba(4, 6, 12, 0.96));
     }
     #pause-menu {
       background: rgba(0, 0, 0, 0.55);
@@ -63,7 +47,6 @@ export function createMenus({ canvas }) {
       color: #ffffff; font: bold 40px/1 monospace; margin: 0 0 6px;
       text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.65);
     }
-    #start-menu h1 { font-size: 52px; margin-bottom: 10px; }
     .mc-menu-sub {
       color: #c8c8c8; font: 14px/1.6 monospace; margin: 0 0 26px;
       text-align: center; text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
@@ -96,65 +79,12 @@ export function createMenus({ canvas }) {
   `;
   document.head.appendChild(style);
 
-  // --- the start screen -----------------------------------------------------
-
-  const start = document.createElement('div');
-  start.className = 'mc-menu';
-  start.id = 'start-menu';
-  const startTitle = document.createElement('h1');
-  startTitle.textContent = 'Minecraft';
-  const startSub = document.createElement('p');
-  startSub.className = 'mc-menu-sub';
-  startSub.innerHTML = 'Choose how you want to play.<br>You can switch at any time from the pause menu.';
-  const choices = document.createElement('div');
-  choices.className = 'mc-menu-row mc-menu-panel';
-
-  const makeChoice = (mode, label, blurb) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'mc-choice';
-    const btn = document.createElement('button');
-    btn.className = 'mc-btn';
-    btn.id = `start-${mode}`;
-    btn.textContent = label;
-    const note = document.createElement('div');
-    note.className = 'mc-btn-blurb';
-    note.textContent = blurb;
-    btn.addEventListener('click', () => chooseMode(mode));
-    wrap.appendChild(btn);
-    wrap.appendChild(note);
-    return wrap;
-  };
-
-  choices.appendChild(makeChoice(
-    SURVIVAL, 'Survival',
-    'Start with nothing. Gather, craft, mine, fight, and take on the Ender Dragon.',
-  ));
-  choices.appendChild(makeChoice(
-    CREATIVE_MODE, 'Creative',
-    'Fly, break anything instantly, and build with every block in the game.',
-  ));
-  const startFoot = document.createElement('div');
-  startFoot.className = 'mc-menu-foot';
-  startFoot.innerHTML = CONTROLS_HINT;
-  start.appendChild(startTitle);
-  start.appendChild(startSub);
-  start.appendChild(choices);
-  start.appendChild(startFoot);
-  document.body.appendChild(start);
-
-  let startShown = true;
-  start.style.display = 'flex';
-  document.body.classList.add('mc-menu-open');
-  document.body.classList.add('mc-start-open');
-
+  // The start screen is GONE (see the header): mode is a property of the
+  // world now, chosen at creation on the world-select screen. This shim
+  // keeps the old harness entry point alive — it just applies a mode and
+  // asks for pointer lock.
   function chooseMode(mode) {
-    if (!startShown) return;
     gamemode.set(mode);
-    startShown = false;
-    start.style.display = 'none';
-    document.body.classList.remove('mc-start-open');
-    syncMenuClass();
-    // This runs inside a real click, so the lock request is allowed.
     const req = canvas.requestPointerLock();
     if (req && typeof req.catch === 'function') req.catch(() => {});
   }
@@ -213,14 +143,14 @@ export function createMenus({ canvas }) {
   let pauseShown = false;
 
   function syncMenuClass() {
-    document.body.classList.toggle('mc-menu-open', startShown || pauseShown);
+    document.body.classList.toggle('mc-menu-open', pauseShown);
   }
 
-  // Called every frame from main.js with its own pause verdict. The pause
-  // menu never shows over the start screen, and never before the player has
-  // actually begun playing (the first-boot freeze is the start screen's).
+  // Called every frame from main.js with its own pause verdict (main.js
+  // additionally gates on everLocked, so the fresh-boot "click to play"
+  // moment shows the lock hint, not this).
   function setPaused(paused) {
-    const want = !!paused && !startShown && gamemode.chosen;
+    const want = !!paused && gamemode.chosen;
     if (want === pauseShown) return;
     pauseShown = want;
     pause.style.display = want ? 'flex' : 'none';
@@ -230,9 +160,6 @@ export function createMenus({ canvas }) {
 
   return {
     setPaused,
-    get startShown() {
-      return startShown;
-    },
     get pauseShown() {
       return pauseShown;
     },

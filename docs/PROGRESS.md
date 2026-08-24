@@ -312,6 +312,53 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**WORLD SAVING — named worlds, like the real game** ("everytime I start
+localhost it saves progress... I can choose to start worlds and name them
+... can have diff spawn"): the biggest missing piece of the replica, built
+on two facts the codebase already had — the world is seed-deterministic
+(saves store only the DIFF) and modified chunks are immortal in memory
+(the in-memory set IS the complete diff; saving is a walk, not a search).
+- **The world-select title screen** (ui/world_select.js) now gates init()
+  itself: the chosen world's seed decides the generator, its mode decides
+  the rules, its save decides everything else. Create New World takes a
+  name, an optional seed (numbers reproduce a world exactly, words hash,
+  blank rolls random — each seed gets its own scanned plains spawn) and
+  the mode, vanilla-style; the list shows every world newest-first with
+  Play and a two-click Delete. The old start screen is gone — mode is a
+  property of the world now (ui/menus.js keeps only the pause menu).
+- **What saves** (systems/persistence.js, IndexedDB): modified chunks of
+  ALL THREE dimensions, RLE-compressed (a realistic chunk is 3.9% of its
+  96KB); the clock (time AND day); the player (dimension, position, view,
+  health/hunger/saturation, bed spawn, full inventory + armour + offhand
+  + hotbar selection); chest/furnace/brewing contents with their burn and
+  brew clocks; sign text; item-frame items. Deliberately NOT saved: mobs,
+  dropped items, in-flight projectiles, dragon-fight progress, transient
+  stat timers — vanilla-ish behaviour forgives all of them.
+- **When**: every 20s, on pause, on tab-hide and page-hide. Every save is
+  ONE atomic IndexedDB transaction over both stores — a tab killed
+  mid-save rolls back whole and the previous save stands. A COMPARE-AND-
+  SWAP session stamp guards the record: the same world opened in a second
+  tab is taken over by whichever saves first, and the other tab's saves
+  abort with "world is open in another tab" instead of interleaving two
+  divergent histories. A save into a world deleted elsewhere aborts too.
+- **Restore**: chunk edits decode lazily straight over freshly generated
+  blocks (world.js restoreChunk hook, active-dimension aware); containers
+  restore per dimension on first activation (dimensions.js gained
+  before/after switch listeners + a chunkMaps() accessor); the player can
+  reload straight into the Nether or End.
+- **Verified end-to-end in the browser** (fresh IndexedDB per run):
+  17/17 — create → edit → save → reload → every category restored, two
+  worlds fully isolated with different spawns, delete via the real UI,
+  resume via the real Play button; 7/7 on the session-stamp handoff and
+  the two-tab conflict; 4/4 on autosave triggers (interval + pause edge,
+  both surviving a reload with no manual save); 5/5 RLE round-trips plus
+  corrupt-row rejection. Zero console errors throughout. The adversarial
+  review workflow could not run (the subagent permission harness strips
+  tool parameters — all five reviewers refused to certify unread code),
+  so the five-dimension review was done by hand; it found the two-tab
+  clobber, the deleted-world resurrection and a world-select double-create
+  orphan, all fixed above.
+
 **NIGHT & CLOUD RETUNE** ("stars better, moon a bit shiny, circle moon,
 not TOO dark; clouds more regular like real life"):
 - STARS are two layers now instead of one flat sheet of identical white

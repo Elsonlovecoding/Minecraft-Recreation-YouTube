@@ -790,6 +790,11 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
     get dayIndex() {
       return day;
     },
+    // The save pass restores the whole clock, day count included (it is
+    // the moon-phase clock, and a world's age should survive a reload).
+    setDay(d) {
+      day = Math.max(0, Math.floor(d) || 0);
+    },
     // Phase 26 — read-only sun state for the post pipeline (god rays) and
     // the water uniforms: the interpolated keyframe sun level and the unit
     // direction toward the sun. The vector is the cycle's own working

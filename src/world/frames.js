@@ -93,10 +93,33 @@ export function createFrames({ world, scene, items }) {
     return prev;
   }
 
+  // The save pass (systems/persistence.js): a frame is its position and
+  // the mounted item name; restore remounts through the same refresh the
+  // right-click path uses.
+  function serialize() {
+    const out = [];
+    for (const f of frames.values()) {
+      if (f.item) out.push({ x: f.x, y: f.y, z: f.z, item: f.item });
+    }
+    return out;
+  }
+
+  function restore(list) {
+    for (const d of list ?? []) {
+      if (!d.item) continue;
+      const frame = frameAt(d.x, d.y, d.z);
+      if (frame.item) continue; // live play wins over the save
+      frame.item = d.item;
+      refresh(frame);
+    }
+  }
+
   return {
     onBlockChanged,
     use,
     frameAt,
+    serialize,
+    restore,
     swapDimensionState,
     update() {}, // frames are static; the manager list expects the method
     get count() {

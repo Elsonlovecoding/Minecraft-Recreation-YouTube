@@ -56,11 +56,25 @@ import { createBrewingSystem } from './systems/brewing.js';
 import { createCombat, rayAABB } from './systems/combat.js';
 import { createAmbience } from './systems/ambience.js';
 import { createMusic } from './systems/music.js';
+import { createPersistence } from './systems/persistence.js';
+import { showWorldSelect } from './ui/world_select.js';
 import { audio } from './systems/audio.js';
 import { particles } from './render/particles.js';
 
 async function init() {
   const canvas = document.getElementById('game-canvas');
+
+  // THE SAVE PASS: the world-select title screen runs before ANY game
+  // object exists — the chosen world's seed decides the generator, its mode
+  // decides the rules, and its save (if any) decides everything else. This
+  // await is the whole boot gate; nothing below runs for an unchosen world.
+  const saves = createPersistence();
+  const chosen = await showWorldSelect({ saves });
+  const worldMeta = chosen.record;      // { id, name, seed, mode, state, ... }
+  const savedGame = chosen.data;        // null for a brand-new world
+  const WORLD_SEED = worldMeta.seed;
+  gamemode.set(worldMeta.mode);
+
   const renderer = createRenderer(canvas);
   const camera = createCamera();
   attachResizeHandler(renderer, camera);
@@ -106,7 +120,17 @@ async function init() {
 
   // Phase 3: the world renders as streamed chunk meshes. A small area builds
   // synchronously before the first frame; the rest arrives budgeted per frame.
-  const world = new World();
+  const world = new World({ seed: WORLD_SEED });
+  // Saved edits overlay freshly generated chunks the moment they generate
+  // (world.js getChunk). The hook resolves the active dimension lazily —
+  // `dimensions` doesn't exist yet, but no chunk of another dimension can
+  // generate before it does.
+  let dimensionsRef = null;
+  if (savedGame) {
+    world.restoreChunk = saves.makeChunkRestorer(
+      savedGame, () => dimensionsRef?.activeKey ?? 'overworld',
+    );
+  }
   // Phase 12: kept in a named binding — the loop drives the animated
   // flowing-lava texture through chunkMaterials.scrollLava.
   const chunkMaterials = createChunkMaterials(atlasTexture);
@@ -283,7 +307,7 @@ async function init() {
   const overworldSpawn = world.generator.spawnColumn();
   const enderEyes = createEnderEyes({
     scene, player, items, sfx: combat.sfx,
-    getTarget: () => strongholdCenter(TERRAIN.SEED, overworldSpawn),
+    getTarget: () => strongholdCenter(WORLD_SEED, overworldSpawn),
   });
   // Phase 22: thrown ender pearls — a real projectile that teleports the
   // player where it lands, for 2.5 hearts of fall damage.
@@ -429,7 +453,7 @@ async function init() {
     if (sleeping === 0) setSleepFade(0);
   }
   mobs = createMobs({ world, scene, player, stats, items, dayNight, combat });
-  const endGenerator = new EndGenerator(TERRAIN.SEED);
+  const endGenerator = new EndGenerator(WORLD_SEED);
 
   // Phase 15: the dimension system — the overworld and the Nether, each
   // keeping its own chunks and entities, switched between by the portal
@@ -461,7 +485,7 @@ async function init() {
           anyLight: true,
         },
         lavaTickSeconds: NETHER.LAVA_TICK_SECONDS,
-        makeGenerator: () => new NetherGenerator(TERRAIN.SEED),
+        makeGenerator: () => new NetherGenerator(WORLD_SEED),
       },
       // Phase 19: the End — the island, its purple gloom and its endermen
       // (SPEC: "endermen spawn on the island"). Phase 20: the ONE
@@ -481,6 +505,7 @@ async function init() {
       },
     },
   });
+  dimensionsRef = dimensions; // the chunk-restore hook resolves dims lazily
   // Phase 22: the ambience driver — player footsteps/landings/splashes and
   // the world's random display ticks. It reads state only; nothing else
   // depends on it, so it is created last and updated last.
@@ -508,6 +533,18 @@ async function init() {
       screens.showVictory();
     },
   });
+
+  // THE SAVE PASS, runtime half: restore what the chosen world saved
+  // (clock, player, inventory, containers — chunk edits restore themselves
+  // through world.restoreChunk as chunks generate), then autosave forever:
+  // every SAVE.AUTOSAVE_SECONDS, on pause, and on leaving the tab. Restore
+  // runs BEFORE the prebuild so the synchronous boot ring builds around
+  // the restored position, not the seed spawn.
+  const persistence = saves.createRuntime({
+    record: worldMeta, saved: savedGame, world, dimensions, player, stats,
+    inventory, dayNight, chests, smelting, brewing, signs, frames, camera,
+  });
+  persistence.restore();
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
@@ -547,6 +584,9 @@ async function init() {
   window.__enderPearls = enderPearls;
   window.__particles = particles;
   window.__music = music;
+  window.__persistence = persistence; // save-on-demand + stats (harness)
+  window.__worldMeta = worldMeta;
+  window.__inventory = inventory;
   window.__ambience = ambience;
   window.__audio = audio;
   window.__chests = chests;
@@ -690,6 +730,7 @@ async function init() {
     // Phase 25: the pause MENU (mode readout + the switch button) rides the
     // same verdict, and stands down while the start screen is up.
     menus.setPaused(paused && everLocked);
+    persistence.notifyPaused(paused && everLocked); // pausing = a save point
     if (!paused) {
       player.update(delta);
       interaction.update(delta);

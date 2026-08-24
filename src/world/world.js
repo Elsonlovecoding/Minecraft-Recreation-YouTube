@@ -66,6 +66,13 @@ export class World {
     if (!chunk) {
       chunk = new Chunk(cx, cz);
       this.generator.generateChunk(chunk);
+      // The save pass (systems/persistence.js): a freshly generated chunk
+      // the save carries edits for gets them decoded straight over its
+      // blocks, right here — every consumer downstream (lighting, meshing,
+      // decoration scans) sees only the restored data. The hook is a plain
+      // field, NOT part of swapState, so it survives dimension switches
+      // and resolves the active dimension itself.
+      if (this.restoreChunk) this.restoreChunk(chunk);
       this.chunks.set(key, chunk);
     }
     return chunk;

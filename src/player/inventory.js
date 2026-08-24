@@ -179,6 +179,39 @@ export class Inventory {
     for (const fn of this._listeners) fn(this);
   }
 
+  // The save pass (systems/persistence.js): slots are plain
+  // { name, count, durability? } records, so a deep copy IS the wire
+  // format. Restore writes the arrays in place — every screen holds a
+  // reference to these exact arrays — and emits so open UIs redraw.
+  serialize() {
+    const copy = (arr) => arr.map((s) => (s ? { ...s } : null));
+    return {
+      slots: copy(this.slots),
+      armour: copy(this.armour.slots),
+      offhand: copy(this.offhand.slots),
+      selected: this.selected,
+    };
+  }
+
+  restore(d) {
+    if (!d) return;
+    const fill = (dst, src) => {
+      if (!Array.isArray(src)) return;
+      for (let i = 0; i < dst.length; i++) {
+        dst[i] = src[i] ? { ...src[i] } : null;
+      }
+    };
+    fill(this.slots, d.slots);
+    fill(this.armour.slots, d.armour);
+    fill(this.offhand.slots, d.offhand);
+    if (Number.isInteger(d.selected)) {
+      this.selected = Math.min(Math.max(d.selected, 0), INVENTORY.HOTBAR_SIZE - 1);
+    }
+    this._emit();
+    this.armour._emit();
+    this.offhand._emit();
+  }
+
   get(i) {
     return this.slots[i] ?? null;
   }

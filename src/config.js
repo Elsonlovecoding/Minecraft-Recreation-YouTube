@@ -2018,6 +2018,20 @@ export const CRAFTING = {
 // itself is inline in ui/hud.js / ui/screens.js like the other generated art
 // ---------------------------------------------------------------------------
 
+// World saving (systems/persistence.js — the save pass). Worlds are named
+// and listed like the real game; each carries its own seed (its own spawn),
+// its own mode, and a diff-only save: the world regenerates from the seed
+// and only PLAYER EDITS are stored (RLE-compressed modified chunks, all
+// three dimensions), plus the player, the clock and container contents.
+export const SAVE = {
+  VERSION: 1,                 // save-format version; a mismatched world
+                              // plays fresh from its seed rather than
+                              // risking a bad read of an old layout
+  DB_NAME: 'mc-recreation-saves',
+  AUTOSAVE_SECONDS: 20,       // background save cadence; saves also fire on
+                              // pause, on tab-hide and on page-hide
+};
+
 export const UI = {
   HOTBAR_SLOT_PX: 46,             // hotbar slot size
   HOTBAR_BOTTOM_PX: 8,            // hotbar offset from the bottom screen edge

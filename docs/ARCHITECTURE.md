@@ -312,6 +312,16 @@ src/
                          end-portal swirls + hum), the looping water/lava
                          ambience beds and the rare underground cave tone.
                          Purely reactive — it reads state, never writes it
+    persistence.js       world saving (the save pass): IndexedDB store of
+                         named worlds (id, name, per-world seed, mode,
+                         clock/player/container state) plus RLE-compressed
+                         MODIFIED-CHUNK rows for all three dimensions —
+                         the world regenerates from its seed and only the
+                         diff is stored. One atomic transaction per save
+                         (crash-safe), autosave on interval/pause/tab-hide,
+                         a compare-and-swap session stamp so two tabs can
+                         never interleave one world's history, and a
+                         restore hook world.js consults as chunks generate
     music.js             generative background music (the final pass):
                          ORIGINAL peaceful music in the Minecraft spirit,
                          synthesised like every other sound — a maj7 chord

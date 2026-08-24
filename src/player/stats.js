@@ -477,6 +477,32 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     exhaust,
     canEatFood,
     respawn,
+    // The save pass (systems/persistence.js): the survival numbers a
+    // reload must not reset, plus the bed spawn. Transient timers (burn,
+    // poison, potion effects, absorption) deliberately do NOT persist —
+    // vanilla-ish behaviour forgives them and a stale burn timer igniting
+    // the player on load would read as a bug.
+    serialize() {
+      return {
+        health, hunger, saturation,
+        spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
+      };
+    },
+    restore(d) {
+      if (!d) return;
+      if (Number.isFinite(d.health)) {
+        health = Math.min(PLAYER.MAX_HEALTH, Math.max(1, d.health));
+      }
+      if (Number.isFinite(d.hunger)) {
+        hunger = Math.min(PLAYER.MAX_HUNGER, Math.max(0, d.hunger));
+      }
+      if (Number.isFinite(d.saturation)) saturation = Math.max(0, d.saturation);
+      if (d.spawn && Number.isFinite(d.spawn.x)) {
+        spawn.x = d.spawn.x;
+        spawn.y = d.spawn.y;
+        spawn.z = d.spawn.z;
+      }
+    },
     // Phase 21 — beds. `setSpawnPoint` moves the respawn point; the getter
     // is test/debug scaffolding.
     setSpawnPoint(x, y, z) {
