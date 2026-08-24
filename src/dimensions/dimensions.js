@@ -32,8 +32,16 @@ export function createDimensions({ world, dayNight, mobs, fluids, managers, defs
   let active = 'overworld';
   records.overworld.def.group.visible = true;
 
+  // The save pass (systems/persistence.js) listens on both edges of a
+  // switch: BEFORE the swap to snapshot the outgoing dimension's container
+  // contents while they are still live, AFTER it to restore the incoming
+  // dimension's saved contents on its first activation of the session.
+  const beforeSwitch = [];
+  const afterSwitch = [];
+
   function switchTo(key) {
     if (key === active || !records[key]) return;
+    for (const fn of beforeSwitch) fn(active, key);
     const from = records[active];
     const to = records[key];
 
@@ -64,13 +72,31 @@ export function createDimensions({ world, dayNight, mobs, fluids, managers, defs
     mobs.setNaturalSpawning(to.def.spawning !== false);
     mobs.setSpawnProfile(to.def.spawn ?? null);
     if (fluids) fluids.setTickSeconds(to.def.lavaTickSeconds ?? null);
+    const prev = active;
     active = key;
+    for (const fn of afterSwitch) fn(prev, key);
   }
 
   return {
     switchTo,
     get activeKey() {
       return active;
+    },
+    onBeforeSwitch(fn) {
+      beforeSwitch.push(fn);
+    },
+    onAfterSwitch(fn) {
+      afterSwitch.push(fn);
+    },
+    // Every dimension's chunk map, wherever it currently lives: the active
+    // dimension's inside the World, the inactive ones in their stored
+    // worldState, never-visited ones null. The save walks this.
+    chunkMaps() {
+      const out = {};
+      for (const [key, rec] of Object.entries(records)) {
+        out[key] = key === active ? world.chunks : rec.worldState?.chunks ?? null;
+      }
+      return out;
     },
   };
 }

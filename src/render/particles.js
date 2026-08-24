@@ -26,7 +26,7 @@
 import * as THREE from 'three';
 import { PARTICLES, LIGHTING } from '../config.js';
 import { faceTiles, hasCollision } from '../world/blocks.js';
-import { getAtlasTexture, getUV } from './atlas.js';
+import { getAtlasTexture, getUV, TILE } from './atlas.js';
 
 const TAU = Math.PI * 2;
 const rand = (lo, hi) => lo + Math.random() * (hi - lo);
@@ -567,6 +567,58 @@ class ParticleSystem {
       life: pick(C.LIFE), size: C.SIZE * rand(0.7, 1.3),
       gravity: 0, drag: 0.4, color: C.COLOR, flicker: true,
       tint: this.lightTint(x + 0.5, y + 0.5, z + 0.5),
+    });
+  }
+
+  // --- the outdoor ambience (final pass) ------------------------------------
+
+  // A leaf fluttering down from a canopy: a small crop of the leaf tile,
+  // sinking slowly with sideways drift and a lazy tumble. Collides, so it
+  // settles onto the ground for its last moments instead of clipping in.
+  leaf(x, y, z) {
+    const C = PARTICLES.LEAF;
+    const uv = getUV(TILE.OAK_LEAVES);
+    const span = (uv.u1 - uv.u0) * 0.35;
+    this._spawn(x + Math.random(), y - 0.05, z + Math.random(), {
+      vx: rand(-C.DRIFT, C.DRIFT), vy: -C.SINK * rand(0.6, 1.2),
+      vz: rand(-C.DRIFT, C.DRIFT),
+      life: pick(C.LIFE), size: C.SIZE * rand(0.8, 1.2),
+      gravity: 0, drag: 0.25, spin: rand(-C.SPIN, C.SPIN),
+      u0: uv.u0 + Math.random() * (uv.u1 - uv.u0 - span),
+      v0: uv.v0 + Math.random() * (uv.v1 - uv.v0 - span),
+      uvSpan: span, collide: true,
+      tint: this.lightTint(x + 0.5, y + 0.5, z + 0.5),
+    });
+  }
+
+  // A seed mote riding the daylight over open grass: a pale speck drifting
+  // sideways, barely rising, catching the sun — the "pollen in the air"
+  // that makes a meadow read as warm and ALIVE.
+  seedMote(x, y, z) {
+    const C = PARTICLES.SEED_MOTE;
+    const a = Math.random() * TAU;
+    this._spawn(x + Math.random(), y + rand(0.3, 1.8), z + Math.random(), {
+      vx: Math.cos(a) * C.DRIFT * rand(0.4, 1),
+      vy: C.RISE * rand(-0.5, 1.5),
+      vz: Math.sin(a) * C.DRIFT * rand(0.4, 1),
+      life: pick(C.LIFE), size: C.SIZE * rand(0.7, 1.4),
+      gravity: 0, drag: 0.15, color: C.COLOR, flicker: true, alpha: 0.85,
+    });
+  }
+
+  // A firefly over night grass: a warm green-gold point wandering slowly,
+  // its light pulsing (the flicker flag). Full brightness on purpose — it
+  // IS a light source, and the bloom pass turns the brightest frames into
+  // a soft halo.
+  firefly(x, y, z) {
+    const C = PARTICLES.FIREFLY;
+    const a = Math.random() * TAU;
+    this._spawn(x + Math.random(), y + rand(0.5, 2.2), z + Math.random(), {
+      vx: Math.cos(a) * C.DRIFT * rand(0.3, 1),
+      vy: rand(-0.06, 0.09),
+      vz: Math.sin(a) * C.DRIFT * rand(0.3, 1),
+      life: pick(C.LIFE), size: C.SIZE * rand(0.8, 1.2),
+      gravity: 0, drag: 0.35, color: C.COLOR, flicker: true,
     });
   }
 

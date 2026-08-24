@@ -224,10 +224,30 @@ export function createSigns({ world, scene, canvas }) {
     return prev;
   }
 
+  // The save pass (systems/persistence.js): a sign is its position and
+  // its four lines; restore rebuilds the text plane through the same
+  // setText path the edit panel uses.
+  function serialize() {
+    const out = [];
+    for (const s of signs.values()) out.push({ x: s.x, y: s.y, z: s.z, lines: [...s.lines] });
+    return out;
+  }
+
+  function restore(list) {
+    for (const d of list ?? []) {
+      if (!Array.isArray(d.lines)) continue;
+      const sign = signAt(d.x, d.y, d.z);
+      sign.lines = d.lines.slice(0, SG.TEXT_LINES);
+      refresh(sign);
+    }
+  }
+
   return {
     onBlockChanged,
     beginEdit,
     signAt,
+    serialize,
+    restore,
     swapDimensionState,
     update() {}, // signs are static; the manager list expects the method
     get isEditing() {

@@ -26,7 +26,7 @@ import {
 import { particles } from '../render/particles.js';
 import { audio, blockSoundGroup } from './audio.js';
 
-export function createAmbience({ world, player, dimensions }) {
+export function createAmbience({ world, player, dimensions, dayNight }) {
   let stepTimer = 0;
   let wasInWater = false;
   let bubbleTimer = 0;
@@ -155,6 +155,29 @@ export function createAmbience({ world, player, dimensions }) {
           }
         }
         continue;
+      }
+      // The outdoor ambience (final pass) — all three ride this same tick,
+      // so their density self-scales with what is actually around the
+      // player: canopy sheds leaves, open daylight grass breathes seed
+      // motes, the same grass at night wakes fireflies. Overworld only.
+      if (dimensions?.activeKey === 'overworld') {
+        if (id === BLOCK.OAK_LEAVES) {
+          if (Math.random() < A.LEAF_CHANCE &&
+              world.getBlock(x, y - 1, z) === BLOCK.AIR) {
+            particles.leaf(x, y, z);
+          }
+          continue;
+        }
+        if (id === BLOCK.GRASS_BLOCK &&
+            world.getBlock(x, y + 1, z) === BLOCK.AIR) {
+          const sun = dayNight?.sunLevel ?? 1;
+          if (sun >= A.SEED_MIN_SUN) {
+            if (Math.random() < A.SEED_CHANCE) particles.seedMote(x, y + 1, z);
+          } else if (sun <= A.FIREFLY_MAX_SUN) {
+            if (Math.random() < A.FIREFLY_CHANCE) particles.firefly(x, y + 1, z);
+          }
+          continue;
+        }
       }
       if (isTorch(id)) {
         // The flame sits at the head of the torch's box model — leaned out

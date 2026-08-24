@@ -276,11 +276,43 @@ export function createBrewingSystem({ world, items }) {
     return prev;
   }
 
+  // The save pass (systems/persistence.js): the smelting.js pattern —
+  // slots plus the brew clocks, by position.
+  function serialize() {
+    const out = [];
+    for (const e of stands.values()) {
+      out.push({
+        x: e.x, y: e.y, z: e.z,
+        slots: e.stand.slots.map((s) => (s ? { ...s } : null)),
+        progress: e.stand.progress,
+        fuelBrews: e.stand.fuelBrews,
+      });
+    }
+    return out;
+  }
+
+  function restore(list) {
+    for (const d of list ?? []) {
+      const key = keyOf(d.x, d.y, d.z);
+      if (stands.has(key)) continue;
+      const entry = { stand: new BrewingStand(), x: d.x, y: d.y, z: d.z };
+      const n = Math.min(entry.stand.slots.length, d.slots?.length ?? 0);
+      for (let i = 0; i < n; i++) {
+        entry.stand.slots[i] = d.slots[i] ? { ...d.slots[i] } : null;
+      }
+      entry.stand.progress = Math.max(0, d.progress || 0);
+      entry.stand.fuelBrews = Math.max(0, d.fuelBrews || 0);
+      stands.set(key, entry);
+    }
+  }
+
   return {
     update,
     onBlockChanged,
     standAt,
     swapDimensionState,
+    serialize,
+    restore,
     stands, // read-only by convention (debug/tests)
   };
 }

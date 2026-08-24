@@ -66,7 +66,7 @@ const WAVE_GLSL = /* glsl */ `
 // Layers the water surface behaviour onto an already-standard chunk
 // material. Call INSTEAD of patchChunkMaterial for the still-water pass.
 export function patchWaterMaterial(material) {
-  patchChunkMaterial(material);
+  patchChunkMaterial(material, { jitter: false }); // one surface, one shade
   const chunkPatch = material.onBeforeCompile;
   const sink = RENDER.WATER_SURFACE_SINK;
   material.onBeforeCompile = (shader) => {

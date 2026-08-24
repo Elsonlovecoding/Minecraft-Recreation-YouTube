@@ -288,6 +288,11 @@ export function createPlayerController({ world, camera, canvas }) {
       yaw = newYaw;
       pitch = Math.max(-maxPitch, Math.min(maxPitch, newPitch));
     },
+    // The save pass persists where the player was LOOKING, not just
+    // standing — a reload that snaps the view forward reads as a glitch.
+    getView() {
+      return { yaw, pitch };
+    },
     debugForceInput(on) {
       inputOverride = !!on;
     },

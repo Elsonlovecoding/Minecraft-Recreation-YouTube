@@ -225,6 +225,58 @@ SHADERS)"):
   composite gained a gentle corner vignette (GRADING.VIGNETTE 0.16).
   Verified at one viewpoint across morning/noon/dusk — the lit side of
   the same tree flips with the sun; zero game console errors.
+  **Bug fixed from a live-play report** ("a yellow circle appears for a
+  split second when I jump and sprint"): reproduced headlessly by
+  driving W+Ctrl+Space and scanning frames — a lattice of blown-out
+  warm dots on tree trunks the player brushed past, 646 hot pixels at
+  its worst. TWO causes, both fixed: (1) the derivative normal
+  DEGENERATES on a face seen edge-on (both screen derivatives run along
+  one world line, the cross product collapses and normalize() returns
+  inf/NaN) — the length is now tested before dividing and the dot
+  product clamped, so an unusable normal simply skips the term; and
+  (2) even a valid +26% boost pushed warm surfaces (wood, dirt — which
+  sit just under BLOOM.WARM_FLOOR by design) over the bloom pass's
+  emissive detector, which smeared them into the glowing lattice. The
+  term is ENERGY-NEUTRAL now: the multiplier peaks at exactly 1.0 on a
+  sun-facing surface and only darkens from there, so face modelling can
+  never brighten anything past the baked sky light. Measured over the
+  same 34-frame sprint-jump run: blown-out pixels 646 -> 1, identical
+  to a control run with the effect disabled, with the directional look
+  intact.
+- **WHITE LINES on the ground, fixed** (reported off a screenshot): thin
+  bright dashes scattered through the middle distance. Bisected in the
+  browser — not the LOD cull, not anisotropy, not bloom or the post
+  grade (which only brightened them), not the mip chain's colours
+  (traced numerically: the grass tile stays green at every level), not
+  fog (forced magenta, dashes stayed pale). Removing the cross-plane
+  plants removed them entirely, and repainting the grass tuft with the
+  lava tile moved them — so they were the tufts sampling the WRONG
+  ATLAS TILE. Root cause: `ATLAS.UV_INSET` was 1/2048, an eighth of a
+  texel. That is safe at full resolution but at the coarse mip levels —
+  where a 16px tile is 2x2 texels, then 1 — it sits so close to the tile
+  boundary that rounding samples the NEIGHBOUR. Grass (atlas 65) sits
+  beside pale deepslate diamond ore (64), so distant tufts picked up its
+  pale grey and drew as bright dashes. UV_INSET is now 1/512 — exactly
+  half a texel, the textbook inset that puts every sample on a texel
+  CENTRE. Measured over three frames at the same vantage: 21/16/16
+  bright dashes -> 0/0/0, with block textures unchanged.
+- **Whole-stack visual sweep** (after the fix, "make sure no visual
+  bugs"): 40 captured vantages scanned by detector for blown-out warm
+  pixels, magenta/NaN garbage and black holes — 7 times of day x
+  {horizon, straight up, straight down, at the sun}, a deep unlit cave,
+  fully submerged water, a chunk-border straddle, a canopy closeup, the
+  Nether, the End, and the return swap to the overworld. Findings:
+  ZERO artifacts (the only "blowout" hits are the sun's own disc),
+  zero magenta/NaN, caves correctly pitch black with no directional or
+  cloud-shadow leak, the fixed-sky dimensions correctly carry no
+  clouds/shadows/face light, the overworld sky restores intact after
+  nether -> end -> overworld, and zero game console errors in every
+  run. A second node census placed 17 awkward block kinds (torch,
+  fence, door, trapdoor, sign, bars, brewing stand, portal, wart,
+  ladder, wall, stairs, pot, bed, glass, water, lava, chest, frame) and
+  rebuilt 41 geometries across BOTH LOD tiers: the wind `wave`
+  attribute matches the position count everywhere and only ever holds
+  its three legal values — no emit path can desync it.
 - **THE DAYLIGHT POP** ("Shader has: Good sunlight. Whenever sun is
   present, more vibrant"): three sun-scaled terms in the composite grade
   (GRADING.DAY_EXPOSURE 0.07 in linear, DAY_CONTRAST 0.16 as a gentle
@@ -259,6 +311,304 @@ SHADERS)"):
   field with white-crowned puffs and the horizon band, straight-up puff
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
+
+**WORLD SAVING — named worlds, like the real game** ("everytime I start
+localhost it saves progress... I can choose to start worlds and name them
+... can have diff spawn"): the biggest missing piece of the replica, built
+on two facts the codebase already had — the world is seed-deterministic
+(saves store only the DIFF) and modified chunks are immortal in memory
+(the in-memory set IS the complete diff; saving is a walk, not a search).
+- **The world-select title screen** (ui/world_select.js) now gates init()
+  itself: the chosen world's seed decides the generator, its mode decides
+  the rules, its save decides everything else. Create New World takes a
+  name, an optional seed (numbers reproduce a world exactly, words hash,
+  blank rolls random — each seed gets its own scanned plains spawn) and
+  the mode, vanilla-style; the list shows every world newest-first with
+  Play and a two-click Delete. The old start screen is gone — mode is a
+  property of the world now (ui/menus.js keeps only the pause menu).
+- **What saves** (systems/persistence.js, IndexedDB): modified chunks of
+  ALL THREE dimensions, RLE-compressed (a realistic chunk is 3.9% of its
+  96KB); the clock (time AND day); the player (dimension, position, view,
+  health/hunger/saturation, bed spawn, full inventory + armour + offhand
+  + hotbar selection); chest/furnace/brewing contents with their burn and
+  brew clocks; sign text; item-frame items. Deliberately NOT saved: mobs,
+  dropped items, in-flight projectiles, dragon-fight progress, transient
+  stat timers — vanilla-ish behaviour forgives all of them.
+- **When**: every 20s, on pause, on tab-hide and page-hide. Every save is
+  ONE atomic IndexedDB transaction over both stores — a tab killed
+  mid-save rolls back whole and the previous save stands. A COMPARE-AND-
+  SWAP session stamp guards the record: the same world opened in a second
+  tab is taken over by whichever saves first, and the other tab's saves
+  abort with "world is open in another tab" instead of interleaving two
+  divergent histories. A save into a world deleted elsewhere aborts too.
+- **Restore**: chunk edits decode lazily straight over freshly generated
+  blocks (world.js restoreChunk hook, active-dimension aware); containers
+  restore per dimension on first activation (dimensions.js gained
+  before/after switch listeners + a chunkMaps() accessor); the player can
+  reload straight into the Nether or End.
+- **Verified end-to-end in the browser** (fresh IndexedDB per run):
+  17/17 — create → edit → save → reload → every category restored, two
+  worlds fully isolated with different spawns, delete via the real UI,
+  resume via the real Play button; 7/7 on the session-stamp handoff and
+  the two-tab conflict; 4/4 on autosave triggers (interval + pause edge,
+  both surviving a reload with no manual save); 5/5 RLE round-trips plus
+  corrupt-row rejection. Zero console errors throughout. The adversarial
+  review workflow could not run (the subagent permission harness strips
+  tool parameters — all five reviewers refused to certify unread code),
+  so the five-dimension review was done by hand; it found the two-tab
+  clobber, the deleted-world resurrection and a world-select double-create
+  orphan, all fixed above.
+
+**NIGHT & CLOUD RETUNE** ("stars better, moon a bit shiny, circle moon,
+not TOO dark; clouds more regular like real life"):
+- STARS are two layers now instead of one flat sheet of identical white
+  points: 1500 faint under 240 bright standouts, every star with its own
+  brightness (dim ones far outnumber bright — squared roll) and a slight
+  temperature colour (blue-white hot / warm-white old), additive-blended.
+- The MOON shows its full circular disc every night (MOON_PHASES 8 -> 1;
+  the phase pipeline is intact — set back to 8 for vanilla's cycle), and
+  it is shinier: halo strength 0.55 -> 0.78, scale 3.0 -> 3.6, the dome's
+  night wash 0.32 -> 0.42.
+- NIGHT is a step brighter everywhere: SKY_DARKEN 10 -> 9 (surfaces at
+  effective light 6, still under the hostile-spawn gate of 7), the whole
+  night palette lifted, moonlight tint brightened, night clouds 0.22 ->
+  0.30. A moonlit night you can walk by.
+- CLOUD SHAPES ("too weird") — the domain warp was the culprit: at 0.55
+  it smeared puffs into ragged shelves and hooks. WARP 0.22, COVER 0.70
+  -> 0.62 (separated puffs, not one merged shelf), EROSION 0.34 -> 0.24,
+  DETAIL 3.1 -> 2.7, ROUND 0.22 -> 0.30: distinct rounded fair-weather
+  cumulus, verified from the ground at noon and under the moon at night.
+
+**THE FINAL PASS — a lively world with music** ("upgrade the entire game
+visual... add some grass particles, leaves in air, whatever you want. Just
+make it look lively... also add soft peaceful minecraft music. This is the
+last change"). Four additions, no texture touched:
+- **OUTDOOR AMBIENT PARTICLES**, all riding the same random display tick
+  that already finds torches (systems/ambience.js), so density self-scales
+  with what is actually around the player: LEAVES flutter down from oak
+  canopies (cropped from the leaf tile, tumbling, colliding so they settle
+  on the ground), SEED MOTES ride the daylight over open grass (pale
+  specks, barely rising — the pollen-in-the-air look), and FIREFLIES wake
+  over the same grass at night (warm green-gold points, wandering,
+  pulsing; full-brightness on purpose so the bloom pass gives each one a
+  soft halo). Overworld only, chances in PARTICLES.AMBIENT. Measured live:
+  13 particles by day / 18 at night / 20 under a forest canopy.
+- **PER-BLOCK BRIGHTNESS JITTER** (VISUAL.BLOCK_JITTER, ±4.5%): every face
+  scaled by a hash of the block coordinate behind it (derivative face
+  normal picks the cell; coordinates wrapped mod 289 so the classic
+  fract(sin(dot)) hash keeps precision far from origin). A large stone or
+  dirt slope stops reading as one 16px tile stamped in a grid. Water opts
+  out — a lake is ONE surface, and per-block patches would shatter its
+  reflection.
+- **DAWN VALLEY MIST** (VISUAL.MIST): during a window around sunrise (and
+  a fainter one at dusk) ground below sea+16 multiplies its RADIAL fog
+  depth up to 2.1x, so valleys and water flats drown in horizon-coloured
+  haze while hilltops stand clear — the classic shader-pack morning. One
+  uniform, driven by the cycle, zero outside the windows and under fixed
+  dimension skies. Verified: uMist 1.001 at t=0.995, exactly 0 at noon.
+- **GENERATIVE MUSIC** (systems/music.js — a NEW module, listed in
+  ARCHITECTURE.md): original, soft, peaceful music in the Minecraft
+  spirit, synthesised like every other sound in this project — nothing is
+  a recording and copying C418's actual compositions was deliberately NOT
+  done. A four-voice maj7/min7 chord pad breathes underneath (11-19s per
+  chord, walking a progression graph in C major that always resolves
+  gently); a sparse felt-piano melody wanders the C major pentatonic on
+  top, biased onto the current chord's tones, phrased 3-7 notes with long
+  rests. Night stretches the gaps, drops the register an octave and
+  softens the bus. Scheduled a second ahead each frame through audioBus()
+  (compressor + master volume), so the pause suspend freezes it with
+  everything else. Verified live in the harness: context running, chords
+  walking C→G→Em, notes scheduling, zero console errors.
+- Full sweep after: 0 artifacts across five day/night/dawn views (the
+  night shot's dark patches are night), zero game console errors, 84/84
+  modules import. `render/lighting.js` is 1010 lines now — the mandated
+  patchChunkMaterial split into render/chunk_shader.js remains the
+  standing debt for whoever comes next.
+
+**HALF THE GRASS, AND A SMOOTH WORLD EDGE** ("grass not that common, maybe
+half the rarity" / "make far render parts and un-rendered parts more
+smooth, like it's a real render"):
+- Short-grass levels halved across the board (plains 0.40/0.78 ->
+  0.20/0.39 etc). Measured: plains coverage 54.0% -> **26.9%** — tufts ON
+  the ground instead of a second surface over it.
+- **RADIAL FOG.** Stock three.js fogs by view-space Z — a PLANE across the
+  view — so at FOV 70 a chunk in the corner of a widescreen frame carried
+  ~37% less fog depth than the same chunk dead ahead: turning the camera
+  visibly un-fogged the periphery, and the world edge popped in and out of
+  the haze. The chunk shader patch now sets fogDepth to true distance
+  (`length(mvPosition.xyz)`), making the fade a circle around the player —
+  the exact shape of the streaming ring it exists to hide. Water inherits
+  via its patch; mobs keep stock fog (they cap at ~96 blocks, where fog is
+  zero either way).
+- **FOG_FAR moved INSIDE the ring edge** (544 -> 496 against the 512-block
+  r=32 ring; NEAR 368 -> 352). At 544 the outermost chunks sat silhouetted
+  against the sky at ~80% fog — the "hard cutoff" look. Now they dissolve
+  fully into sky in every direction before the geometry actually ends.
+- **CHUNK APPEAR RISE (STREAMING.APPEAR).** A chunk meshed for the FIRST
+  time beyond 6 chunks starts 10 blocks low and eases up over 0.45s
+  (cubic ease-out) instead of popping in whole — the Bedrock-style
+  assembly. In normal play the frontier meshes at the ring edge, already
+  under full fog; this covers the moments streaming is visibly behind
+  (/tp, fast flight, dimension return). Retier and edit remeshes never
+  animate (the chunk already had a mesh), so building is never bouncy;
+  the tick runs before the streamer's idle early-out so the last chunks
+  of a burst finish rising after the ring parks. Verified live: groups
+  observed mid-rise in 48 of 56 fill-loop checks, and after settling all
+  3209 meshed chunks sit at exactly y=0.
+- Full sweep after: 0 black blobs across five views, zero game console
+  errors.
+
+**FOLIAGE COLOUR — the biome colormap** ("using existing blocks and
+textures, how to make it more lively"). The single biggest gap between this
+world and a real one, and it needed no new art: vanilla ships grass and
+leaves as tiles that get MULTIPLIED by a colour looked up from a colormap
+indexed by the column's temperature and downfall, which is why a real world
+shifts continuously — yellow-green open grassland, deep green wet woods,
+pale grey-green up a cold mountainside — with no hard edge anywhere. Ours
+had NO tint at all: one fixed emerald everywhere, which is what made the
+landscape read as wallpaper.
+- We already carry the two climate fields the lookup wants, so this is the
+  same rule and not an imitation: `terrain.js foliageClimateAt` reads
+  temperature and moisture THROUGH the same warps `biomeWeightsAt` uses (so
+  a forest never wears the shade of the plains beside it), drops temperature
+  with altitude the way vanilla does, and `foliageTintFrom` blends four
+  corner colours bilinearly over (temp, moisture). Leaves read a SECOND
+  table, as vanilla does, which is what keeps a canopy reading as its own
+  mass instead of ground-colour on stilts.
+- **Zero extra memory in the mesh.** The vertex colour was already three
+  floats carrying the same monochrome shade x AO three times over — two dead
+  channels. The tint multiplies into them. The catch is that the shader also
+  reads that colour back as "shade" for the cool-shadow and bounce terms, so
+  every corner colour is normalised to a brightest channel of exactly 1.0
+  and the shader recovers the shade as `max(r, g, b)`. Verified exact:
+  **worst deviation 0.00e+0 over 33073 columns**. A tint can therefore only
+  shift hue, never brighten a face past its baked light.
+- Corner colours are vanilla's own biome grass colours (savanna #bfb755,
+  forest, taiga #86b783) divided by their brightest channel, so what
+  survives is the hue RELATIONSHIP. A first pass picked by eye landed the
+  corners so close together that plains and forest rendered rgb(61,108,44)
+  and rgb(53,108,45) — a difference nobody could see. Measured now, the
+  grass tile renders across the world from **rgb(40,103,22) deep green to
+  rgb(71,108,49) pale olive**; photographed at the two extreme columns the
+  on-screen red-to-green ratio differs by 27% (0.404 vs 0.514).
+- Cost: the tint is baked once per column at generation (1.5 KB a chunk).
+  The first cut recomputed the four warp fBms twice per column, once per
+  table, for **+12.1% chunk generation**; splitting the climate read out of
+  the table lookup brought that to **+3.8%** with bit-identical output.
+- Grass block SIDES are deliberately left untinted: our atlas bakes the dirt
+  and the green cap into one tile, so tinting it would swing the dirt
+  orange. Flowers are untinted too — vanilla tints the grass family only.
+  The Nether and the End leave `chunk.grassTint` null, which the mesher
+  reads as "no tint"; both verified rendering clean.
+
+**VANILLA PLAINS, AND NO SAND ON MOUNTAINS** ("Search online real minecraft
+plain looking. I want the plains to look the same, and no sand should be on
+mountains"). What vanilla actually does, checked against the worldgen rules
+rather than guessed, then matched:
+- **NO SAND ON MOUNTAINS.** Root cause: mountains come from their own
+  REGION mask, not from climate, so a column can be both mountain-shaped
+  and desert-climate — and `surfaceLayersFor` applied desert sand on the
+  biome NAME, before any mountain test. Sand is lowland now: real mountain
+  influence (`SAND_MAX_MOUNTAIN_WEIGHT`) or simply standing well above the
+  sea (`SAND_MAX_ABOVE_SEA`) disqualifies it, and the bare-stone rule fires
+  for any mountainous column whatever the climate says. Measured over
+  800x800: on mountain-dominant land the surface is **58.7% stone / 39.7%
+  grass / 1.3% sand — and every one of those sand columns is at y<=64**,
+  two blocks above sea, with water in beach reach. That is shoreline where
+  a range meets a lake, which vanilla sands too. Zero desert sand survives
+  on a slope or a summit.
+- The mountains looked wrong for a second reason: `STONE_LINE.HEIGHT` was
+  128, only 40 blocks under the world ceiling, so a range wore grass nearly
+  to its cap and every steep flank showed the grass block's DIRT SIDE —
+  brown cones, not rock. 108 (46 above sea) keeps lower slopes green and
+  bares the shoulders and summits.
+- **GRASS: vanilla's actual rule.** `patch_grass_plain` sits under a
+  `noise_threshold_count` modifier — a noise field picks between a LOW
+  patch count and a HIGH one, two levels, not a smooth ramp. Ours ramped
+  smoothly to a 0.88 peak and laid a solid shag carpet that hid the grass
+  block entirely. Now two levels (0.40 / 0.78) eased across a narrow band
+  so no density seam shows. Measured: **54% coverage**, patchy, ground
+  visible between tufts.
+- **TREES: the plains rate was 12x what the config asked.** Vanilla plains
+  place trees with `countExtra(0, 0.05, 1)` — about 0.05 trees per chunk.
+  Ours blended tree density LINEARLY across biome weights, and forest
+  carries 200x the plains rate, so plains-dominant ground with 40% forest
+  weight came out at near-forest density: **0.63 trunks per plains chunk**.
+  Density now comes from ONE biome — the column's dithered biome, the same
+  map the ground blocks use, which is how vanilla assigns features — so the
+  hash dither still feathers the border into a jagged treeline. Measured
+  per dithered biome: **plains 0.102/chunk, forest 14.9, mountains 0.55,
+  desert 0** — each exactly what config sets.
+- Plains flattened to match "few terrain features, a wide open view":
+  HILL_AMPLITUDE 4 -> 1.8 (every block of hill noise puts another 1-block
+  step in the ground, and a step shows its dirt side), TREE_DENSITY 0.003
+  -> 0.0004, flowers eased back up (FLOWER_FIELD_MIN 0.42 -> 0.36) now that
+  they show against open ground.
+
+**BUG: the black square on distant terrain.** A 60x64 pixel black rectangle
+sat on far mountainsides. Earlier in this session it was written off as a
+swiftshader artifact — that was WRONG, and five consecutive frames of one
+pinned camera settled it: pixel-identical every frame, so deterministic.
+Bisected by hiding scene children (chunk group), then by binary search over
+one chunk's index buffer, down to a single triangle: a 1-block-tall vertical
+face 480 blocks away, seen nearly edge-on. Its vertex data was clean.
+- **Root cause:** `pow(uLightFalloff, 15.0 - vLight.x * 15.0)` used the
+  RAW interpolated light varying. On a triangle that degenerate the
+  perspective divide can push the varying outside [0, 1]; a wild value
+  makes the exponent hugely negative and the power overflows to +inf. The
+  inf reached the fragment colour, the bloom bright pass carried it, and
+  the separable blur — 5 taps reaching +-7 texels at quarter resolution —
+  smeared ONE bad pixel into an exact 60x64 block, which the composite's
+  `clamp` then mapped to 0. Confirmed by measurement at every step: 5 pure
+  black scene pixels at the rectangle's centre with bloom off, and the
+  rectangle disappearing with `BLOOM.STRENGTH` at 0.
+- **Fixed at both ends.** The light varying is clamped before anything
+  raises a power to it, so every term is finite by construction; and the
+  bright pass now sanitises its scene read (comparisons against NaN are
+  always false, so `greaterThanEqual` doubles as the NaN test, with an
+  upper bound for +inf) — that is the choke point where one bad pixel
+  becomes a visible block, so nothing of this class can reappear there.
+- Verified: **0 near-black pixels** anywhere in frame, and 0 black blobs
+  across eight views (plains at eye level, ground, two summit overlooks, a
+  mountain face, golden hour and dawn), zero game console errors.
+
+**WORLD RESHAPE: 32 chunks, real mountains, open country** ("Increase
+render to 32 chunks. Add more mountains to make view look good, sometimes
+more plains, less tree in some place, make me spawn in 旷野, plain
+biome"):
+- **View ring 25 -> 32 chunks** (512 blocks), fog rescaled at the same
+  fractions (368/544). Measured with the LOD tiers: 3209 meshed / 6432
+  draws / **7.05M tris / 578 MB** (full detail would be 15.60M / 1279 MB
+  — a 55% saving), still under the r=40 ring the first Phase 27 cut
+  tried. The ring fills to 4489 chunks and the streamer parks.
+- **MOUNTAINS.** WEIGHT_START 0.30 -> 0.22 so ranges claim more land,
+  REGION_SCALE 1/560 -> 1/640 so they run longer, BASE_LIFT 14 -> 17 and
+  RIDGE_AMPLITUDE 58 -> 76 so they read as peaks. The old
+  OVERWORLD.PEAK_HEIGHT 140 was CLIPPING every summit to the same
+  altitude — ranges came out as plateaus — so it went to 168 (still
+  below the y=192 clouds). Measured: peaks reach y163, 10.0% of land is
+  above y110 and 3.9% above y130.
+- **Plains keep the majority** — the land mountains took came out of
+  forest (MOISTURE_START 0.10 -> 0.17) and desert (HEAT_START 0.02 ->
+  0.07), not out of plains. Measured over 2000x2000: **plains 57.7% /
+  mountains 19.3% / forest 14.2% / desert 8.8%** (was 55.7 / 15.6 / 17.8
+  / 10.8).
+- **Fewer trees in places.** The Phase 24 density FIELD's low end was
+  0.15 — thinner woods, never a clearing; it is 0.02 now, and the field
+  runs at 1/175 so the clearings are a few hundred blocks across.
+  Plains' own density 0.005 -> 0.003. Measured: **14.7% of land is now
+  genuinely open** (under 0.0016 trees/column).
+- **旷野 SPAWN.** Plains-dominant was not enough — the density field can
+  still stand a grove in the middle of one. The spawn scan now averages
+  the tree field over its disc and requires a clearing
+  (SPAWN_SCAN.MAX_TREE_DENSITY). The openness test also joined the
+  candidate PRESCREEN: without it the scan did full disc reads until it
+  found one and took **20 SECONDS at boot**; with it the scan is 63 ms.
+  The shipped seed spawns at (-176, 240): 100% plains over the disc,
+  mean density 0.0021 — about 21 trees scattered across the whole
+  56-block radius.
+- Browser-verified at 1920x1080: boots to playable in 7.8s, the r=32
+  ring fills completely, zero game console errors.
 
 **FINAL RETUNE: the view ring is 25 chunks, guaranteed** ("render 25
 chunks... wherever I'm standing, 25 chunk radius"):

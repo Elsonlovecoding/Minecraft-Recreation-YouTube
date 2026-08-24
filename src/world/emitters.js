@@ -464,6 +464,18 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
     const cx = lx + 0.5 + (((h & 0xff) / 255) - 0.5) * 2 * off;
     const cz = lz + 0.5 + ((((h >>> 8) & 0xff) / 255) - 0.5) * 2 * off;
     const d = Math.SQRT2 / 4;
+    // Short grass takes the column's grass tint like the ground it stands
+    // on; the flowers do NOT — vanilla tints the grass family only, and a
+    // tinted poppy is just a wrong-coloured poppy.
+    let tr = 1;
+    let tg = 1;
+    let tb = 1;
+    if (id === BLOCK.SHORT_GRASS && chunk.grassTint) {
+      const ti = (lz * SIZE + lx) * 3;
+      tr = chunk.grassTint[ti] / 255;
+      tg = chunk.grassTint[ti + 1] / 255;
+      tb = chunk.grassTint[ti + 2] / 255;
+    }
     for (const s of [1, -1]) { // the two diagonals: (+,+) and (+,-)
       const base = bucket.count;
       // Corner order (0,0)(1,0)(0,1)(1,1) in the quad's UV frame.
@@ -475,7 +487,7 @@ export function createSpecialEmitters({ chunk, buckets, getId, wSky, wBlk, W }) 
       );
       bucket.uv.push(u0, v0, u1, v0, u0, v1, u1, v1);
       for (let k = 0; k < 4; k++) {
-        bucket.col.push(1, 1, 1);
+        bucket.col.push(tr, tg, tb);
         bucket.lig.push(sky, blk);
       }
       bucket.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);

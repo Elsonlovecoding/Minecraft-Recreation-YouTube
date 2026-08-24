@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import {
   SKY, DAY_NIGHT, CELESTIAL, LIGHTING, TIME, VIEW, RENDER, CHUNK, VISUAL,
-  CLOUDS,
+  CLOUDS, OVERWORLD,
 } from '../config.js';
 import { BLOCKS } from '../world/blocks.js';
 // Phase 24: clouds, stars and the generated sun/moon art live in their own
@@ -211,6 +211,12 @@ export const CHUNK_LIGHT_UNIFORMS = {
   // is 0 under fixed dimension skies.
   uSunFace: { value: 0 },
   uSunFaceDir: { value: new THREE.Vector3(0, 1, 0) },
+  // Dawn valley mist (final pass, config VISUAL.MIST): low ground
+  // multiplies its radial fog depth up by (1 + uMist * heightFactor), so
+  // valleys drown in horizon-coloured haze while hilltops stand clear.
+  // The cycle raises it through a window around sunrise (fainter at dusk)
+  // and holds it at 0 the rest of the day and in the fixed-sky dimensions.
+  uMist: { value: 0 },
 };
 
 // The held light's brightness at `dist` blocks from the player — the same
@@ -230,8 +236,29 @@ export function heldLightBrightness(level, dist) {
 // multiplied into the vertex colour (which already carries per-face
 // brightness x AO). Sky light dims with time of day; block light doesn't —
 // torches hold their brightness through the night, exactly like the game.
-export function patchChunkMaterial(material) {
+export function patchChunkMaterial(material, { jitter = true } = {}) {
   material.toneMapped = false; // see the sky-dome comment: keeps fog exact
+  // Per-block brightness jitter (config VISUAL.BLOCK_JITTER): every face is
+  // scaled by a hash of the block coordinate BEHIND it, so a large stone or
+  // dirt slope stops reading as one 16px tile stamped in a grid. The cell
+  // comes from the derivative face normal (the meshes carry none); the mod
+  // keeps the hash's sine argument small far from the origin, where the
+  // classic fract(sin(dot)) hash otherwise dissolves into float noise.
+  // Water opts out — a lake is ONE surface and per-block patches would
+  // shatter its reflection.
+  const jitterGlsl = !jitter ? '' : /* glsl */ `
+          {
+            vec3 jn = cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos));
+            float jl = length(jn);
+            if (jl > 1e-7) {
+              jn /= jl;
+              if (!gl_FrontFacing) jn = -jn;
+              vec3 jc = mod(floor(vHeldWorldPos - jn * 0.5), 289.0);
+              float jh = fract(sin(dot(jc, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+              diffuseColor.rgb *= 1.0
+                + ${VISUAL.BLOCK_JITTER.toFixed(4)} * (jh * 2.0 - 1.0);
+            }
+          }`;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, CHUNK_LIGHT_UNIFORMS);
     shader.vertexShader = shader.vertexShader
@@ -242,6 +269,7 @@ export function patchChunkMaterial(material) {
         + 'varying vec3 vHeldWorldPos;\n'
         + 'uniform float uWindTime;\n'
         + 'uniform float uWindAmp;\n'
+        + 'uniform float uMist;\n'
         + '#include <common>')
       .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
         vLight = light;
@@ -263,7 +291,30 @@ export function patchChunkMaterial(material) {
           transformed.z += cos(wp.x * 0.23 + wp.y * 0.11 + t * 1.1) * sway * amp * 0.8;
           transformed.y += sin(wp.z * 0.29 + wp.x * 0.07 + t * 1.6) * amp * 0.3;
           vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        }`);
+        }`)
+      // RADIAL FOG ("make the far parts smooth, like a real render").
+      // Stock three.js fogs by view-space Z (vFogDepth = -mvPosition.z),
+      // which is a PLANE across the view: at FOV 70 a chunk in the corner
+      // of a widescreen frame carries ~37% less fog depth than the same
+      // chunk straight ahead, so turning the camera visibly un-fogged the
+      // periphery and the world edge popped in and out of the haze. True
+      // distance makes the fade a circle around the player — the exact
+      // shape of the streaming ring it exists to hide. SKY.FOG_FAR sits
+      // just inside the ring radius, so the outermost chunks dissolve
+      // fully into sky in EVERY direction.
+      .replace('#include <fog_vertex>', /* glsl */ `
+        #ifdef USE_FOG
+          vFogDepth = length(mvPosition.xyz);
+          // Dawn valley mist (config VISUAL.MIST): below the mist top the
+          // fog depth multiplies up, so low ground fades into the horizon
+          // colour far sooner than its true distance — haze lying in the
+          // valleys. uMist is 0 outside the dawn/dusk windows, making this
+          // a single multiply-by-one the rest of the day.
+          vFogDepth *= 1.0 + uMist * (1.0 - smoothstep(
+            ${OVERWORLD.SEA_LEVEL.toFixed(1)},
+            ${(OVERWORLD.SEA_LEVEL + VISUAL.MIST.TOP_ABOVE_SEA).toFixed(1)},
+            vHeldWorldPos.y));
+        #endif`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
         'varying vec2 vLight;\n'
@@ -315,12 +366,27 @@ export function patchChunkMaterial(material) {
         + '#include <common>')
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         {
-          float skyLevel = clamp(max(vLight.x * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
-          float blockLevel = vLight.y * 15.0;
+          // The baked light attribute, CLAMPED before anything raises a
+          // power to it. vLight is a varying: on a triangle seen nearly
+          // edge-on at long range the perspective divide is numerically
+          // brutal and the interpolated value can land outside [0, 1].
+          // Feed that to pow(0.8, 15 - 15 * L) and a value only slightly
+          // over 1 is harmless, but a wild one makes the exponent hugely
+          // NEGATIVE and the power overflows to +inf. That inf reached
+          // the fragment colour, the bloom bright pass carried it, and
+          // the separable blur — 5 taps reaching +-7 texels at quarter
+          // resolution — smeared one bad pixel into an exact 60x64 BLACK
+          // RECTANGLE on distant mountainsides (clamp() maps a non-finite
+          // value to 0). Clamping the light here costs nothing and closes
+          // the whole class: every term below is now finite by
+          // construction.
+          float light01 = clamp(vLight.x, 0.0, 1.0);
+          float skyLevel = clamp(max(light01 * 15.0 - uSkyDarken, uMinSkyLevel), 0.0, 15.0);
+          float blockLevel = clamp(vLight.y, 0.0, 1.0) * 15.0;
           vec3 skyLum = pow(uLightFalloff, 15.0 - skyLevel) * uSkyTint;
           // How open to the sky this column is — scales every outdoor
           // effect below so interiors and caves feel nothing.
-          float openCol = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+          float openCol = pow(uLightFalloff, 15.0 - light01 * 15.0);
           // Drifting cloud shadows (see csCloud above): dim the sky's
           // contribution under cloud.
           if (uCloudShadow > 0.001) {
@@ -333,11 +399,34 @@ export function patchChunkMaterial(material) {
           // sky. Wind-swayed leaves get gently varying normals for free,
           // so canopies shimmer as they move.
           if (uSunFace > 0.001) {
-            vec3 fn = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
-            if (!gl_FrontFacing) fn = -fn;
-            float facing = dot(fn, uSunFaceDir);
-            skyLum *= 1.0 + uSunFace * openCol *
-              (facing > 0.0 ? facing : facing * 0.7);
+            // The cross product DEGENERATES on a face seen edge-on: both
+            // screen derivatives then run along the same world line, so
+            // the cross collapses toward zero and normalize() returns
+            // inf/NaN — which blew the fragment out and bloom smeared it
+            // into a lattice of glowing dots (the "yellow circle" seen
+            // while sprint-jumping past tree trunks). Test the length
+            // BEFORE dividing, and clamp the result: no valid normal
+            // means no directional term for that pixel, never a blowout.
+            vec3 cn = cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos));
+            float cl = length(cn);
+            if (cl > 1e-7) {
+              vec3 fn = cn / cl;
+              if (!gl_FrontFacing) fn = -fn;
+              float facing = clamp(dot(fn, uSunFaceDir), -1.0, 1.0);
+              // ENERGY-NEUTRAL: the multiplier peaks at exactly 1.0 on a
+              // fully sun-facing surface and only DARKENS from there, so
+              // the modelling can never push a surface BRIGHTER than the
+              // baked sky light. That matters beyond taste: brightening
+              // warm surfaces (wood, dirt) nudged them over the bloom
+              // pass's emissive detector, which then smeared them into a
+              // lattice of glowing dots — the "yellow circle" flashing
+              // past tree trunks while sprint-jumping. Contrast comes
+              // from the shaded side, which is how the effect reads
+              // anyway.
+              float shade = facing > 0.0 ? facing : facing * 0.7;
+              skyLum *= (1.0 + uSunFace * openCol * shade)
+                      / (1.0 + uSunFace * openCol);
+            }
           }
           vec3 blockLum = pow(uLightFalloff, 15.0 - blockLevel) * uTorchTint;
           // Held-torch dynamic light (Phase 14): one level lost per block of
@@ -356,14 +445,20 @@ export function patchChunkMaterial(material) {
           // overhead and by the column's sky access, so caves, the night
           // and the fixed-sky dimensions are untouched.
           #ifdef USE_COLOR
-            float shade = clamp(1.0 - vColor.r, 0.0, 1.0);
+            // The vertex colour carries per-face shade x AO, and on grass,
+            // plants and leaves it ALSO carries the column's foliage tint
+            // multiplied in. Every tint is normalised to a brightest
+            // channel of exactly 1.0 (config TERRAIN.FOLIAGE_TINT), so the
+            // largest channel is still the untinted shade — max() recovers
+            // it exactly and an untinted white vertex is unchanged.
+            float shade = clamp(1.0 - max(vColor.r, max(vColor.g, vColor.b)), 0.0, 1.0);
             float dayF = clamp(1.0 - uSkyDarken / 11.0, 0.0, 1.0) *
               step(uMinSkyLevel, 0.5); // no bounce under a fixed dimension sky
-            float openSky = pow(uLightFalloff, 15.0 - vLight.x * 15.0);
+            float openSky = openCol;
             lum = mix(lum, lum * uShadowCool, uShadowCoolStrength * shade * dayF);
             lum += uBounceColor * (uBounceStrength * shade * dayF * openSky);
           #endif
-          diffuseColor.rgb *= lum;
+          diffuseColor.rgb *= lum;${jitterGlsl}
         }`);
   };
 }
@@ -695,6 +790,11 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
     get dayIndex() {
       return day;
     },
+    // The save pass restores the whole clock, day count included (it is
+    // the moon-phase clock, and a world's age should survive a reload).
+    setDay(d) {
+      day = Math.max(0, Math.floor(d) || 0);
+    },
     // Phase 26 — read-only sun state for the post pipeline (god rays) and
     // the water uniforms: the interpolated keyframe sun level and the unit
     // direction toward the sun. The vector is the cycle's own working
@@ -878,6 +978,16 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSunFace.value = sunDir.y > 0
           ? VISUAL.SUNLIGHT.STRENGTH * sunLevel
           : VISUAL.SUNLIGHT.STRENGTH * VISUAL.SUNLIGHT.MOON_FACTOR * starAlpha;
+        // Dawn valley mist (config VISUAL.MIST): a triangular window
+        // around sunrise (t=0, wrapping) and a fainter one at dusk
+        // (t=0.5). Low ground multiplies its fog depth up by this in the
+        // vertex patch, so valleys drown while hilltops stand clear.
+        const M = VISUAL.MIST;
+        const dawnDist = Math.min(t, 1 - t); // wrapped distance to sunrise
+        const dawn = Math.max(0, 1 - dawnDist / M.DAWN_WIDTH);
+        const dusk = Math.max(0, 1 - Math.abs(t - 0.5) / M.DUSK_WIDTH);
+        CHUNK_LIGHT_UNIFORMS.uMist.value =
+          M.STRENGTH * Math.max(dawn, dusk * M.DUSK_FACTOR);
       }
 
       // Dimension override (Phase 15): everything above still ran — the
@@ -898,6 +1008,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         CHUNK_LIGHT_UNIFORMS.uSkyTint.value.setHex(dimSky.SKY_TINT);
         CHUNK_LIGHT_UNIFORMS.uCloudShadow.value = 0;
         CHUNK_LIGHT_UNIFORMS.uSunFace.value = 0;
+        CHUNK_LIGHT_UNIFORMS.uMist.value = 0; // no dawn under a fixed sky
       }
     },
   };

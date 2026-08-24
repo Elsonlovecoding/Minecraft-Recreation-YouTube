@@ -308,11 +308,45 @@ export function createSmeltingSystem({ world, items }) {
     return prev;
   }
 
+  // The save pass (systems/persistence.js): slots plus the burn/progress
+  // clocks, by position — a furnace mid-smelt picks up where it left off.
+  function serialize() {
+    const out = [];
+    for (const e of furnaces.values()) {
+      out.push({
+        x: e.x, y: e.y, z: e.z,
+        slots: e.furnace.slots.map((s) => (s ? { ...s } : null)),
+        burnRemaining: e.furnace.burnRemaining,
+        burnCapacity: e.furnace.burnCapacity,
+        progress: e.furnace.progress,
+      });
+    }
+    return out;
+  }
+
+  function restore(list) {
+    for (const d of list ?? []) {
+      const key = keyOf(d.x, d.y, d.z);
+      if (furnaces.has(key)) continue;
+      const entry = { furnace: new Furnace(), x: d.x, y: d.y, z: d.z };
+      const n = Math.min(entry.furnace.slots.length, d.slots?.length ?? 0);
+      for (let i = 0; i < n; i++) {
+        entry.furnace.slots[i] = d.slots[i] ? { ...d.slots[i] } : null;
+      }
+      entry.furnace.burnRemaining = Math.max(0, d.burnRemaining || 0);
+      entry.furnace.burnCapacity = Math.max(0, d.burnCapacity || 0);
+      entry.furnace.progress = Math.max(0, d.progress || 0);
+      furnaces.set(key, entry);
+    }
+  }
+
   return {
     update,
     onBlockChanged,
     furnaceAt,
     swapDimensionState,
+    serialize,
+    restore,
     furnaces, // read-only by convention (debug/tests)
   };
 }

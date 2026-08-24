@@ -13,7 +13,12 @@ export const OVERWORLD = {
   MAX_Y: 320,
   SEA_LEVEL: 62,
   HILL_HEIGHT: 100,       // typical hill tops
-  PEAK_HEIGHT: 140,       // occasional peaks
+  PEAK_HEIGHT: 168,       // occasional peaks. Raised 140 -> 168 with the
+                          // bigger mountain ranges: the ridge amplitude was
+                          // being clipped flat at 140, which capped every
+                          // summit at the same altitude and made ranges read
+                          // as plateaus. Well under MAX_Y and under the
+                          // y=192 cloud layer, so peaks stay below cloud.
   LAVA_POOL_MAX_Y: 10,    // lava pools generate below this
   BEDROCK_Y: -64,         // solid bedrock layer
   BEDROCK_JAGGED_LAYERS: 4, // jagged bedrock for this many blocks above
@@ -225,7 +230,7 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
+  DISTANCE_CHUNKS: 32,    // chunks loaded/rendered around the player —
                           // the guaranteed radius WHEREVER the player
                           // stands (streaming re-centres every border
                           // crossing). Final request: "render 25 chunks
@@ -234,8 +239,11 @@ export const VIEW = {
                           // 5025-chunk ring took real minutes to fill
                           // after a move; 1961 chunks fills ~2.5x faster,
                           // so the promised radius is actually THERE.
-                          // (Phase 27: 30 -> 40; measured numbers for
-                          // both in the LOD note below.)
+                          // (25 -> 32 by request, 512 blocks: the LOD
+                          // tiers and the parked streamer carry the extra
+                          // ring, and the taller mountains below want the
+                          // distance to be seen from. Measured numbers for
+                          // every radius in the LOD note below.)
   FOV: 70,
   NEAR: 0.1,
   FAR: 1700,              // must clear CLOUDS.FADE_END (1400) plus slack —
@@ -258,11 +266,14 @@ export const VIEW = {
   // Measured over the full ring (node, real generator + mesher):
   //   r=25 full detail  1961 meshed   4605 draws  10.00M tris   820 MB geometry
   //   r=25 with LOD     1961 meshed   4182 draws   5.58M tris   458 MB geometry
+  //   r=32 full detail  3209 meshed   7563 draws  15.60M tris  1279 MB geometry
+  //   r=32 with LOD     3209 meshed   6432 draws   7.05M tris   578 MB geometry
   //   r=30 full detail  2821 meshed   6634 draws  14.25M tris  1168 MB geometry
   //   r=30 with LOD     2821 meshed   5908 draws   6.87M tris   563 MB geometry
   //   r=40 full detail  5025 meshed  11963 draws  25.09M tris  2058 MB geometry
   //   r=40 with LOD     5025 meshed  10327 draws  10.22M tris   838 MB geometry
-  // The shipped r=25 ring carries less than half the r=40 cost, and far
+  // The shipped r=32 ring costs -55% with the tiers on, and still less
+  // than the r=40 ring the first Phase 27 cut tried. Far
   // chunks stopped storing their 98KB light arrays on top (only
   // full-detail chunks keep them — see chunks.js).
   // Per-mesh frustum culling (three.js bounding spheres, precomputed at
@@ -293,6 +304,18 @@ export const STREAMING = {
                           // moving through unbuilt terrain visibly hitchy at
                           // 60fps; the ring fills a touch slower instead)
   UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
+  // Chunk APPEAR animation ("make the far parts smooth, like a real
+  // render"): a chunk meshed for the FIRST time beyond MIN_CHUNKS rises
+  // out of the ground over SECONDS instead of popping in whole. In normal
+  // play the frontier meshes at the ring edge, already inside full fog —
+  // this is for the moments streaming is visibly behind: after /tp, fast
+  // flight, a dimension return. Retier and edit remeshes never animate
+  // (the chunk already had a mesh), so building is never bouncy.
+  APPEAR: {
+    MIN_CHUNKS: 6,        // no animation inside this radius (player's arena)
+    DROP: 10,             // blocks the mesh starts below its true height
+    SECONDS: 0.45,        // rise duration, ease-out
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -580,6 +603,13 @@ export const TERRAIN = {
                                // (0 — not on a coastline, not beside a lake)
     MAX_RELIEF: 9,             // max height spread across the disc (open and
                                // level, not a hillside)
+    MAX_TREE_DENSITY: 0.0021,  // mean trees-per-column over the disc. Plains
+                               // average ~0.003 and the density FIELD swings
+                               // that from ~0 to 2x, so this asks for the
+                               // low end of the swing: 旷野 — OPEN
+                               // wilderness, a clearing you can see across,
+                               // not merely plains-dominant ground with a
+                               // grove standing in it.
     MAX_HEIGHT_ABOVE_SEA: 26,  // centre column must sit in the lowland band
   },
 
@@ -619,18 +649,23 @@ export const TERRAIN = {
   // Mountains come from their own region mask, not climate, so ranges read
   // as coherent chains. Ridged noise supplies the relief inside a region.
   MOUNTAINS: {
-    REGION_SCALE: 1 / 560,
+    REGION_SCALE: 1 / 640,   // longer, more coherent ranges
     REGION_OCTAVES: 2,
     // Phase 25: 0.12 -> 0.25 (mountains took a quarter of all land).
     // Phase 26: 0.25 -> 0.30 — plains must be the clear majority biome, so
     // mountains hand back another slice while still forming coherent ranges.
-    WEIGHT_START: 0.30,        // region noise where mountains begin to blend in
+    // 0.30 -> 0.22 by request ("add more mountains to make view look
+    // good"): mountains claim more land, and the slice comes out of
+    // forest and desert below rather than out of plains.
+    WEIGHT_START: 0.22,        // region noise where mountains begin to blend in
     WEIGHT_FULL: 0.60,         // region noise where mountains fully dominate
     RIDGE_SCALE: 1 / 260,
     RIDGE_OCTAVES: 3,
     RIDGE_SHARPNESS: 2.2,      // exponent on the ridge profile; higher = sharper crests
-    BASE_LIFT: 14,             // flat height bonus inside a mountain region
-    RIDGE_AMPLITUDE: 58,       // ridge height on top of the lift (hills ~100, peaks ~140)
+    BASE_LIFT: 17,             // flat height bonus inside a mountain region
+    RIDGE_AMPLITUDE: 76,       // ridge height on top of the lift — raised
+                               // with WEIGHT_START so the new ranges read as
+                               // real peaks on the skyline, not swells
   },
 
   // Per-biome height contribution (OFFSET above the continent base plus
@@ -643,15 +678,26 @@ export const TERRAIN = {
   // land: plains 55.7% / forest 17.8% / desert 10.8% / mountains 15.6% —
   // a clear plains majority with all four biomes keeping real presence.
   BIOMES: {
-    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 4, TREE_DENSITY: 0.005 },
+    // Vanilla plains are FLAT ("grassy with few terrain features, a wide
+    // open view") — HILL_AMPLITUDE 4 -> 1.8, because every extra block of
+    // hill noise puts another 1-block step in the ground, and a step shows
+    // the grass block's DIRT SIDE: that is what drew the brown ledges
+    // snaking across our grassland. Trees 0.003 -> 0.0012: vanilla plains
+    // carry the odd lone oak, not one per chunk. Then 0.0012 -> 0.0004
+    // against the real number: vanilla plains place trees with
+    // `countExtra(0, 0.05, 1)` — zero trees per chunk plus a 5% chance of
+    // one, about 0.05 trees/chunk. 0.0004 per column is 0.10/chunk, still
+    // twice vanilla so a walk finds the odd oak, but far from the one-per-
+    // chunk scatter that was closing the "wide, open view".
+    PLAINS: { BASE_WEIGHT: 0.55, OFFSET: 3, HILL_AMPLITUDE: 1.8, TREE_DENSITY: 0.0004 },
     FOREST: {
       OFFSET: 4, HILL_AMPLITUDE: 6, TREE_DENSITY: 0.08,
-      MOISTURE_START: 0.10,    // moisture where forest starts blending in
+      MOISTURE_START: 0.17,    // moisture where forest starts blending in
       MOISTURE_FULL: 0.46,     // moisture where forest weight saturates
     },
     DESERT: {
       OFFSET: 2, HILL_AMPLITUDE: 3.5,
-      HEAT_START: 0.02,        // temperature where desert starts blending in
+      HEAT_START: 0.07,        // temperature where desert starts blending in
       HEAT_FULL: 0.36,
       DRY_START: -0.32,        // below this moisture the air is fully dry
       DRY_FULL: 0.30,          // above this moisture desert weight is zero
@@ -730,6 +776,11 @@ export const TERRAIN = {
     // Underwater floors: sand in the shallows, dirt with gravel patches
     // deeper down (riverbeds sit in the shallow band, so they get the
     // sand/gravel mix the brief asks for).
+    // Sand is a LOWLAND surface: a column with real mountain influence, or
+    // one standing this far above the sea, never takes desert sand however
+    // hot and dry its climate reads ("no sand should be on mountains").
+    SAND_MAX_MOUNTAIN_WEIGHT: 0.10,
+    SAND_MAX_ABOVE_SEA: 26,
     UNDERWATER_SAND_DEPTH: 4,  // floor within this depth of sea level is sandy
     // Gravel patches on beaches and riverbeds: a low-frequency field picks
     // patch regions, a per-column hash roughens their edges.
@@ -750,7 +801,12 @@ export const TERRAIN = {
     // the rest, and STEEP_DROP 3 -> 4 stops ordinary ridged relief from
     // counting as a cliff. Measured after: 91% grass / 7.6% stone.
     STONE_LINE: {
-      HEIGHT: 128,             // mean height where slopes turn to bare stone
+      // 128 -> 108. At 128 the stone line sat only 40 blocks below the world
+      // ceiling, so a mountain wore grass almost to its cap and every steep
+      // flank showed the grass block's DIRT SIDE — the ranges read as brown
+      // cones rather than rock. 108 is 46 above sea: lower slopes stay green,
+      // the shoulders and summits are stone, which is the vanilla read.
+      HEIGHT: 108,             // mean height where slopes turn to bare stone
       JITTER: 7,               // ± blocks of noise on that line
       SCALE: 1 / 70,           // jitter field frequency
     },
@@ -772,9 +828,13 @@ export const TERRAIN = {
     // has glades and thickets instead of uniform spacing, and a second field
     // biases trunk height so groves of taller trees appear together.
     DENSITY_FIELD: {
-      SCALE: 1 / 130,          // clearings/thickets a couple hundred blocks wide
-      MIN: 0.15,               // density multiplier at the field's low end...
-      MAX: 1.85,               // ...and its high end (mean stays ~1)
+      SCALE: 1 / 175,          // clearings/thickets, now a few hundred
+                               // blocks wide — big enough to stand in
+      MIN: 0.02,               // density multiplier at the field's low end —
+                               // by request ("less tree in some place"): the
+                               // low end is now a true CLEARING, effectively
+                               // treeless, instead of merely thinner
+      MAX: 2.05,               // ...and its high end (mean stays ~1)
     },
     HEIGHT_FIELD: {
       SCALE: 1 / 90,
@@ -793,13 +853,92 @@ export const TERRAIN = {
   // flowers are rarer and cluster (a threshold field gates WHERE they can
   // appear, a hash picks the columns inside it); dead bushes speckle the
   // desert. Densities are per eligible column.
+  // Foliage colour. THE reason a real Minecraft world looks alive while a
+  // fixed-texture one looks like wallpaper: vanilla ships grass and leaves
+  // as art that gets MULTIPLIED by a colour looked up from a colormap
+  // indexed by the column's temperature and downfall, so the ground shifts
+  // continuously — yellow-green open plains, deep green wet woods, pale
+  // grey-green up a cold mountainside — with no hard edge anywhere.
+  //
+  // We already have the two climate fields the lookup wants, so this is the
+  // same rule rather than an imitation of it: bilinear blend of four corner
+  // colours over (temperature, moisture), with temperature dropping as the
+  // column rises (vanilla's altitude lapse — that is why mountain grass
+  // goes pale). The result MULTIPLIES the atlas tile, so it re-colours the
+  // texture without replacing it.
+  //
+  // Every corner is normalised so its brightest channel is exactly 1.0.
+  // That is load-bearing, not cosmetic: the mesher folds the tint into the
+  // vertex colour, which also carries per-face shade x AO, and the shader
+  // recovers the shade as max(r, g, b). Brightest-channel-1 makes that
+  // exact, and it also means a tint can only shift HUE, never brighten a
+  // face past its baked light.
+  FOLIAGE_TINT: {
+    LAPSE_PER_BLOCK: 0.011,   // temperature lost per block above sea level
+    LAPSE_MAX: 0.85,          // ...capped, so summits do not go colourless
+    // Climate is fBm in [-1, 1]; these map it to the 0..1 lookup axes.
+    TEMP_LOW: -0.45,
+    TEMP_HIGH: 0.45,
+    MOIST_LOW: -0.45,
+    MOIST_HIGH: 0.45,
+    // Corner multipliers: hot/cold x dry/wet. Taken from vanilla's own
+    // biome grass colours, each divided by its brightest channel so what
+    // survives is the HUE RELATIONSHIP between them (savanna #bfb755,
+    // forest/jungle, taiga #86b783) rather than a brightness the baked
+    // light already owns. A first pass at these was picked by eye and the
+    // corners landed so close together that plains and forest rendered
+    // rgb(61,108,44) and rgb(53,108,45) — a difference nobody could see.
+    GRASS: {
+      HOT_DRY: 0xfff471,      // savanna olive: sun-dried open grassland
+      HOT_WET: 0x8fff5e,      // deep saturated green, warm and wet
+      COLD_DRY: 0xdbffcc,     // pale washed grey-green — high bare ground
+      COLD_WET: 0xb0ffb2,     // taiga: cool green leaning blue
+    },
+    // Vanilla reads leaves from a SEPARATE colormap, which is what keeps a
+    // canopy reading as its own mass instead of ground-colour on stilts.
+    // Same corners pushed a touch darker and more saturated.
+    LEAVES: {
+      HOT_DRY: 0xffe97a,
+      HOT_WET: 0x7dff55,
+      COLD_DRY: 0xd0ffc4,
+      COLD_WET: 0x9dffb4,
+    },
+  },
+
   PLANTS: {
-    GRASS_FIELD_SCALE: 1 / 45, // patch size of the grass density field
-    // Peak per-column short-grass chance per biome (the field scales it 0..1)
-    GRASS_DENSITY: { plains: 0.60, forest: 0.45, mountains: 0.18, desert: 0 },
+    // Vanilla places plains grass with `patch_grass_plain` under a
+    // `noise_threshold_count` modifier: a noise field sampled at 1/200
+    // picks between a LOW patch count and a HIGH one (5 or 10 patches per
+    // chunk) — two levels, not a smooth ramp. That two-level rule is what
+    // gives real plains their look: mostly open sward you can see the
+    // ground through, with denser meadows where the field crosses over.
+    // Our previous smooth ramp peaked at 0.88 and laid a solid shag carpet
+    // that hid the grass block entirely, which is the main reason the
+    // plains did not read as vanilla.
+    GRASS_FIELD_SCALE: 1 / 100,     // vanilla samples its grass noise at 1/200
+    GRASS_FIELD_THRESHOLD: 0.08,    // the `noise_level` the two levels split on
+    GRASS_FIELD_BLEND: 0.14,        // ease band, so no density seam shows along
+                                    // the contour (vanilla hides its own step
+                                    // behind per-chunk patch placement)
+    // Per-column short-grass chance at each level, per biome. Halved by
+    // request ("grass not that common, not like every block, maybe half
+    // the rarity") from 0.40/0.78 etc — the sward now reads as tufts ON
+    // the ground rather than a second surface over it.
+    GRASS_DENSITY: {
+      plains: { low: 0.20, high: 0.39 },
+      forest: { low: 0.13, high: 0.26 },
+      mountains: { low: 0.04, high: 0.10 },
+      desert: { low: 0, high: 0 },
+    },
     FLOWER_FIELD_SCALE: 1 / 65,
-    FLOWER_FIELD_MIN: 0.30,    // field value where flower clusters begin
-    FLOWER_CHANCE: 0.075,      // per-column chance inside a cluster
+    FLOWER_FIELD_MIN: 0.36,    // field value where flower clusters begin —
+                               // raised from 0.30 with the chance below
+                               // (vanilla scatters flowers SPORADICALLY and
+                               // ours read as a poppy field), then eased back
+                               // to 0.36 once the grass thinned out: plains
+                               // is one of vanilla's flowerier biomes and the
+                               // blooms need to show against open ground
+    FLOWER_CHANCE: 0.045,      // per-column chance inside a cluster
     DEAD_BUSH_CHANCE: 0.012,   // per desert sand column
     // (the seed drop chance is per-block data — it lives in short grass's
     // drop table in world/plants.js, like every other drop roll)
@@ -1879,6 +2018,20 @@ export const CRAFTING = {
 // itself is inline in ui/hud.js / ui/screens.js like the other generated art
 // ---------------------------------------------------------------------------
 
+// World saving (systems/persistence.js — the save pass). Worlds are named
+// and listed like the real game; each carries its own seed (its own spawn),
+// its own mode, and a diff-only save: the world regenerates from the seed
+// and only PLAYER EDITS are stored (RLE-compressed modified chunks, all
+// three dimensions), plus the player, the clock and container contents.
+export const SAVE = {
+  VERSION: 1,                 // save-format version; a mismatched world
+                              // plays fresh from its seed rather than
+                              // risking a bad read of an old layout
+  DB_NAME: 'mc-recreation-saves',
+  AUTOSAVE_SECONDS: 20,       // background save cadence; saves also fire on
+                              // pause, on tab-hide and on page-hide
+};
+
 export const UI = {
   HOTBAR_SLOT_PX: 46,             // hotbar slot size
   HOTBAR_BOTTOM_PX: 8,            // hotbar offset from the bottom screen edge
@@ -2102,7 +2255,8 @@ export const LIGHTING = {
   // LIGHT_FALLOFF^(15-L), so level 0 bottoms out near-black, not pure black.
   LIGHT_FALLOFF: 0.8,
   TORCH_TINT: 0xffd2a0,           // warm tint on block-light (torches, glowstone)
-  NIGHT_SKY_TINT: 0xa9bef2,       // cool moonlight tint on skylight at night
+  NIGHT_SKY_TINT: 0xbccff8,       // cool moonlight tint on skylight at night
+                                  // (lifted with the night retune)
                                   // (Phase 27 follow-up: brightened toward
                                   // silver — moonlit ground should READ)
   // Held-item dynamic light (Phase 14, deliberately beyond vanilla): a torch
@@ -2142,11 +2296,21 @@ export const SKY = {
   // the view), fading over the last stretch so the 480-block edge sits at
   // ~80% haze and pop-in stays invisible.
   FOG_COLOR: 0xbcd8f5,
-  // Scaled with the view at the same fractions every retune (480 -> 640 ->
-  // the final 400): clear to ~72% of the view, the ring edge sitting at
-  // ~80% haze so pop-in stays invisible.
-  FOG_NEAR: 288,
-  FOG_FAR: 425,
+  // ("make the far and un-rendered parts smooth, like a real render.")
+  // Two rules make the world edge read as atmosphere instead of a cutoff:
+  //  1. Fog is RADIAL (render/lighting.js patches fogDepth to the true
+  //     distance). Stock three.js fogs by view-space Z, so at FOV 70 a
+  //     chunk at the CORNER of the screen carried ~37% less fog depth
+  //     than the same chunk dead ahead — turning the camera visibly
+  //     un-fogged the periphery and the ring edge popped in and out.
+  //     Radial fog is a circle around the player, exactly the shape of
+  //     the streaming ring it must hide.
+  //  2. FOG_FAR sits INSIDE the ring edge (512 blocks at r=32), not past
+  //     it: the old 544 left the outermost chunks silhouetted against
+  //     the sky at ~80% fog. Full opacity at 496 dissolves them entirely
+  //     — clear to ~69% of the view, gone at ~97%.
+  FOG_NEAR: 352,
+  FOG_FAR: 496,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
@@ -2204,15 +2368,16 @@ export const DAY_NIGHT = {
     { T: 0.5125, ZENITH: 0x3a3670, MID: 0x8a6a9a, HORIZON: 0xff9a54,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
       STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
-    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10 and the tint pushed
-    // toward silver — a full-moon night should read, not swallow the world;
-    // gameplay unchanged: night surfaces sit at effective light 5, still
-    // under the hostile-spawn gate of 7, and torches still protect at 14).
-    { T: 0.525, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
-      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+    // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10; final night retune:
+    // 10 -> 9 with the whole palette lifted a step — "not TOO dark" — a
+    // moonlit night you can walk by. Gameplay still unchanged: night
+    // surfaces sit at effective light 6, under the hostile-spawn gate of
+    // 7, and torches still protect at 14).
+    { T: 0.525, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+      BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
-    { T: 0.975, ZENITH: 0x060a18, MID: 0x0c142c, HORIZON: 0x182440,
-      BELOW: 0x0c1222, SUN_LEVEL: 0.15, SKY_DARKEN: 10, GLOW: 0,
+    { T: 0.975, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+      BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
     { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
@@ -2250,17 +2415,21 @@ export const CELESTIAL = {
                                   // to keep the old apparent diameter
   MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
-  MOON_PHASES: 8,                 // vanilla's cycle; day 0 is full moon
+  MOON_PHASES: 1,                 // final night retune ("circle moon"): the
+                                  // moon shows its full circular disc every
+                                  // night. The 8-phase pipeline is intact —
+                                  // set back to 8 for vanilla's cycle
   // Phase 27 follow-up — MOONLIGHT ("moon light should also good"). The
   // round moon disc hangs in a soft cool halo (an additive glow quad
   // behind it, the sun-glow treatment at night temperature), the sky dome
   // carries a gentle wash of light around its position, and the water
   // picks up a moon glint (main.js feeds the water uniforms the moon's
   // direction after sunset).
-  MOON_GLOW_SCALE: 3.0,           // halo quad as a multiple of the moon
-  MOON_GLOW_STRENGTH: 0.55,       // halo alpha at the moon's edge
+  MOON_GLOW_SCALE: 3.6,           // halo quad as a multiple of the moon
+  MOON_GLOW_STRENGTH: 0.78,       // halo alpha at the moon's edge ("a bit
+                                  // shiny": brighter, wider halo)
   MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
-  MOON_SKY_GLOW: 0.32,            // the dome's night wash around the moon
+  MOON_SKY_GLOW: 0.42,            // the dome's night wash around the moon
   MOON_SKY_GLOW_COLOR: 0x9db8e8,  // ...and its colour
   MOON_SKY_GLOW_BAND: 1.6,        // dome-height reach of the wash (the day
                                   // glow hugs the horizon at 0.45; the moon
@@ -2311,7 +2480,10 @@ export const CLOUDS = {
                                   // first cut put the WHOLE visible sky in
                                   // one gate cell and a low roll meant a
                                   // permanently empty sky)
-  COVER: 0.70,                    // how much of a weather system fills in
+  COVER: 0.62,                    // how much of a weather system fills in
+                                  // (0.70 -> 0.62 with the shape retune:
+                                  // separated puffs instead of one merged
+                                  // shelf)
                                   // (the reference-image retune: node
                                   // sweep holds ~52% visible / ~44% solid
                                   // with EVERY sampled vantage >= 38% —
@@ -2335,12 +2507,18 @@ export const CLOUDS = {
                                   // pushed out with VIEW.FAR 1700 so the
                                   // low stacked band of distant clouds
                                   // (the reference image's horizon) shows
-  WARP: 0.55,                      // domain-warp strength (noise units) —
-                                  // bends the sample space so puffs stop
-                                  // being round fbm blobs
-  DETAIL_SCALE: 3.1,              // erosion detail frequency, x base scale
-  EROSION: 0.34,                  // how hard detail noise eats thin edges
-                                  // (the cauliflower rim; cores keep mass)
+  WARP: 0.22,                      // domain-warp strength (noise units).
+                                  // 0.55 -> 0.22 ("shape too weird, make
+                                  // regular cloud shape"): heavy warp
+                                  // smeared puffs into ragged shelves and
+                                  // hooks; a light touch keeps them
+                                  // organic while the shapes stay the
+                                  // rounded cumulus a real sky carries
+  DETAIL_SCALE: 2.7,              // erosion detail frequency, x base scale
+  EROSION: 0.24,                  // how hard detail noise eats thin edges
+                                  // (the cauliflower rim; cores keep mass —
+                                  // eased with WARP so rims stop looking
+                                  // moth-eaten)
   // VOLUMETRIC slab (the "like real life, like shaders" pass): the colour
   // pass raymarches [HEIGHT, HEIGHT + THICKNESS] through the drifting 2D
   // field — density-as-height columns, so clouds have visible sides,
@@ -2350,8 +2528,10 @@ export const CLOUDS = {
                                   // knob; ~11 noise evals per step)
   DENSITY: 0.05,                  // extinction per block of dense cloud —
                                   // how fast a ray goes opaque inside
-  ROUND: 0.22,                    // crown falloff width (fraction of the
+  ROUND: 0.30,                    // crown falloff width (fraction of the
                                   // column's coverage): puffy vs boxy tops
+                                  // (raised with the shape retune — rounder
+                                  // domes, like fair-weather cumulus)
   BOTTOM_LIT: 0.32,               // shading at the slab base (1 at crowns)
   MAX_SPAN: 620,                  // cap on the marched path for grazing
                                   // rays (they are horizon-faded anyway)
@@ -2359,7 +2539,7 @@ export const CLOUDS = {
   SHADE_COLOR: 0xa4aec4,          // ...and its shaded underbelly (sRGB)
   SILVER: 0.85,                   // silver-lining strength on thin edges
   SILVER_POWER: 9,                // ...tightness around the sun's direction
-  NIGHT_BRIGHTNESS: 0.22,         // colour scale at deep night (1.0 at noon)
+  NIGHT_BRIGHTNESS: 0.30,         // colour scale at deep night (1.0 at noon)
   HORIZON_TINT: 0.45,             // fraction of the horizon colour mixed in
                                   // (what makes dawn clouds blush gold-pink)
   SEED: 37.73,                    // noise hash offset (clouds are weather,
@@ -2370,10 +2550,17 @@ export const CLOUDS = {
 // sphere, wheeling with the sun's orbit, alpha driven by the KEYFRAMES'
 // STARS channel so they fade in through dusk and out through dawn.
 export const STARS = {
-  COUNT: 800,                     // over the FULL sphere — roughly half are
-                                  // above the horizon at any moment of the
-                                  // wheel's turn
-  SIZE: 1.8,                      // screen pixels (no distance attenuation)
+  // Final night retune ("stars better"): TWO layers instead of one flat
+  // sheet of identical white points — a dense field of faint stars under a
+  // sparse layer of bright ones, every star carrying its own brightness
+  // and a slight colour (blue-white hot, warm-white old), which is what a
+  // real night sky actually looks like.
+  COUNT: 1500,                    // faint layer, over the FULL sphere —
+                                  // roughly half are above the horizon at
+                                  // any moment of the wheel's turn
+  SIZE: 1.6,                      // faint-layer screen pixels
+  BRIGHT_COUNT: 240,              // the standouts...
+  BRIGHT_SIZE: 3.0,               // ...bigger and unmistakable
   RADIUS: 850,                    // just inside the sky dome
   SEED: 0x57a125,
 };
@@ -2577,6 +2764,14 @@ export const VISUAL = {
   WIND: {
     AMPLITUDE: 0.09,         // peak displacement in blocks at weight 1
     SPEED: 1.0,              // wind clock rate (1 = the shipped feel)
+    LEAF_WEIGHT: 0.55,       // leaves sway at this fraction of a plant
+                             // tip. A leaf CUBE is rigid, so whatever it
+                             // moves opens a sliver against the static
+                             // trunk (or ground) it abuts, and distant
+                             // canopies show those slivers as bright
+                             // hairlines of sky. 0.34 keeps the canopy
+                             // alive while holding the gap under a pixel
+                             // at the distances the effect reads.
   },
   // DIRECTIONAL sun/moon modelling on block faces ("make the entire game
   // look like shader"): the chunk shader derives each flat face's normal
@@ -2602,6 +2797,25 @@ export const VISUAL = {
                              // minus typical terrain height)
     MIN_SUN_Y: 0.35,         // clamp on the slant divisor so a low sun
                              // never smears shadows kilometres sideways
+  },
+  // Per-block brightness jitter (final pass): every block face is scaled by
+  // a hash of its block coordinate, so a big stone or dirt slope stops
+  // reading as one 16px tile stamped in a grid — the "wallpaper" look.
+  // Small on purpose: variety you feel, not a checkerboard you see. Water
+  // opts out (a lake is ONE surface, and per-block patches would shatter
+  // its reflection).
+  BLOCK_JITTER: 0.045,
+  // Dawn valley mist (final pass): during a window around sunrise (and a
+  // fainter one at dusk) low ground multiplies its RADIAL fog depth up, so
+  // valleys and water flats drown in horizon-coloured haze while hilltops
+  // stand clear of it — the classic shader-pack morning. Costs one uniform
+  // and two vertex-shader lines.
+  MIST: {
+    STRENGTH: 1.1,           // extra fog-depth multiplier at ground level
+    TOP_ABOVE_SEA: 16,       // blocks above sea level where mist thins to 0
+    DAWN_WIDTH: 0.055,       // day-fraction half-width of the sunrise window
+    DUSK_WIDTH: 0.04,        // ...and the dusk window
+    DUSK_FACTOR: 0.45,       // dusk mist strength relative to dawn
   },
 };
 
@@ -2634,7 +2848,19 @@ export const ATLAS = {
   TILES_PER_ROW: 16,
   TILE_PIXELS: 16,
   // Tiny UV inset to stop neighbouring tiles bleeding at face edges
-  UV_INSET: 1 / 2048,
+  UV_INSET: 1 / 512,              // HALF A TEXEL of the 256px atlas — the
+                                  // textbook inset, so every sample lands on
+                                  // a texel CENTRE instead of a tile edge.
+                                  // The old 1/2048 was an eighth of a texel:
+                                  // fine at full resolution, but at the
+                                  // coarse mip levels (where a 16px tile is
+                                  // 2x2 texels, then 1) it sat so close to
+                                  // the boundary that rounding sampled the
+                                  // NEIGHBOURING tile. Distant grass tufts
+                                  // (atlas 65, next to pale deepslate ore)
+                                  // picked up that pale colour and drew as
+                                  // bright white dashes across the field —
+                                  // the "white lines" report.
 };
 
 // ---------------------------------------------------------------------------
@@ -2939,6 +3165,16 @@ export const PARTICLES = {
   // long-lived specks that catch the light where a cave opens to the sky.
   DUST: { SIZE: 0.035, SINK: 0.16, DRIFT: 0.05, LIFE: [2.5, 5.0],
           COLOR: 0xd8ccae },
+  // The final liveliness pass — OUTDOOR ambience (systems/ambience.js
+  // spawns all three off the same random display tick that finds torches):
+  // leaves flutter down from canopies, seed motes ride the daylight over
+  // grass, fireflies wander above it at night.
+  LEAF: { SIZE: 0.085, LIFE: [3.0, 6.0], DRIFT: 0.22, SINK: 0.55,
+          SPIN: 2.2 },
+  SEED_MOTE: { SIZE: 0.032, LIFE: [4.0, 8.0], DRIFT: 0.30, RISE: 0.05,
+               COLOR: 0xf5eecf },
+  FIREFLY: { SIZE: 0.045, LIFE: [5.0, 9.0], DRIFT: 0.35,
+             COLOR: 0xd8ff6e },
 
   // The random "display tick" that finds torches, lava, glowstone and end
   // portals near the player (systems/ambience.js — vanilla's randomDisplayTick).
@@ -2962,6 +3198,14 @@ export const PARTICLES = {
     DUST_CHANCE: 0.05,            // per eligible air-cell hit
     DUST_MIN_SKY: 6,              // baked sky light that counts as a shaft
     DUST_MIN_DEPTH: 5,            // cell at least this far under the surface
+    // The outdoor ambience (final pass). Chances are per random-tick hit on
+    // the eligible block, so density self-scales with how much canopy or
+    // open grass is actually around the player.
+    LEAF_CHANCE: 0.06,            // per leaf-block hit with air below
+    SEED_CHANCE: 0.030,           // per grass-top hit, daylight
+    FIREFLY_CHANCE: 0.05,         // per grass-top hit, night
+    SEED_MIN_SUN: 0.55,           // sunLevel above which seeds drift
+    FIREFLY_MAX_SUN: 0.12,        // sunLevel below which fireflies wake
   },
 };
 
@@ -2976,6 +3220,23 @@ export const PARTICLES = {
 
 export const AUDIO = {
   MASTER_VOLUME: 0.55,            // the whole game's output level
+  // Generative music (systems/music.js — the final pass). ORIGINAL music in
+  // the peaceful-Minecraft spirit, synthesised like every other sound in
+  // this project: a slow maj7 chord pad underneath, a sparse felt-piano
+  // melody wandering the C major pentatonic on top, long silences between
+  // phrases. Nothing is a recording and nothing loops — the piece is a
+  // random walk with musical weights, so it never repeats and never ends.
+  MUSIC: {
+    VOLUME: 0.32,                 // music bus gain (under the master/compressor)
+    PAD_LEVEL: 0.16,              // chord pad level within the music bus
+    NOTE_LEVEL: 0.42,             // melody level within the music bus
+    CHORD_SECONDS: [11, 19],      // how long one chord breathes
+    NOTE_GAP: [1.4, 4.5],         // seconds between melody notes in a phrase
+    PHRASE_NOTES: [3, 7],         // notes per phrase...
+    PHRASE_REST: [5, 13],         // ...and the silence after one
+    NIGHT_SPARSE: 1.7,            // night: gaps and rests stretch by this
+    NIGHT_LEVEL: 0.7,             // ...and the whole bus softens to this
+  },
   MAX_VOICES: 24,                 // concurrent one-shots; the rest are dropped
   VOICE_MIN_GAP: 0.012,           // seconds between two copies of one sound
   HEARING_RANGE: 26,              // blocks: silence beyond this

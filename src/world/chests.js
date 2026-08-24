@@ -303,11 +303,40 @@ export function createChests({ world, scene, items, player, lootFor }) {
     return prev;
   }
 
+  // The save pass (systems/persistence.js): contents by position. Restore
+  // recreates each chest's state (mesh included — the visibility follow in
+  // update() hides ones whose chunks aren't loaded) and fills its slots;
+  // an existing state wins, so a restore can never clobber live play.
+  function serialize() {
+    const out = [];
+    for (const s of chests.values()) {
+      out.push({
+        x: s.x, y: s.y, z: s.z, facing: s.facing,
+        slots: s.container.slots.map((c) => (c ? { ...c } : null)),
+      });
+    }
+    return out;
+  }
+
+  function restore(list) {
+    for (const d of list ?? []) {
+      if (chests.has(keyOf(d.x, d.y, d.z))) continue;
+      const s = createState(d.x, d.y, d.z, d.facing);
+      const n = Math.min(s.container.slots.length, d.slots?.length ?? 0);
+      for (let i = 0; i < n; i++) {
+        s.container.slots[i] = d.slots[i] ? { ...d.slots[i] } : null;
+      }
+      s.container._emit();
+    }
+  }
+
   return {
     update,
     onBlockChanged,
     chestAt,
     swapDimensionState,
+    serialize,
+    restore,
     chests, // read-only by convention (debug/tests)
   };
 }

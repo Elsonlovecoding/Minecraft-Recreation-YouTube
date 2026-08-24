@@ -64,7 +64,7 @@ function bareStoneAt(gen, x, z, height) {
 // Phase 24 rewrote the rules: sand only where water actually is (beaches,
 // shallow floors) or in deserts; gravel patches on beaches and riverbeds;
 // mountain stone by stone-line and steepness instead of one fixed height.
-export function surfaceLayersFor(gen, x, z, surfaceBiome, height) {
+export function surfaceLayersFor(gen, x, z, surfaceBiome, height, weights) {
   const S = TERRAIN.SURFACE;
   const sea = OVERWORLD.SEA_LEVEL;
 
@@ -85,7 +85,16 @@ export function surfaceLayersFor(gen, x, z, surfaceBiome, height) {
     };
   }
 
-  if (surfaceBiome === 'desert') {
+  // Mountains come from their own region mask, so a column can be BOTH
+  // mountain-shaped and desert-climate. The desert rule used to fire on the
+  // biome NAME alone, which painted sand up mountainsides and over summits
+  // ("no sand should be on mountains"). Sand is lowland now: real mountain
+  // influence, or simply standing well above the sea, disqualifies it and
+  // the column falls through to the mountain/grass rules below.
+  const mountainous = surfaceBiome === 'mountains'
+    || (weights && weights.mountains >= S.SAND_MAX_MOUNTAIN_WEIGHT)
+    || height > sea + S.SAND_MAX_ABOVE_SEA;
+  if (surfaceBiome === 'desert' && !mountainous) {
     return {
       top: BLOCK.SAND, filler: BLOCK.SAND, fillerDepth: S.SAND_DEPTH - 1,
       sub: BLOCK.SANDSTONE, subDepth: S.SANDSTONE_DEPTH,
@@ -93,6 +102,7 @@ export function surfaceLayersFor(gen, x, z, surfaceBiome, height) {
   }
 
   // Beaches: near-sea columns with real water in reach, gravel-patched.
+  // (Already altitude-bounded by MAX_ABOVE_SEA, so this never climbs.)
   if (height <= sea + S.BEACH.MAX_ABOVE_SEA && nearWater(gen, x, z)) {
     return {
       top: gravelPatchAt(gen, x, z) ? BLOCK.GRAVEL : BLOCK.SAND,
@@ -101,7 +111,9 @@ export function surfaceLayersFor(gen, x, z, surfaceBiome, height) {
     };
   }
 
-  if (surfaceBiome === 'mountains' && bareStoneAt(gen, x, z, height)) {
+  // High ground bares its stone whatever the climate says — a desert
+  // mountain is a STONE mountain, not a sand dune in the sky.
+  if (mountainous && bareStoneAt(gen, x, z, height)) {
     return { top: BLOCK.STONE, filler: BLOCK.STONE, fillerDepth: 0, sub: BLOCK.STONE, subDepth: 0 };
   }
 
