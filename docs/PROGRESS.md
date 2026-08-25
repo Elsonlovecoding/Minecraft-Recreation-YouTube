@@ -312,6 +312,27 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**BUG: the world stalled at 1-2 chunks on real hardware** (player report:
+"the render is very low, like 1-2 chunks... is this a wifi problem or a
+bug?"). A bug — and an old one, latent for phases: wifi is irrelevant
+(generation is pure local CPU after page load). An underground spring near
+the spawn pours water into a cave network; every water tick dirties the
+same near chunks; the streamer's nearest-first scan REMESHED those dirty
+chunks first and the remesh ate the whole 6ms frame budget — so ring
+GENERATION never ran, every frame, for as long as the water flowed. The
+world sat at the prebuild radius forever. Paused, fluids stop ticking and
+the ring grew — the tell that found it. No harness ever saw it because
+they pump hundreds of streaming passes per frame, brute-forcing past the
+starvation; watching the REAL rAF loop for 30 seconds showed 14 passes,
+17 remeshes, 0 generations. Fix (world.js _streamPass): remeshes of
+EXISTING meshes are upkeep, capped at STREAMING.DIRTY_REMESH_PER_PASS
+(1) — a player's own edit still remeshes the same frame since
+nearest-first puts it in front — and generation is GUARANTEED: the first
+growth task of a pass ignores the budget, so every pass grows the ring by
+at least one chunk no matter what upkeep renews itself. Measured under
+the real loop: stuck at 33 meshed for 30s before; 32 -> 91 and climbing
+after, save suite still 17/17, zero console errors.
+
 **WORLD SAVING — named worlds, like the real game** ("everytime I start
 localhost it saves progress... I can choose to start worlds and name them
 ... can have diff spawn"): the biggest missing piece of the replica, built

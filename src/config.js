@@ -304,6 +304,15 @@ export const STREAMING = {
                           // moving through unbuilt terrain visibly hitchy at
                           // 60fps; the ring fills a touch slower instead)
   UNLOAD_MARGIN: 1,       // hysteresis: unload this many chunks beyond the load ring
+  // The streaming-starvation fix (see world.js _streamPass): remeshes of
+  // EXISTING meshes are upkeep, capped per pass — an underground spring's
+  // water ticks used to dirty the same near chunks every frame, the
+  // nearest-first scan remeshed them first, and ring GENERATION never ran:
+  // the world sat at the prebuild radius ("render distance is 1-2 chunks")
+  // for as long as the water flowed. With the cap, a player's own edit
+  // still remeshes the same frame (nearest-first puts it in front), and
+  // every pass is guaranteed to GROW the ring by at least one chunk.
+  DIRTY_REMESH_PER_PASS: 1,
   // Chunk APPEAR animation ("make the far parts smooth, like a real
   // render"): a chunk meshed for the FIRST time beyond MIN_CHUNKS rises
   // out of the ground over SECONDS instead of popping in whole. In normal
