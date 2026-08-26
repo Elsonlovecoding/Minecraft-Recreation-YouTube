@@ -24,7 +24,7 @@
 import * as THREE from 'three';
 import {
   PLAYER, INTERACTION, RENDER, TOOL_TIERS, WRONG_TIER_SPEED_MULTIPLIER,
-  STATS, MOBS, SHIELD, AUDIO,
+  STATS, MOBS, SHIELD, AUDIO, ATLAS,
 } from '../config.js';
 import { BLOCK, blockDef, blockIdByName, PLANTABLE } from '../world/blocks.js';
 import { consumableValue, armourSlotIndex } from './inventory.js';
@@ -148,15 +148,42 @@ export function miningPlan(def, heldItemName) {
 // alpha 1 and the multiply-with-alpha blend reduces to dst * src.rgb, the
 // authentic darken. SRGBColorSpace keeps the texel values exact through the
 // output encode.
+// ...softened at load (config INTERACTION.CRACK_LIGHT_SOFTEN): the art's
+// lighter chip-speckle texels keep only part of their darkening, so the
+// overlay reads as cracks on the block rather than a grey stain over it.
+// Each stage renders through a canvas so the texels can be rewritten; the
+// canvas starts transparent, which the alphaTest discards, so the frames
+// before a PNG arrives simply show no overlay.
 function loadCrackTextures(stages) {
-  const loader = new THREE.TextureLoader();
   const textures = [];
   for (let i = 0; i < stages; i++) {
-    const texture = loader.load(`${INTERACTION.DESTROY_STAGE_PATH}${i}.png`);
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
     texture.generateMipmaps = false;
     texture.colorSpace = THREE.SRGBColorSpace;
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const px = data.data;
+      for (let p = 0; p < px.length; p += 4) {
+        if (px[p + 3] < 128) continue;                    // background: discarded anyway
+        if (px[p] < INTERACTION.CRACK_DARK_THRESHOLD) continue; // main lines: full depth
+        for (let c = 0; c < 3; c++) {
+          px[p + c] = Math.round(255 - (255 - px[p + c]) * INTERACTION.CRACK_LIGHT_SOFTEN);
+        }
+      }
+      ctx.putImageData(data, 0, 0);
+      texture.needsUpdate = true;
+    };
+    img.src = `${INTERACTION.DESTROY_STAGE_PATH}${i}.png`;
     textures.push(texture);
   }
   return textures;
@@ -307,8 +334,27 @@ export function createInteraction({
   // overlay off the face at grazing views — the Phase 12 one-pixel-offset
   // fix). polygonOffset pulls the crack's depth in front of the coplanar
   // face without moving any fragment on screen.
+  // The block face samples its atlas tile with ATLAS.UV_INSET (the
+  // white-line fix): half a texel is trimmed from every tile edge and the
+  // remaining 15-texel band stretches across the face — the block's pixel
+  // grid is slightly SQUEEZED. The crack overlay must squeeze identically
+  // or the two grids drift visibly toward the face edges ("the pixels of
+  // the breaking thing are off"): its UVs get the same tile-relative
+  // inset, texel-aligning the crack to the texture under it.
+  const crackGeometry = new THREE.BoxGeometry(1, 1, 1);
+  {
+    const inset = ATLAS.UV_INSET * ATLAS.TILES_PER_ROW; // atlas- -> tile-relative
+    const uv = crackGeometry.attributes.uv;
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(
+        i,
+        inset + uv.getX(i) * (1 - 2 * inset),
+        inset + uv.getY(i) * (1 - 2 * inset),
+      );
+    }
+  }
   const crackMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
+    crackGeometry,
     new THREE.MeshBasicMaterial({
       map: crackTextures[0],
       transparent: true,

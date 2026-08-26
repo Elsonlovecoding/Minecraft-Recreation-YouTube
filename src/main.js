@@ -595,6 +595,7 @@ async function init() {
   window.__items = items;
   window.__interaction = interaction;
   window.__inventory = inventory;
+  window.__interaction = interaction;
   window.__falling = falling;
   window.__fluids = fluids;
   window.__mobs = mobs;
@@ -609,6 +610,7 @@ async function init() {
   window.__persistence = persistence; // save-on-demand + stats (harness)
   window.__worldMeta = worldMeta;
   window.__inventory = inventory;
+  window.__interaction = interaction;
   window.__ambience = ambience;
   window.__audio = audio;
   window.__chests = chests;

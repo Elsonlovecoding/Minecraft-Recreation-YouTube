@@ -2175,6 +2175,13 @@ export const INTERACTION = {
   // coplanar face without moving a single fragment on screen.
   CRACK_POLYGON_OFFSET_FACTOR: -1,
   CRACK_POLYGON_OFFSET_UNITS: -2,
+  // The crack art carries exactly two greys: 61 (the main crack lines) and
+  // 155 (the lighter chip speckle around them). Multiply-blended, 155 was
+  // still a 39% darkening — "make the less darker parts less darker" — so
+  // texels lighter than the threshold keep only SOFTEN of their darkness
+  // at load (155 -> 205: a 20% darkening; the main lines stay full depth).
+  CRACK_LIGHT_SOFTEN: 0.5,
+  CRACK_DARK_THRESHOLD: 108,       // below = a main crack line, untouched
   DESTROY_STAGE_PATH: 'assets/destroy/destroy_stage_', // real Minecraft crack
                                   // textures, `${PATH}${stage}.png`, 10 stages
   HAND: {
