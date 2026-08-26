@@ -312,6 +312,25 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**CRACK OVERLAY POLISH** ("the pixel of the breaking thing is kind of
+off compared to the texture of the block; make the less darker parts less
+darker"):
+- The misalignment was the ATLAS.UV_INSET interaction: block faces trim
+  half a texel from every tile edge (the white-line fix) and stretch the
+  remaining band across the face — a slightly SQUEEZED pixel grid — while
+  the crack cube mapped its texture edge-to-edge. The crack geometry's
+  UVs now take the same tile-relative inset, so the two grids squeeze
+  identically: one crack texel sits exactly on one block texel, verified
+  in a zoomed mid-break capture on sandstone.
+- The destroy-stage art carries exactly two greys: 61 (main crack lines,
+  a 76% multiply-darkening) and 155 (the chip speckle, still 39%). The
+  speckle was the complaint — crack textures now load through a canvas
+  that keeps texels darker than CRACK_DARK_THRESHOLD at full depth and
+  scales lighter texels' darkness by CRACK_LIGHT_SOFTEN (155 -> 205, a
+  20% darkening): cracks on the block, not a grey stain over it.
+- interaction.js's existing debugSetMouse scaffolding drove the headless
+  verification (survival mining to breakProgress 0.41, zero errors).
+
 **IMMEDIATE WORLD LOAD** ("The render is so slow! I want immediately 30
 chunks... 25 chunks is also okay. But immediate load"): the world no
 longer trickles in around the player — it is COMPLETE the moment play
