@@ -314,6 +314,8 @@ export class World {
     // is known finished and re-checking it is pure waste (at r=40 the ring
     // is 6889 offsets; walking them all every frame was itself a cost).
     let retiers = VIEW.LOD.RETIER_PER_PASS;
+    let dirtyLeft = STREAMING.DIRTY_REMESH_PER_PASS;
+    let grew = false; // did this pass generate or first-mesh a chunk?
     let firstIncomplete = -1;
     const offsets = this._offsets;
     for (let i = this._scanFrom; i < offsets.length; i++) {
@@ -324,11 +326,17 @@ export class World {
       if (!chunk) {
         if (Math.max(Math.abs(o.dx), Math.abs(o.dz)) > genR) continue;
         if (firstIncomplete < 0) firstIncomplete = i;
-        if (performance.now() - t0 >= budgetMs) {
+        // GROWTH IS GUARANTEED: generation ignores the budget until the
+        // pass has grown the ring at least once (see the starvation note
+        // above the upkeep cap below) — one over-budget chunk is a few
+        // milliseconds, and it is the difference between a world that
+        // always expands and one that can stall at the prebuild radius.
+        if (grew && performance.now() - t0 >= budgetMs) {
           this._scanFrom = firstIncomplete;
           return;
         }
         this.getChunk(cx, cz); // generates; meshing happens on a later pass
+        grew = true;
         continue;
       }
       // The reduced tier is only meaningful under an open sky: its
@@ -345,20 +353,42 @@ export class World {
       if (!wantsMesh) continue;
       if (firstIncomplete < 0) firstIncomplete = i;
       // A tier change with nothing else wrong is cosmetic upkeep — capped
-      // per pass; missing and dirty meshes keep the whole budget.
+      // per pass; missing meshes keep the whole budget.
       if (lodStale && chunk.mesh && !chunk.dirty) {
         if (retiers <= 0) continue;
         retiers--;
       }
+      // DIRTY REMESHES ARE CAPPED TOO (the streaming-starvation fix). A
+      // remesh of an EXISTING mesh is upkeep — and upkeep that renews
+      // itself every frame used to eat the entire budget forever: an
+      // underground spring near the spawn ticks water, every tick dirties
+      // the same near chunks, the nearest-first scan remeshes them first,
+      // and generation of the ring beyond NEVER ran — the world sat at
+      // the prebuild radius for as long as the water flowed, which read
+      // as "render distance is 1-2 chunks" on real hardware. (Harnesses
+      // never saw it: they pump hundreds of passes per frame.) Capped,
+      // the same pass still remeshes the chunk a player just edited —
+      // nearest-first puts it in front — but a self-renewing fluid can
+      // only claim DIRTY_REMESH_PER_PASS slots before generation runs.
+      const upkeep = !!chunk.mesh;
+      if (upkeep && chunk.dirty) {
+        if (dirtyLeft <= 0) continue;
+      }
       if (!this._neighborsLoaded(cx, cz)) continue;
-      if (performance.now() - t0 >= budgetMs) {
+      if (performance.now() - t0 >= budgetMs && (upkeep || grew)) {
         this._scanFrom = firstIncomplete;
         return;
       }
+      const wasDirty = chunk.dirty;
       // FIRST-ever mesh beyond the appear radius rises in (the "real
       // render" smoothness); retier and edit remeshes (chunk.mesh set)
       // swap in place so building is never bouncy.
       this._remesh(chunk, lod, !chunk.mesh && o.d2 > appearR2);
+      if (upkeep) {
+        if (wasDirty) dirtyLeft--;
+      } else {
+        grew = true; // a brand-new mesh counts as ring growth
+      }
     }
     // Scanned to the end of the ring: park on the first thing still
     // unfinished (a capped retier, a chunk waiting on neighbours), or go
