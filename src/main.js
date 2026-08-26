@@ -57,7 +57,7 @@ import { createCombat, rayAABB } from './systems/combat.js';
 import { createAmbience } from './systems/ambience.js';
 import { createMusic } from './systems/music.js';
 import { createPersistence } from './systems/persistence.js';
-import { showWorldSelect } from './ui/world_select.js';
+import { showWorldSelect, showLoadingScreen } from './ui/world_select.js';
 import { audio } from './systems/audio.js';
 import { particles } from './render/particles.js';
 
@@ -548,9 +548,31 @@ async function init() {
 
   const buildStart = performance.now();
   world.prebuild(camera.position);
+  // THE LOADING SCREEN ("immediate load"): build the ENTIRE view ring at
+  // full CPU speed behind a progress bar, the real game's "Generating
+  // world" moment — the player spawns into a COMPLETE world instead of
+  // watching chunks trickle in. ~45ms slices per animation frame keep the
+  // bar moving while using ~90% of the CPU; a hard 3-minute cap means a
+  // stuck fill degrades to the old streaming behaviour instead of
+  // trapping the player at the bar.
+  const loading = showLoadingScreen(worldMeta.name);
+  await new Promise((resolve) => {
+    const step = () => {
+      const st = world.fillStep(camera.position, 45);
+      loading.setProgress(st.meshed, st.target);
+      if (st.idle || st.meshed >= st.target
+          || performance.now() - buildStart > 180000) {
+        loading.done();
+        resolve();
+      } else {
+        requestAnimationFrame(step);
+      }
+    };
+    requestAnimationFrame(step);
+  });
   console.log(
-    `[world] prebuilt ${world.streamStats().meshed} chunk meshes in ` +
-    `${(performance.now() - buildStart).toFixed(0)}ms`,
+    `[world] built ${world.streamStats().meshed} chunk meshes in ` +
+    `${((performance.now() - buildStart) / 1000).toFixed(1)}s`,
   );
 
   // (Phase 25 removed the TEMPORARY spawn test chests and the TEST_CHEST

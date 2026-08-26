@@ -312,6 +312,34 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**IMMEDIATE WORLD LOAD** ("The render is so slow! I want immediately 30
+chunks... 25 chunks is also okay. But immediate load"): the world no
+longer trickles in around the player — it is COMPLETE the moment play
+begins.
+- **A real loading screen** (ui/world_select.js showLoadingScreen +
+  main.js): choosing a world now shows "Generating world — N%" and builds
+  the ENTIRE view ring at full CPU speed (~45ms slices per animation
+  frame keep the bar moving at ~90% CPU use) before the player spawns.
+  The bar is honest — meshed chunks over the ring's true cell count — and
+  a 3-minute hard cap degrades a stuck fill to streaming rather than
+  trapping the player. Verified: 1961/1961 chunks at the first playable
+  frame.
+- **View radius 32 -> 25** (explicitly approved): 1961 chunks instead of
+  4489 makes the bar 2.3x shorter and every frame after lighter. Fog
+  rescaled at the same fractions (275/388 against the 400-block ring,
+  HAZE_FAR 335).
+- **Catch-up streaming** (STREAMING.CATCHUP_BUDGET_MS 24): a mostly-
+  missing ring — a /tp, a first Nether entry — streams at 4x budget until
+  RING_FULL_FRACTION (90%) complete, then drops back to the gentle 6ms.
+- **A real data-loss bug found by the change**: the autosave could still
+  be committing when another save request arrived (the loading screen
+  made the overlap routine), and the old `if (saving) return false` guard
+  silently DROPPED the request — edits made between the running save's
+  snapshot and its commit missed the disk. Saves now SERIALIZE through a
+  promise chain: a request during a commit runs after it with a fresh
+  snapshot, and every caller's promise resolves only when a save
+  containing their state has committed. Save suite back to 17/17.
+
 **BUG: the world stalled at 1-2 chunks on real hardware** (player report:
 "the render is very low, like 1-2 chunks... is this a wifi problem or a
 bug?"). A bug — and an old one, latent for phases: wifi is irrelevant

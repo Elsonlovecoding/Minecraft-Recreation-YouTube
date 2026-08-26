@@ -215,3 +215,56 @@ export function showWorldSelect({ saves }) {
 
   return choice;
 }
+
+// The LOADING SCREEN ("immediate load"): shown the moment a world is
+// chosen, while main.js builds the ENTIRE view ring at full CPU speed —
+// the real game's "Generating world" moment. The bar is honest: its
+// fraction is meshed chunks over the ring's true cell count.
+export function showLoadingScreen(worldName) {
+  const root = document.createElement('div');
+  root.id = 'world-loading';
+  root.innerHTML = `
+    <style>
+      #world-loading {
+        position: fixed; inset: 0; z-index: 29; display: flex;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: linear-gradient(180deg, rgba(8, 12, 22, 0.96), rgba(4, 6, 12, 0.98));
+        font-family: monospace; user-select: none;
+      }
+      #world-loading h2 {
+        color: #fff; font: bold 26px/1 monospace; margin: 0 0 8px;
+        text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.65);
+      }
+      #wl-sub { color: #c8c8c8; font-size: 13px; margin: 0 0 26px; }
+      #wl-bar-frame {
+        width: 420px; height: 18px; border: 2px solid #000;
+        background: #1a1a1a; box-shadow: 0 0 0 2px #4a4a4a;
+      }
+      #wl-bar {
+        height: 100%; width: 0%; background: #3fb950;
+        transition: width 0.15s linear;
+      }
+      #wl-pct { color: #9a9a9a; font-size: 12px; margin-top: 10px; }
+    </style>
+    <h2>Generating world</h2>
+    <p id="wl-sub"></p>
+    <div id="wl-bar-frame"><div id="wl-bar"></div></div>
+    <div id="wl-pct">0%</div>
+  `;
+  root.querySelector('#wl-sub').textContent = worldName;
+  document.body.appendChild(root);
+  document.body.classList.add('mc-worldselect-open'); // keeps the HUD hidden
+  const bar = root.querySelector('#wl-bar');
+  const pct = root.querySelector('#wl-pct');
+  return {
+    setProgress(meshed, target) {
+      const f = Math.min(1, meshed / Math.max(1, target));
+      bar.style.width = (f * 100).toFixed(1) + '%';
+      pct.textContent = `${(f * 100).toFixed(0)}% — ${meshed} / ${target} chunks`;
+    },
+    done() {
+      root.remove();
+      document.body.classList.remove('mc-worldselect-open');
+    },
+  };
+}

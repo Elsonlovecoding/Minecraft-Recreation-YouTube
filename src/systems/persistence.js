@@ -331,8 +331,7 @@ export function createPersistence() {
       return rows;
     }
 
-    async function save() {
-      if (saving) return false; // one in flight at a time
+    async function doSave() {
       saving = true;
       try {
         record.state = snapshotState();
@@ -350,6 +349,20 @@ export function createPersistence() {
       } finally {
         saving = false;
       }
+    }
+
+    // Saves SERIALIZE, never drop: a save requested while another is in
+    // flight runs after it, with a FRESH snapshot — the earlier version
+    // returned false when busy, and a caller's edits made between the
+    // running save's snapshot and its commit silently missed the disk
+    // (the loading screen made this real: the 20s autosave could still be
+    // committing when a pause-save or tab-hide save arrived). The chain
+    // never rejects — doSave reports failure through its return value.
+    let chain = Promise.resolve(true);
+    function save() {
+      const p = chain.then(doSave);
+      chain = p.catch(() => false);
+      return p;
     }
 
     // Autosave: the interval, the pause edge, and the two leave-the-tab
