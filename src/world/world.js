@@ -38,6 +38,10 @@ export class World {
       }
     }
     this._offsets.sort((a, b) => a.d2 - b.d2);
+    // How many cells a COMPLETE ring holds — the loading screen's 100% and
+    // the catch-up budget's yardstick.
+    this._ringTarget = this._offsets
+      .filter((o) => o.d2 <= VIEW.DISTANCE_CHUNKS * VIEW.DISTANCE_CHUNKS).length;
     // Phase 27 — the streaming scan itself must not cost a frame anything
     // once the ring is built. At r=40 the candidate list is 6889 offsets,
     // and walking it every frame (a string-keyed Map lookup each) is real
@@ -282,7 +286,31 @@ export class World {
     // Phase 27: a built, clean ring costs the frame NOTHING — the last
     // full pass found no work and nothing has changed since.
     if (this._streamIdle) return;
-    this._streamPass(pcx, pcz, STREAMING.FRAME_BUDGET_MS, VIEW.DISTANCE_CHUNKS);
+    // CATCH-UP (config STREAMING): a mostly-missing ring — a fresh
+    // dimension, a /tp — streams at a fat budget so the world reassembles
+    // in seconds; a mostly-complete ring streams gently so play never
+    // hitches. The INITIAL load never gets here at all: the loading
+    // screen builds the whole ring through fillStep before spawn.
+    const budget = this.meshedCount < this._ringTarget * STREAMING.RING_FULL_FRACTION
+      ? STREAMING.CATCHUP_BUDGET_MS
+      : STREAMING.FRAME_BUDGET_MS;
+    this._streamPass(pcx, pcz, budget, VIEW.DISTANCE_CHUNKS);
+  }
+
+  // The loading screen's pump (main.js): one big budgeted slice of ring
+  // building, no frame-niceness — the player is watching a progress bar,
+  // not a world. Returns enough to draw the bar and decide completion.
+  fillStep(pos, budgetMs) {
+    const pcx = Math.floor(pos.x / SIZE);
+    const pcz = Math.floor(pos.z / SIZE);
+    this._pcx = pcx;
+    this._pcz = pcz;
+    this._streamPass(pcx, pcz, budgetMs, VIEW.DISTANCE_CHUNKS);
+    return {
+      meshed: this.meshedCount,
+      target: this._ringTarget,
+      idle: this._streamIdle,
+    };
   }
 
   // One pass over the candidate ring, nearest first. Cheap checks are free;

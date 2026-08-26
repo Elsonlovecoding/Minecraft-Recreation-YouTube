@@ -230,7 +230,14 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 32,    // chunks loaded/rendered around the player —
+  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
+                          // 32 -> 25 with the LOADING SCREEN ("immediately
+                          // 30 chunks... 25 is also okay. But immediate
+                          // load"): the whole ring now builds behind a
+                          // progress bar BEFORE the player spawns, and
+                          // 1961 chunks make that bar 2.3x shorter than
+                          // 4489 would — the world is complete the moment
+                          // play begins, which is what "immediate" means.
                           // the guaranteed radius WHEREVER the player
                           // stands (streaming re-centres every border
                           // crossing). Final request: "render 25 chunks
@@ -2314,12 +2321,14 @@ export const SKY = {
   //     un-fogged the periphery and the ring edge popped in and out.
   //     Radial fog is a circle around the player, exactly the shape of
   //     the streaming ring it must hide.
-  //  2. FOG_FAR sits INSIDE the ring edge (512 blocks at r=32), not past
-  //     it: the old 544 left the outermost chunks silhouetted against
-  //     the sky at ~80% fog. Full opacity at 496 dissolves them entirely
-  //     — clear to ~69% of the view, gone at ~97%.
-  FOG_NEAR: 352,
-  FOG_FAR: 496,
+  //  2. FOG_FAR sits INSIDE the ring edge (400 blocks at r=25), not past
+  //     it: outermost chunks silhouetted against the sky read as a hard
+  //     cutoff. Full opacity at ~97% of the ring dissolves them entirely
+  //     — clear to ~69% of the view, gone before the geometry ends.
+  //     (Rescaled with the r=32 -> 25 loading-screen retune, the same
+  //     fractions as every retune.)
+  FOG_NEAR: 275,
+  FOG_FAR: 388,
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
@@ -2327,7 +2336,7 @@ export const SKY = {
   // keeps the Phase 25 clarity ("don't make the far places blurry" holds
   // where it was asked for: full day).
   HAZE_NEAR: 40,
-  HAZE_FAR: 430,
+  HAZE_FAR: 335,             // ~0.84 of the ring, the same fraction as at r=32
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
