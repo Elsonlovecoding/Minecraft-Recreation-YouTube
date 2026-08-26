@@ -223,22 +223,57 @@ export async function loadAtlas() {
   const loader = new THREE.TextureLoader();
   const loaded = await loader.loadAsync(ATLAS.PATH);
   const img = loaded.image;
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, 0, 0);
+  // 1. The ART canvas — the shipped PNG's own 16px layout, generated tiles
+  // painted in exactly as before (their painters use the original grid).
+  const art = document.createElement('canvas');
+  art.width = img.width;
+  art.height = img.height;
+  const actx = art.getContext('2d');
+  actx.imageSmoothingEnabled = false;
+  actx.drawImage(img, 0, 0);
   const P = ATLAS.TILE_PIXELS;
   for (const [tile, paint] of GENERATED_TILES) {
     paint(
-      ctx,
+      actx,
       (tile % ATLAS.TILES_PER_ROW) * P,
       Math.floor(tile / ATLAS.TILES_PER_ROW) * P,
       P,
     );
   }
   loaded.dispose();
+  // 2. The RUNTIME canvas — repacked into CELL_PIXELS cells with
+  // PAD_PIXELS gutters of each tile's own replicated edge pixels (see the
+  // config note: this is what lets faces sample all 16 texels
+  // edge-to-edge with ZERO inset and still never bleed a neighbour tile
+  // at any mip level or under anisotropy). Edge strips and corners are
+  // 1px source slices stretched across the gutter, smoothing off, which
+  // is exact edge replication.
+  const cell = ATLAS.CELL_PIXELS;
+  const pad = ATLAS.PAD_PIXELS;
+  const canvas = document.createElement('canvas');
+  canvas.width = ATLAS.TILES_PER_ROW * cell;
+  canvas.height = ATLAS.TILES_PER_ROW * cell;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  for (let row = 0; row < ATLAS.TILES_PER_ROW; row++) {
+    for (let col = 0; col < ATLAS.TILES_PER_ROW; col++) {
+      const sx = col * P;
+      const sy = row * P;
+      const ax = col * cell + pad; // the cell's art origin
+      const ay = row * cell + pad;
+      ctx.drawImage(art, sx, sy, P, P, ax, ay, P, P);
+      // Edges…
+      ctx.drawImage(art, sx, sy, 1, P, ax - pad, ay, pad, P);          // left
+      ctx.drawImage(art, sx + P - 1, sy, 1, P, ax + P, ay, pad, P);    // right
+      ctx.drawImage(art, sx, sy, P, 1, ax, ay - pad, P, pad);          // top
+      ctx.drawImage(art, sx, sy + P - 1, P, 1, ax, ay + P, P, pad);    // bottom
+      // …and corners.
+      ctx.drawImage(art, sx, sy, 1, 1, ax - pad, ay - pad, pad, pad);
+      ctx.drawImage(art, sx + P - 1, sy, 1, 1, ax + P, ay - pad, pad, pad);
+      ctx.drawImage(art, sx, sy + P - 1, 1, 1, ax - pad, ay + P, pad, pad);
+      ctx.drawImage(art, sx + P - 1, sy + P - 1, 1, 1, ax + P, ay + P, pad, pad);
+    }
+  }
   atlasTexture = new THREE.CanvasTexture(canvas);
   atlasTexture.magFilter = THREE.NearestFilter;
   // Nearest WITHIN a mip level (pixel-art up close), linear BETWEEN levels
@@ -257,19 +292,39 @@ export function getAtlasTexture() {
   return atlasTexture;
 }
 
-// UV rectangle for a tile index, in Three.js UV space (v=0 at the bottom of
-// the image, so atlas row 0 maps to the top of the v range). A small inset
-// keeps samples off tile boundaries where neighbours would bleed.
+// UV rectangle for a tile's ART region inside the padded runtime atlas, in
+// Three.js UV space (v=0 at the bottom of the image, so atlas row 0 maps to
+// the top of the v range). The gutters made UV_INSET zero — a face samples
+// all 16 texels edge-to-edge, every pixel equal width — but the term stays
+// so the knob still exists.
 // Returns { u0, v0, u1, v1 }: u0/v0 bottom-left, u1/v1 top-right of the tile.
 export function getUV(tileIndex) {
   const n = ATLAS.TILES_PER_ROW;
+  const size = n * ATLAS.CELL_PIXELS;
   const inset = ATLAS.UV_INSET;
   const col = tileIndex % n;
   const row = Math.floor(tileIndex / n);
+  const x = col * ATLAS.CELL_PIXELS + ATLAS.PAD_PIXELS;
+  const y = row * ATLAS.CELL_PIXELS + ATLAS.PAD_PIXELS;
   return {
-    u0: col / n + inset,
-    v0: 1 - (row + 1) / n + inset,
-    u1: (col + 1) / n - inset,
-    v1: 1 - row / n - inset,
+    u0: x / size + inset,
+    v0: 1 - (y + ATLAS.TILE_PIXELS) / size + inset,
+    u1: (x + ATLAS.TILE_PIXELS) / size - inset,
+    v1: 1 - y / size - inset,
+  };
+}
+
+// Pixel rectangle of a tile's ART region inside the runtime atlas canvas
+// (getAtlasTexture().image) — for the 2D consumers that drawImage from it:
+// item icons, the HUD lava overlay, sprite canvases, the fluid-scroll
+// textures. They must NOT compute tile*TILE_PIXELS themselves any more:
+// the runtime layout is padded.
+export function tilePixelRect(tileIndex) {
+  const col = tileIndex % ATLAS.TILES_PER_ROW;
+  const row = Math.floor(tileIndex / ATLAS.TILES_PER_ROW);
+  return {
+    x: col * ATLAS.CELL_PIXELS + ATLAS.PAD_PIXELS,
+    y: row * ATLAS.CELL_PIXELS + ATLAS.PAD_PIXELS,
+    size: ATLAS.TILE_PIXELS,
   };
 }

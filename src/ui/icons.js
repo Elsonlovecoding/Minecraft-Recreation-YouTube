@@ -14,7 +14,7 @@
 // icon always matches the dropped-item and held-hand visuals.
 
 import { ATLAS, UI } from '../config.js';
-import { getAtlasTexture } from '../render/atlas.js';
+import { getAtlasTexture, tilePixelRect } from '../render/atlas.js';
 import { faceTiles } from '../world/blocks.js';
 import { itemVisualInfo, atlasSpriteCanvas, getPotionCanvas } from '../entities/items.js';
 import { generatedSpriteCanvas } from '../render/item_art.js';
@@ -71,9 +71,7 @@ const blockIconCache = new Map(); // blockId -> data URL
 // with origin (x0, y0) and edge vectors (ux, uy) / (vx, vy), then darkened
 // to `shade` only where the face actually drew (keeps cutout textures clean).
 function drawFace(ctx, img, tile, x0, y0, ux, uy, vx, vy, shade) {
-  const P = ATLAS.TILE_PIXELS;
-  const sx = (tile % ATLAS.TILES_PER_ROW) * P;
-  const sy = Math.floor(tile / ATLAS.TILES_PER_ROW) * P;
+  const { x: sx, y: sy, size: P } = tilePixelRect(tile);
   ctx.save();
   ctx.setTransform(ux, uy, vx, vy, x0, y0);
   ctx.drawImage(img, sx, sy, P, P, 0, 0, 1, 1);

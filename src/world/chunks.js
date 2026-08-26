@@ -18,7 +18,7 @@ import {
   CHUNK, OVERWORLD, LIGHTING, RENDER, ATLAS, FLUIDS, PORTALS, VISUAL,
 } from '../config.js';
 import { BLOCK, BLOCKS, TORCH_LEAN, HAS_SHAPE } from './blocks.js';
-import { TILE } from '../render/atlas.js';
+import { TILE, tilePixelRect } from '../render/atlas.js';
 import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
 import { patchWaterMaterial } from '../render/water_fx.js';
 import {
@@ -128,15 +128,15 @@ export function createChunkMaterials(atlasTexture) {
   // offset.y slides every flow face along its own local flow direction.
   const P = ATLAS.TILE_PIXELS;
   // One repeating copy of an atlas tile, for the scrolling fluid materials.
+  // tilePixelRect resolves the padded runtime layout (render/atlas.js).
   const tileCanvasTexture = (tile) => {
     const canvas = document.createElement('canvas');
     canvas.width = P;
     canvas.height = P;
     if (atlasTexture?.image) {
-      const col = tile % ATLAS.TILES_PER_ROW;
-      const row = Math.floor(tile / ATLAS.TILES_PER_ROW);
+      const r = tilePixelRect(tile);
       canvas.getContext('2d')
-        .drawImage(atlasTexture.image, col * P, row * P, P, P, 0, 0, P, P);
+        .drawImage(atlasTexture.image, r.x, r.y, r.size, r.size, 0, 0, P, P);
     }
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter;

@@ -312,6 +312,29 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**ATLAS GUTTERS — full-width border pixels** ("the border of the texture
+pixels are thinner"): the player caught the real cost of the white-lines
+fix. The half-texel UV_INSET made faces sample texels 0.5..15.5 — the
+outermost pixel row of every block face drew at HALF the width of interior
+rows. The proper fix replaces the inset with the industry-standard layout:
+- The shipped 256px PNG repacks at load into 32px cells, each 16px tile
+  centred with 8px of its OWN replicated edge pixels on every side
+  (render/atlas.js). Faces now map all 16 texels edge-to-edge with ZERO
+  inset — measured straight-on: 163 full-width texel columns, 1 stray in
+  the half-width band — and a sample straying past a tile edge at coarse
+  mips or under 16x anisotropy lands on a copy of that same edge, never a
+  neighbour tile, so the white-lines artifact stays dead (verified: the
+  distant-field scan finds no dashes; the flagged pale band was a fogged
+  shoreline).
+- getUV resolves the padded layout; a new tilePixelRect() serves the four
+  2D consumers that drawImage from the atlas canvas (item icons, the HUD
+  lava overlay, sprite canvases, the fluid-scroll textures) — all
+  verified rendering. The crack overlay's inset compensation from the
+  previous fix reads UV_INSET and became an identity automatically.
+- The tile-local mip chain is untouched (generic 2x2 box, cells stay
+  aligned at every level; art/gutter mixing at the deepest levels blends
+  identical colours by construction).
+
 **CRACK OVERLAY POLISH** ("the pixel of the breaking thing is kind of
 off compared to the texture of the block; make the less darker parts less
 darker"):

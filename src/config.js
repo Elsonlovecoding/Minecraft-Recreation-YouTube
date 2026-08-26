@@ -2872,20 +2872,23 @@ export const ATLAS = {
   PATH: 'assets/block_atlas.png',
   TILES_PER_ROW: 16,
   TILE_PIXELS: 16,
-  // Tiny UV inset to stop neighbouring tiles bleeding at face edges
-  UV_INSET: 1 / 512,              // HALF A TEXEL of the 256px atlas — the
-                                  // textbook inset, so every sample lands on
-                                  // a texel CENTRE instead of a tile edge.
-                                  // The old 1/2048 was an eighth of a texel:
-                                  // fine at full resolution, but at the
-                                  // coarse mip levels (where a 16px tile is
-                                  // 2x2 texels, then 1) it sat so close to
-                                  // the boundary that rounding sampled the
-                                  // NEIGHBOURING tile. Distant grass tufts
-                                  // (atlas 65, next to pale deepslate ore)
-                                  // picked up that pale colour and drew as
-                                  // bright white dashes across the field —
-                                  // the "white lines" report.
+  // GUTTERS (the padded runtime atlas). The shipped 256px PNG is repacked
+  // at load into 32px cells: each 16px tile sits centred with 8px of its
+  // OWN replicated edge pixels on every side. That kills two artifacts
+  // with one layout:
+  //   white lines    a sample straying past a tile edge — at coarse mips,
+  //                  or under 16x anisotropy's wide footprint — now lands
+  //                  on a copy of that same edge, never on a neighbour
+  //                  tile (the old fix was a half-texel UV_INSET)
+  //   thin borders   the half-texel inset squeezed each face's sampling
+  //                  to texels 0.5..15.5, so a block's OUTERMOST pixel
+  //                  rows drew at HALF the width of interior ones ("the
+  //                  border of the texture pixels are thinner"). With
+  //                  gutters the inset is zero and a face maps all 16
+  //                  texels edge-to-edge, every pixel equal width
+  CELL_PIXELS: 32,                // padded cell in the runtime atlas
+  PAD_PIXELS: 8,                  // replicated-edge gutter on each side
+  UV_INSET: 0,                    // gutters make an inset unnecessary
 };
 
 // ---------------------------------------------------------------------------
