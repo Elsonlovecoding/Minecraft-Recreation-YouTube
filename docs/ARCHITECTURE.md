@@ -227,7 +227,10 @@ src/
                          moved verbatim, the mandated cut)
     hand.js              first-person hand: its own render pass, arm and
                          held-item meshes, swing/eat/draw poses (Phase 13
-                         split out of interaction.js per the size cap)
+                         split out of interaction.js per the size cap).
+                         Held-item poses in config HAND are VIEW-space:
+                         placeHeld() cancels the rig's own ARM_TILT, so
+                         the configured numbers are what the player sees
     inventory.js         slots, hotbar, stacking, item data, armour slots
     stats.js             health, hunger, damage, respawn
 

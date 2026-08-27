@@ -14,7 +14,7 @@ import {
   BLOCK, blockIdByName, faceTiles, isSolid, isLava, isWater,
   collisionBoxesAt, hasCollision,
 } from '../world/blocks.js';
-import { getUV, getAtlasTexture, TILE } from '../render/atlas.js';
+import { getUV, getAtlasTexture, TILE, tilePixelRect } from '../render/atlas.js';
 import { createChestMesh } from '../world/chests.js';
 import { POTIONS } from '../player/inventory.js';
 import { hasGeneratedSprite, generatedSpriteCanvas } from '../render/item_art.js';
@@ -58,10 +58,8 @@ const atlasSpriteCanvases = new Map(); // item name -> 16x16 canvas
 export function atlasSpriteCanvas(name) {
   let canvas = atlasSpriteCanvases.get(name);
   if (canvas) return canvas;
-  const P = ATLAS.TILE_PIXELS;
   const tile = ATLAS_SPRITE_ITEMS[name];
-  const sx = (tile % ATLAS.TILES_PER_ROW) * P;
-  const sy = Math.floor(tile / ATLAS.TILES_PER_ROW) * P;
+  const { x: sx, y: sy, size: P } = tilePixelRect(tile);
   canvas = document.createElement('canvas');
   canvas.width = P;
   canvas.height = P;

@@ -117,7 +117,9 @@ export function createHand({ inventory, combat }) {
   // getter, and the swing/eat/draw pose state. `side` config picks the
   // resting position/tilts; `showBareArm` false hides the empty hand
   // entirely (the offhand).
-  function makeRig({ base, armTilt, blockTilt, spriteTilt, showBareArm }) {
+  function makeRig({
+    base, armTilt, blockTilt, blockOffset, spriteTilt, spriteOffset, showBareArm,
+  }) {
     const hand = new THREE.Group();
     const arm = new THREE.Mesh(
       armGeometry,
@@ -137,8 +139,14 @@ export function createHand({ inventory, combat }) {
       shownItem: false, // item name currently shown (false = never set)
       base: new THREE.Vector3(...base),
       tilt: new THREE.Euler(...armTilt),
+      // The arm's resting twist, INVERTED — placeHeld cancels it so a held
+      // item's configured pose is read in VIEW space (see config HAND).
+      invTilt: new THREE.Quaternion()
+        .setFromEuler(new THREE.Euler(...armTilt)).invert(),
       blockTilt,
+      blockOffset,
       spriteTilt,
+      spriteOffset,
       showBareArm,
       swingT: 1,   // 0..1, animation finished at >= 1
       eatBlend: 0, // eased 0..1 into the eating pose
@@ -155,16 +163,31 @@ export function createHand({ inventory, combat }) {
     base: H.POSITION,
     armTilt: H.ARM_TILT,
     blockTilt: H.BLOCK_TILT,
+    blockOffset: H.BLOCK_OFFSET,
     spriteTilt: H.SPRITE_TILT,
+    spriteOffset: H.SPRITE_OFFSET,
     showBareArm: true,
   });
   const offRig = makeRig({
     base: H.OFFHAND_POSITION,
     armTilt: H.OFFHAND_ARM_TILT,
     blockTilt: H.OFFHAND_BLOCK_TILT,
+    blockOffset: H.OFFHAND_BLOCK_OFFSET,
     spriteTilt: H.OFFHAND_SPRITE_TILT,
+    spriteOffset: H.OFFHAND_SPRITE_OFFSET,
     showBareArm: false,
   });
+
+  // Poses a held mesh from a VIEW-SPACE tilt and offset: both are
+  // pre-multiplied by the inverse of the rig's resting arm twist, so the
+  // configured numbers describe what the player sees rather than what the
+  // arm's local frame happens to be. The SWING still rides on top — it
+  // rotates the hand group, which carries the item with it.
+  const poseEuler = new THREE.Euler();
+  function placeHeld(rig, mesh, viewTilt, viewOffset) {
+    mesh.quaternion.setFromEuler(poseEuler.set(...viewTilt)).premultiply(rig.invTilt);
+    mesh.position.set(...viewOffset).applyQuaternion(rig.invTilt);
+  }
 
   function renderHand(renderer) {
     renderer.autoClear = false;
@@ -197,13 +220,11 @@ export function createHand({ inventory, combat }) {
         // Entity-model items (chest): the same centred model the drops use,
         // held like a block.
         rig.heldMesh = createModelMesh(info.model, H.BLOCK_SCALE);
-        rig.heldMesh.position.set(...H.BLOCK_OFFSET);
-        rig.heldMesh.rotation.set(...rig.blockTilt);
+        placeHeld(rig, rig.heldMesh, rig.blockTilt, rig.blockOffset);
         rig.arm.visible = false;
       } else if (info.blockId !== undefined) {
         rig.heldMesh = createBlockMesh(info.blockId, H.BLOCK_SCALE);
-        rig.heldMesh.position.set(...H.BLOCK_OFFSET);
-        rig.heldMesh.rotation.set(...rig.blockTilt);
+        placeHeld(rig, rig.heldMesh, rig.blockTilt, rig.blockOffset);
         rig.arm.visible = false;
       } else {
         // Tools and materials: the extruded slab model (flat sprite with
@@ -220,8 +241,7 @@ export function createHand({ inventory, combat }) {
         mesh = createExtrudedItemMesh(info.sprite, H.SPRITE_SCALE, () => {
           if (rig.heldMesh === mesh) rig.arm.visible = false;
         });
-        mesh.position.set(...H.SPRITE_OFFSET);
-        mesh.rotation.set(...rig.spriteTilt);
+        placeHeld(rig, mesh, rig.spriteTilt, rig.spriteOffset);
         // Un-mirror everything that isn't a tool (see TOOL_SHAPED above).
         if (!isToolShaped(name)) mesh.scale.x *= -1;
         rig.heldMesh = mesh;

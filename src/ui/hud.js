@@ -15,7 +15,7 @@ import {
   PLAYER, INVENTORY, UI, STATS, LAVA_VIEW, ATLAS, COMBAT, EFFECTS,
 } from '../config.js';
 import { renderSlotContent, createItemIcon } from './icons.js';
-import { getAtlasTexture, TILE } from '../render/atlas.js';
+import { getAtlasTexture, TILE, tilePixelRect } from '../render/atlas.js';
 import { gamemode } from '../player/gamemode.js';
 
 let breathRow = null;
@@ -64,10 +64,8 @@ let modeEl = null;
 // The lava overlay art: the real still-lava atlas tile, darkened, tiled
 // across the screen (vanilla draws the block texture over the whole view).
 function lavaOverlayDataUrl() {
-  const P = ATLAS.TILE_PIXELS;
   const tile = TILE.LAVA_STILL;
-  const sx = (tile % ATLAS.TILES_PER_ROW) * P;
-  const sy = Math.floor(tile / ATLAS.TILES_PER_ROW) * P;
+  const { x: sx, y: sy, size: P } = tilePixelRect(tile);
   const canvas = document.createElement('canvas');
   canvas.width = P;
   canvas.height = P;
