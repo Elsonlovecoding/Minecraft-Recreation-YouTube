@@ -2204,19 +2204,37 @@ export const INTERACTION = {
                                      // end reaches up toward screen centre and
                                      // the roll shows two faces (reads 3D)
     ARM_FORWARD: 0.12,               // arm reach forward, fraction of its length
-    BLOCK_SCALE: 0.19,               // held mini-block edge length — sits in
+    BLOCK_SCALE: 0.155,              // held mini-block edge length — sits in
                                      // the lower-right corner like vanilla
-    BLOCK_TILT: [0.22, 0.785, 0],    // held block yawed ~45°, tipped a touch so
-                                     // the top and two side faces read (vanilla)
-    BLOCK_OFFSET: [0.05, -0.02, -0.1], // held block offset from POSITION
-    SPRITE_SCALE: 0.38,              // held tool/item slab edge length
-    SPRITE_TILT: [-0.6, 2.9, 0.67], // held tool orientation (screenshot-tuned
-                                     // against vanilla): the ~180° yaw shows
-                                     // the mirrored back face, pitch + roll
-                                     // put the handle toward the bottom-right
-                                     // corner with the head raised up and
-                                     // forward on a ~45° diagonal
-    SPRITE_OFFSET: [0.05, -0.03, -0.1], // held sprite offset from POSITION
+                                     // (the old 0.19 overflowed the right
+                                     // edge once the view-space pose below
+                                     // centred the cube properly)
+    // HELD-ITEM POSE — defined in VIEW space (the hand camera's own frame:
+    // +x right, +y up, -z forward), NOT in the arm's local frame. The rig
+    // cancels its own ARM_TILT before applying these, so the numbers here
+    // are what the player actually SEES; tuning them by eye no longer
+    // fights the arm's [0.45, 0.55, 0.55] resting twist. (The old
+    // *_TILT/_OFFSET pairs were arm-local, which is why the tool ended up
+    // pointing up-RIGHT and clipped off the screen edge.)
+    BLOCK_TILT: [0.20, 0.79, 0],     // held block yawed ~45° with a slight
+                                     // tip, so the top and two side faces
+                                     // read as a cube (the vanilla pose)
+    BLOCK_OFFSET: [-0.17, 0.16, 0.02], // view-space offset from POSITION
+    SPRITE_SCALE: 0.34,              // held tool/item slab edge length — a
+                                     // held sword spans ~45% of screen height,
+                                     // the vanilla proportion (0.38 filled
+                                     // over half the frame)
+    // Tools/items: the sprite's head sits at its texture's top-RIGHT, so a
+    // 180° yaw mirrors it to the top-LEFT (and shows the back face, as
+    // vanilla does in the right hand) while the +25° roll — vanilla's own
+    // firstperson_righthand Z rotation — lifts the diagonal from 135° to
+    // ~110°: pointing UP, leaning a little LEFT toward the crosshair, with
+    // the handle running down to the bottom-right corner. The yaw stops at
+    // 2.94 rad (~168°) rather than a full half-turn so the slab's extruded
+    // 1px edge stays visible and catches light — it reads as a solid
+    // object instead of a decal.
+    SPRITE_TILT: [0.10, 2.94, 0.436],
+    SPRITE_OFFSET: [-0.165, 0.14, 0.02], // view-space offset from POSITION
     SWING_SECONDS: 0.28,             // one swing animation
     SWING_DIP: 0.28,                 // how far the swing dips (blocks, camera space)
     SWING_ROTATION: 1.1,             // swing rotation amplitude (radians)
@@ -2245,8 +2263,12 @@ export const INTERACTION = {
     // offhand actions (eating from the offhand) but never on attacks.
     OFFHAND_POSITION: [-0.5, -0.4, -0.72], // left-hand resting spot
     OFFHAND_ARM_TILT: [0.45, -0.55, -0.55], // mirrored resting rotation
-    OFFHAND_BLOCK_TILT: [0.22, -0.785, 0],  // mirrored held-block yaw
-    OFFHAND_SPRITE_TILT: [-0.6, -2.9, -0.67], // mirrored held-tool diagonal
+    // The offhand mirrors the main hand's view-space pose across the
+    // screen's centre line: negate the yaw and roll, negate the x offset.
+    OFFHAND_BLOCK_TILT: [0.20, -0.79, 0],
+    OFFHAND_BLOCK_OFFSET: [0.17, 0.16, 0.02],
+    OFFHAND_SPRITE_TILT: [0.10, -2.94, -0.436],
+    OFFHAND_SPRITE_OFFSET: [0.165, 0.14, 0.02],
   },
 };
 

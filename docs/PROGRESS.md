@@ -312,6 +312,62 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**THE ITEM IN HAND, POSED LIKE THE REAL GAME** ("make the item in hand like
+real game, if tools then look good, good direction, face slight upwards a bit
+to left, block just same thing"):
+- **The bug was a frame-of-reference error, not a bad angle.** The held mesh
+  is a child of the hand group, so its rotation composed with the arm's
+  resting `ARM_TILT [0.45, 0.55, 0.55]`. Every previous tuning pass wrote
+  arm-LOCAL Eulers and then chased the result by eye — which is how the
+  pickaxe ended up pointing up-**RIGHT** with its handle clipped off the
+  screen edge.
+- **Held poses are declared in VIEW space now.** `makeRig` caches the
+  inverse of its own arm twist (`invTilt`), and a new `placeHeld()`
+  pre-multiplies it into both the rotation and the offset, so the numbers in
+  config `HAND` describe what the player actually SEES. The swing still
+  rides on top untouched — it rotates the hand group, and at rest
+  `hand.rotation` is exactly `rig.tilt`, so the cancellation is exact.
+- **The direction was derived, not guessed.** A programmatic centroid of the
+  diamond-pickaxe sprite puts its head at texture (10.6, 5.4) — the
+  top-RIGHT — so the ~180° yaw that shows the slab's back face is precisely
+  what mirrors the head to the top-LEFT, vanilla's right-hand look. On top
+  of that sits vanilla's own `firstperson_righthand` Z rotation of +25°
+  (+0.436 rad), which lifts the sprite's 135° diagonal to ~110°: pointing
+  UP, leaning a little LEFT toward the crosshair, handle running down into
+  the bottom-right corner. `SPRITE_TILT [0.10, 2.94, 0.436]` — the yaw held
+  a touch under 180° so the extruded 1px edge catches light and the slab
+  reads solid rather than as a decal.
+- **Blocks got the same treatment**: `BLOCK_TILT [0.20, 0.79, 0]` yaws the
+  cube 45° with a slight tip so the top and two side faces read, sitting in
+  the lower-right corner. The offhand mirrors the main hand exactly across
+  the screen's centre line (negated yaw, roll and x offset).
+- **Scale tuned against the frame, twice.** At `SPRITE_SCALE` 0.38 a held
+  sword spanned 54% of screen height and an apple filled the lower half;
+  0.30 undershot; 0.34 lands at the vanilla proportion, with `BLOCK_SCALE`
+  0.155 (0.19 overflowed the right edge once the view-space pose centred
+  the cube).
+- Verified in Chromium at 1280x720 across nine held items — pickaxe, sword,
+  axe, bow, torch, apple, cobblestone, oak log, crafting table — every tool
+  head up-left with its handle to the bottom-right corner, every block an
+  angled cube, nothing clipped and nothing over the crosshair; both hands
+  full at once (pickaxe right / cobblestone left) confirms the mirror; the
+  save suite re-run green at 17/17, 85/85 node-importable modules clean,
+  zero game console errors.
+- **The animated poses were checked against real state, not assumed.** They
+  ride the hand GROUP (`rig.hand.position`/`rotation`) and never touch the
+  held mesh's local transform, so the view-space change is orthogonal by
+  construction — but a first harness pass reported `swingT 1` and no eat
+  blend, because creative mode with full hunger refuses to eat and a click
+  at the sky has no target to swing at. Re-run in SURVIVAL, aimed at a real
+  grass block with hunger dropped to 6: the mining swing lands at
+  `swingT 0.71` with the outline and crack up and the pickaxe dipped
+  correctly, and eating raises the hand to y -0.37 from its -0.4 rest with
+  the apple drawn in toward the mouth.
+- **A harness trap worth recording**: `window.__inventory.selected = i` does
+  NOT refresh the hand. The rig rebuilds on the inventory's subscribe event,
+  so a harness must call `inventory.select(i)` — setting the field silently
+  leaves the previous item in hand and makes every pose screenshot a lie.
+
 **ATLAS GUTTERS — full-width border pixels** ("the border of the texture
 pixels are thinner"): the player caught the real cost of the white-lines
 fix. The half-texel UV_INSET made faces sample texels 0.5..15.5 — the
