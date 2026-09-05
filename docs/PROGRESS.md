@@ -344,9 +344,9 @@ SHADERS)"):
   on accumulated GAME time, which crawls under software GL, so a screenshot
   taken 1.5 s after a clock jump shows the previous reading — settle ~10 s
   for the overlay and the sky to agree in one frame. The save suite
-  (17 checks, including the persisted-clock round trip that this change
-  touches most directly) was still running when this landed; its result is
-  appended in the follow-up note below.
+  re-run last (17 checks, including the persisted-clock round trip that
+  this change touches most directly — a world saved at solar 0.61 on day 9
+  reloads at 0.610, day 9): 17/17, zero console errors.
 
 **THE LIVELY PASS — twilight, a vibrant sun and moon, realistic cloud light,
 grading, every mob's voice, chill music; hands outward; r=28** (three
