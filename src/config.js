@@ -2372,7 +2372,15 @@ export const SKY = {
   // frame — so a low sun drowns distant terrain in warm haze while midday
   // keeps the Phase 25 clarity ("don't make the far places blurry" holds
   // where it was asked for: full day).
-  HAZE_NEAR: 40,
+  HAZE_NEAR: 110,            // 40 -> 110 ("mountains look all yellow" at
+                             // sunset): at 40 the golden-hour fog reached
+                             // full horizon colour ~100 blocks out and
+                             // every mountain past it was a flat gold cut-
+                             // out. Distant terrain now keeps its own
+                             // colour and form under a warm VEIL (a ridge
+                             // at 250 blocks sits ~25% fogged at the peak,
+                             // not ~60%); the keyframe HAZE values came
+                             // down with it (0.85/0.9 -> 0.5/0.55)
   HAZE_FAR: 375,             // ~0.84 of the ring, the same fraction as at r=32
 };
 
@@ -2426,7 +2434,7 @@ export const DAY_NIGHT = {
     // Dawn golden hour: the sun breaks the horizon into purple-gold.
     { T: 0.000, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
       BELOW: 0xb08a68, SUN_LEVEL: 0.8, SKY_DARKEN: 1, GLOW: 1.0,
-      STARS: 0, TINT: 0xffd2a4, HAZE: 0.85 },
+      STARS: 0, TINT: 0xffd2a4, HAZE: 0.5 },
     { T: 0.050, ZENITH: SKY.ZENITH_COLOR, MID: SKY.MID_COLOR, HORIZON: SKY.HORIZON_COLOR,
       BELOW: SKY.BELOW_COLOR, SUN_LEVEL: 1.0, SKY_DARKEN: 0, GLOW: 0,
       STARS: 0, TINT: 0xffffff, HAZE: 0.15 },
@@ -2438,19 +2446,19 @@ export const DAY_NIGHT = {
     // reference's periwinkle-to-violet-to-gold sky, heavy warm haze.
     { T: 0.500, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
       BELOW: 0xb08a68, SUN_LEVEL: 0.85, SKY_DARKEN: 1, GLOW: 1.0,
-      STARS: 0, TINT: 0xffd2a4, HAZE: 0.9 },
+      STARS: 0, TINT: 0xffd2a4, HAZE: 0.55 },
     // Civil twilight: the sun just under, the band orange-pink under a
     // deepening periwinkle, the ground dimming ahead of the sky.
     { T: 0.510, ZENITH: 0x4a4a9a, MID: 0xa07898, HORIZON: 0xff9a54,
       BELOW: 0x6e5a52, SUN_LEVEL: 0.55, SKY_DARKEN: 4, GLOW: 0.9,
-      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.75 },
+      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.5 },
     // The blue hour: deep blue overhead, a dusky violet band where the sun
     // went down with the last of the glow in it, the first stars, and the
     // terrain already at its night level (SKY_DARKEN 9 — the gameplay
     // clock).
     { T: 0.525, ZENITH: 0x131c46, MID: 0x2a3670, HORIZON: 0x6a5578,
       BELOW: 0x1c2140, SUN_LEVEL: 0.28, SKY_DARKEN: 9, GLOW: 0.45,
-      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.45 },
+      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.35 },
     // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10; final night retune:
     // 10 -> 9 with the whole palette lifted a step — "not TOO dark" — a
     // moonlit night you can walk by. Night surfaces sit at effective
@@ -2465,10 +2473,10 @@ export const DAY_NIGHT = {
     // Pre-dawn blue hour, then civil dawn: the mirror of the evening.
     { T: 0.975, ZENITH: 0x131c46, MID: 0x2a3670, HORIZON: 0x6a5578,
       BELOW: 0x1c2140, SUN_LEVEL: 0.28, SKY_DARKEN: 9, GLOW: 0.4,
-      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.45 },
+      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.35 },
     { T: 0.990, ZENITH: 0x3e4a8e, MID: 0x9a7a98, HORIZON: 0xffb26b,
       BELOW: 0x7a6055, SUN_LEVEL: 0.5, SKY_DARKEN: 4, GLOW: 0.85,
-      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.75 },
+      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.5 },
   ],
   GLOW_COLOR: 0xffb04a,           // sunrise/sunset horizon glow — gold, so
                                   // the sun's side of the sky turns golden
@@ -2668,8 +2676,16 @@ export const CLOUDS = {
   POWDER: 2.2,                    // Beer-powder rate: 1 - exp(-density x this)
   POWDER_MIX: 0.30,               // ...and how much of it shows (0.45 greyed
                                   // the noon puffs)
-  SKY_AMBIENT: 0.30,              // sky colour mixed into the shaded underbelly
-  BASE_WARM: 0.55,                // low-sun warmth lit into the flat bases
+  SKY_AMBIENT: 0.45,              // sky colour mixed into the shaded underbelly
+                                  // (0.30 -> 0.45 once the shade stopped
+                                  // taking the horizon tint: bellies are
+                                  // sky-lit — blue at noon, violet at dusk)
+  BASE_WARM: 0.40,                // low-sun warmth lit into the flat bases
+                                  // (0.55 -> 0.40 with the sunset retune)
+  SUN_WARMTH: 0.5,                // how far the lit faces go toward
+                                  // SUN_WARM_COLOR at a low sun (0.7 before
+                                  // stacked on the horizon tint into orange
+                                  // -brown)
   WIDE_SILVER: 0.18,              // broad forward-scatter glow toward the sun
   WIDE_SILVER_POWER: 2.5,         // ...its width (small = wide)
   TOWER: 0.15,                    // weak weather cells cap their crowns this
@@ -2859,6 +2875,12 @@ export const VISUAL = {
     DAY_VIBRANCE: 0.30,      // extra saturation at full sun, weighted
                              // toward the LESS saturated pixels
     VIBRANCE_PROTECT: 0.6,   // how much an already-saturated pixel is spared
+    // The pop also fades with sun ELEVATION ("mountains look all yellow"
+    // at sunset): the golden-hour sky already carries the colour, and the
+    // warmth + vibrance on top of it yellowed the whole frame. Zero with
+    // the sun on the horizon, full above ~17°.
+    POP_ZERO_ELEVATION: 0.02,
+    POP_FULL_ELEVATION: 0.30,
   },
 
   // The water surface (render/water_fx.js — a patch on the same lit chunk

@@ -404,8 +404,13 @@ export function createClouds() {
       for (const m of mats) {
         m.uniforms.uLit.value.copy(litBase)
           .multiply(tinted).multiplyScalar(b).convertSRGBToLinear();
+        // The SHADE takes no horizon tint: grey-blue x sunset gold came
+        // out olive-brown, the "weird" sunset cloud. Shaded cloud is lit
+        // by the sky overhead, so it takes the sky's mid colour instead
+        // (uSkyAmbient, mixed in by SKY_AMBIENT) — violet at dusk, blue
+        // at noon — and only the LIT faces warm toward the horizon.
         m.uniforms.uShade.value.copy(shadeBase)
-          .multiply(tinted).multiplyScalar(b).convertSRGBToLinear();
+          .multiplyScalar(b).convertSRGBToLinear();
         if (skyMid) m.uniforms.uSkyAmbient.value.copy(skyMid).multiplyScalar(1.15);
         else m.uniforms.uSkyAmbient.value.copy(m.uniforms.uShade.value);
       }
@@ -423,7 +428,7 @@ export function createClouds() {
         .convertSRGBToLinear();
       const above = THREE.MathUtils.clamp((sunDir.y + 0.12) / 0.12, 0, 1);
       const low = THREE.MathUtils.clamp(1.6 - Math.abs(sunDir.y) * 4.0, 0, 1) * above;
-      sunColor.copy(white).lerp(warm, low * 0.7);
+      sunColor.copy(white).lerp(warm, low * C.SUN_WARMTH);
       for (const m of mats) {
         m.uniforms.uSunDir.value.copy(sunDir);
         if (sunDir.y < 0) m.uniforms.uSunDir.value.negate(); // the moon takes over

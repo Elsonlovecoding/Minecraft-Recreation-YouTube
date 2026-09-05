@@ -401,9 +401,17 @@ export function createPostPipeline({ renderer }) {
     composite.uniforms.tBloom.value = bloomA.texture;
 
     // 4. Composite + grade to the canvas.
-    composite.uniforms.uWarm.value = VISUAL.GRADING.WARMTH *
-      (state.skyActive ? state.sunLevel : 0);
-    composite.uniforms.uSunBoost.value = state.skyActive ? state.sunLevel : 0;
+    // The daylight pop fades with sun ELEVATION as well as sun level: at
+    // golden hour the sky's own palette carries the mood, and the extra
+    // warmth + vibrance piled on top of it turned everything yellow
+    // ("mountains look all yellow" at sunset). Full strength with the sun
+    // above POP_FULL_ELEVATION, gone by the horizon.
+    const pop = state.skyActive
+      ? state.sunLevel * THREE.MathUtils.smoothstep(
+        state.sunDir.y, VISUAL.GRADING.POP_ZERO_ELEVATION, VISUAL.GRADING.POP_FULL_ELEVATION)
+      : 0;
+    composite.uniforms.uWarm.value = VISUAL.GRADING.WARMTH * pop;
+    composite.uniforms.uSunBoost.value = pop;
     runPass(composite, null);
   }
 
