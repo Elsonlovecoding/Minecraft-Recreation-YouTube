@@ -230,8 +230,13 @@ export const CHUNK = {
 // 8 ms-per-frame streaming budget spreads over ~80 s of play at 60fps,
 // nearest-first — the horizon finishes loading well after the nearby world.
 export const VIEW = {
-  DISTANCE_CHUNKS: 25,    // chunks loaded/rendered around the player —
-                          // 32 -> 25 with the LOADING SCREEN ("immediately
+  DISTANCE_CHUNKS: 28,    // chunks loaded/rendered around the player —
+                          // 25 -> 28 by request ("render distance always
+                          // at 28 chunks or more"): 2463 chunks, 448
+                          // blocks. The loading bar grows ~25% over r=25
+                          // and the ring is still complete before play.
+                          // (Previously 32 -> 25 with the LOADING SCREEN
+                          // ("immediately
                           // 30 chunks... 25 is also okay. But immediate
                           // load"): the whole ring now builds behind a
                           // progress bar BEFORE the player spawns, and
@@ -2191,7 +2196,10 @@ export const INTERACTION = {
     FOV: 50,
     NEAR: 0.05,
     FAR: 10,
-    POSITION: [0.5, -0.4, -0.72],    // hand-camera-space resting spot
+    POSITION: [0.62, -0.4, -0.72],   // hand-camera-space resting spot
+                                     // (x 0.5 -> 0.62 by request — "too
+                                     // middle": ~130px further right at
+                                     // 1280 wide; the offhand mirrors it)
                                      // (right, down, forward — Phase 10 moved
                                      // it further into the lower-right corner;
                                      // it sat too close to screen centre and
@@ -2261,7 +2269,7 @@ export const INTERACTION = {
     // Offhand (Phase 14): the left hand mirrors the right across the screen
     // centre and shows the offhand item whenever one is held. It swings on
     // offhand actions (eating from the offhand) but never on attacks.
-    OFFHAND_POSITION: [-0.5, -0.4, -0.72], // left-hand resting spot
+    OFFHAND_POSITION: [-0.62, -0.4, -0.72], // left-hand resting spot (mirrors POSITION)
     OFFHAND_ARM_TILT: [0.45, -0.55, -0.55], // mirrored resting rotation
     // The offhand mirrors the main hand's view-space pose across the
     // screen's centre line: negate the yaw and roll, negate the x offset.
@@ -2350,14 +2358,14 @@ export const SKY = {
   //     un-fogged the periphery and the ring edge popped in and out.
   //     Radial fog is a circle around the player, exactly the shape of
   //     the streaming ring it must hide.
-  //  2. FOG_FAR sits INSIDE the ring edge (400 blocks at r=25), not past
+  //  2. FOG_FAR sits INSIDE the ring edge (448 blocks at r=28), not past
   //     it: outermost chunks silhouetted against the sky read as a hard
   //     cutoff. Full opacity at ~97% of the ring dissolves them entirely
   //     — clear to ~69% of the view, gone before the geometry ends.
   //     (Rescaled with the r=32 -> 25 loading-screen retune, the same
   //     fractions as every retune.)
-  FOG_NEAR: 275,
-  FOG_FAR: 388,
+  FOG_NEAR: 308,             // r=28 (448 blocks): the same ~0.69 / ~0.97
+  FOG_FAR: 435,              // fractions of the ring as every retune
   // Phase 26 (the golden-hour reference): ATMOSPHERIC HAZE. The keyframes
   // below carry a HAZE channel (0 = the clear midday fog above, 1 = these
   // heavy bounds) and the cycle lerps fog.near/far between them every
@@ -2365,7 +2373,7 @@ export const SKY = {
   // keeps the Phase 25 clarity ("don't make the far places blurry" holds
   // where it was asked for: full day).
   HAZE_NEAR: 40,
-  HAZE_FAR: 335,             // ~0.84 of the ring, the same fraction as at r=32
+  HAZE_FAR: 375,             // ~0.84 of the ring, the same fraction as at r=32
 };
 
 // Day/night cycle keyframes, piecewise-linearly interpolated (wrapping) over
@@ -2395,8 +2403,27 @@ export const SKY = {
 // and full darkness still holds 0.525-0.975 — the Phase 25 half-and-half
 // clock is untouched; only the look at the day's edges changed.
 export const DAY_NIGHT = {
+  // THE TWILIGHT PASS ("day and night transition better"). The old dusk
+  // went from full golden hour at t=0.500 to deep night at t=0.525 — 2.5%
+  // of a 20-minute day is THIRTY SECONDS, through one intermediate frame,
+  // with every channel snapping between straight lerps. It is a staged
+  // evening now: golden hour (sun on the horizon) -> civil twilight (the
+  // band goes orange-pink under a deepening periwinkle, the ground already
+  // dimming) -> the BLUE HOUR (deep blue zenith, a dusky violet band where
+  // the sun went down, the first stars) -> night proper, over t 0.500-0.545
+  // (54 s), and the same in reverse before dawn.
+  // GAMEPLAY IS UNCHANGED to within seconds: SKY_DARKEN still reaches 9 at
+  // 0.525 and holds it to 0.975 (night surfaces at effective light 6, under
+  // the hostile-spawn gate of 7). With the eased ramp, darken crosses 8 at
+  // t 0.5207 instead of 0.5225 at dusk and recrosses at 0.9793 instead of
+  // 0.9775 at dawn — the hostile window grows by ~4 s out of ~9 minutes.
+  // Interpolation between frames is EASED — a blend of linear and
+  // smoothstep (0 = the old straight lerps, whose rate of change jumped at
+  // every keyframe; 1 = full smoothstep, which stalls at each one). 0.6
+  // rounds the corners off without the pulsing.
+  EASE: 0.6,
   KEYFRAMES: [
-    // Dawn golden hour: the sun rises into purple-gold and clears by 0.05.
+    // Dawn golden hour: the sun breaks the horizon into purple-gold.
     { T: 0.000, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
       BELOW: 0xb08a68, SUN_LEVEL: 0.8, SKY_DARKEN: 1, GLOW: 1.0,
       STARS: 0, TINT: 0xffd2a4, HAZE: 0.85 },
@@ -2412,23 +2439,36 @@ export const DAY_NIGHT = {
     { T: 0.500, ZENITH: 0x7a74c2, MID: 0xc9a0c8, HORIZON: 0xffc06a,
       BELOW: 0xb08a68, SUN_LEVEL: 0.85, SKY_DARKEN: 1, GLOW: 1.0,
       STARS: 0, TINT: 0xffd2a4, HAZE: 0.9 },
-    { T: 0.5125, ZENITH: 0x3a3670, MID: 0x8a6a9a, HORIZON: 0xff9a54,
-      BELOW: 0x6e5a52, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
-      STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
+    // Civil twilight: the sun just under, the band orange-pink under a
+    // deepening periwinkle, the ground dimming ahead of the sky.
+    { T: 0.510, ZENITH: 0x4a4a9a, MID: 0xa07898, HORIZON: 0xff9a54,
+      BELOW: 0x6e5a52, SUN_LEVEL: 0.55, SKY_DARKEN: 4, GLOW: 0.9,
+      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.75 },
+    // The blue hour: deep blue overhead, a dusky violet band where the sun
+    // went down with the last of the glow in it, the first stars, and the
+    // terrain already at its night level (SKY_DARKEN 9 — the gameplay
+    // clock).
+    { T: 0.525, ZENITH: 0x131c46, MID: 0x2a3670, HORIZON: 0x6a5578,
+      BELOW: 0x1c2140, SUN_LEVEL: 0.28, SKY_DARKEN: 9, GLOW: 0.45,
+      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.45 },
     // Night (Phase 27 follow-up: SKY_DARKEN 11 -> 10; final night retune:
     // 10 -> 9 with the whole palette lifted a step — "not TOO dark" — a
-    // moonlit night you can walk by. Gameplay still unchanged: night
-    // surfaces sit at effective light 6, under the hostile-spawn gate of
-    // 7, and torches still protect at 14).
-    { T: 0.525, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+    // moonlit night you can walk by. Night surfaces sit at effective
+    // light 6, under the hostile-spawn gate of 7, and torches still
+    // protect at 14).
+    { T: 0.545, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
       BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
-    { T: 0.975, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
+    { T: 0.955, ZENITH: 0x0a1226, MID: 0x141f3d, HORIZON: 0x243356,
       BELOW: 0x121a30, SUN_LEVEL: 0.18, SKY_DARKEN: 9, GLOW: 0,
       STARS: 1, TINT: LIGHTING.NIGHT_SKY_TINT, HAZE: 0.25 },
-    { T: 0.9875, ZENITH: 0x2e4382, MID: 0x8a7a9c, HORIZON: 0xffb26b,
-      BELOW: 0x7a6055, SUN_LEVEL: 0.45, SKY_DARKEN: 4, GLOW: 0.85,
-      STARS: 0.25, TINT: 0xffd9b0, HAZE: 0.75 },
+    // Pre-dawn blue hour, then civil dawn: the mirror of the evening.
+    { T: 0.975, ZENITH: 0x131c46, MID: 0x2a3670, HORIZON: 0x6a5578,
+      BELOW: 0x1c2140, SUN_LEVEL: 0.28, SKY_DARKEN: 9, GLOW: 0.4,
+      STARS: 0.55, TINT: 0xc8c8f0, HAZE: 0.45 },
+    { T: 0.990, ZENITH: 0x3e4a8e, MID: 0x9a7a98, HORIZON: 0xffb26b,
+      BELOW: 0x7a6055, SUN_LEVEL: 0.5, SKY_DARKEN: 4, GLOW: 0.85,
+      STARS: 0.1, TINT: 0xffd9b0, HAZE: 0.75 },
   ],
   GLOW_COLOR: 0xffb04a,           // sunrise/sunset horizon glow — gold, so
                                   // the sun's side of the sky turns golden
@@ -2453,14 +2493,32 @@ export const CELESTIAL = {
                                   // the glow needs room to fade to nothing
                                   // (Phase 26: 2.6 -> 3.4, the reference's
                                   // big soft halo around a low sun)
-  SUN_GLOW_STRENGTH: 0.72,        // glow alpha at the disc edge (was a
-                                  // hardcoded 0.5 in sky_fx.js)
-  SUN_CORE_COLOR: 0xfffbe8,       // the square itself
-  SUN_GLOW_COLOR: 0xffd9a0,       // the atmospheric halo around it
+  SUN_GLOW_STRENGTH: 0.80,        // glow alpha at the disc edge (was a
+                                  // hardcoded 0.5 in sky_fx.js; 0.72 ->
+                                  // 0.80 with the vibrancy pass)
+  // THE VIBRANT SUN ("moon sun more vibrant"): a white-hot centre grading
+  // to saturated gold at the disc's rim, a tight bright inner corona
+  // inside the wide soft halo, the whole disc reddening as it nears the
+  // horizon (the additive quad's colour rides the elevation), and the
+  // disc alone let into the bloom pass (VISUAL.BLOOM.SKY_HOT_*).
+  SUN_CORE_COLOR: 0xffffff,       // the disc's white-hot centre
+  SUN_RIM_COLOR: 0xffc860,        // ...grading to this at the disc's rim
+  SUN_INNER_GLOW: 0.55,           // tight corona alpha at the disc edge
+  SUN_INNER_COLOR: 0xffb060,      // ...its saturated gold-orange
+  SUN_INNER_FALLOFF: 18,          // ...and how fast it dies (uv units^-1)
+  SUN_GLOW_COLOR: 0xffd9a0,       // the wide atmospheric halo around it
+  SUN_LOW_TINT: 0xff9a50,         // disc tint with the sun on the horizon
+                                  // (white by SUN_HIGH_ELEVATION)
+  SUN_HIGH_ELEVATION: 0.28,       // sun-direction y where the tint is gone
   MOON_SIZE: 104,                 // the round disc is inscribed in the quad
                                   // (0.94 of it), so the quad grew a touch
                                   // to keep the old apparent diameter
-  MOON_LIT_COLOR: 0xdfe4f2,       // the lit part of the moon's face
+  MOON_LIT_COLOR: 0xf4f6ff,       // the lit part of the moon's face
+                                  // (0xdfe4f2 -> brighter, cooler white)
+  MOON_MARIA_DEPTH: [0.10, 0.20], // how dark the seas go (was 0.07-0.14 —
+                                  // more contrast reads as a real disc)
+  MOON_CRATER_DEPTH: [0.14, 0.30],
+  MOON_LIMB: 0.86,                // limb darkening floor (0.9 before)
   MOON_DARK_ALPHA: 0.18,          // how visible the unlit part stays
   MOON_PHASES: 1,                 // final night retune ("circle moon"): the
                                   // moon shows its full circular disc every
@@ -2472,11 +2530,13 @@ export const CELESTIAL = {
   // carries a gentle wash of light around its position, and the water
   // picks up a moon glint (main.js feeds the water uniforms the moon's
   // direction after sunset).
-  MOON_GLOW_SCALE: 3.6,           // halo quad as a multiple of the moon
-  MOON_GLOW_STRENGTH: 0.78,       // halo alpha at the moon's edge ("a bit
+  MOON_GLOW_SCALE: 4.2,           // halo quad as a multiple of the moon
+                                  // (3.6 -> 4.2 with the vibrancy pass)
+  MOON_GLOW_STRENGTH: 0.9,        // halo alpha at the moon's edge ("a bit
                                   // shiny": brighter, wider halo)
+  MOON_GLOW_INNER: 0.5,           // a tight bright ring of halo at the limb
   MOON_GLOW_COLOR: 0xcdddff,      // cool silver-blue halo
-  MOON_SKY_GLOW: 0.42,            // the dome's night wash around the moon
+  MOON_SKY_GLOW: 0.5,             // the dome's night wash around the moon
   MOON_SKY_GLOW_COLOR: 0x9db8e8,  // ...and its colour
   MOON_SKY_GLOW_BAND: 1.6,        // dome-height reach of the wash (the day
                                   // glow hugs the horizon at 0.45; the moon
@@ -2589,6 +2649,35 @@ export const CLOUDS = {
   NIGHT_BRIGHTNESS: 0.30,         // colour scale at deep night (1.0 at noon)
   HORIZON_TINT: 0.45,             // fraction of the horizon colour mixed in
                                   // (what makes dawn clouds blush gold-pink)
+  // THE REALISM PASS ("make clouds more realistic"). What the marched deck
+  // still lacked against a real sky was LIGHT DIRECTION: every puff was a
+  // height gradient (bright crown, grey base) identical from every side.
+  // Now: a cheap shadow tap toward the sun shades the far side of each
+  // mass and lifts the near side; thin edges take the Beer-powder
+  // darkening real cloud has (definition instead of a uniform glow);
+  // undersides pick up the SKY's own colour (blue by day, violet in the
+  // blue hour); a low sun lights the flat bases warm from below and gilds
+  // the lit faces; a broad forward-scatter lobe glows toward the sun; and
+  // weak weather cells sit lower and flatter than the towering ones.
+  SELF_SHADOW: 0.55,              // far-side darkening at a LOW sun (near
+                                  // side lifts 0.3x this); scaled down by
+                                  // elevation to a quarter at noon — the
+                                  // first cut applied it overhead too and
+                                  // noon cumulus read as side-lit strips
+  SHADOW_REACH: 36,               // blocks toward the sun the shadow tap looks
+  POWDER: 2.2,                    // Beer-powder rate: 1 - exp(-density x this)
+  POWDER_MIX: 0.30,               // ...and how much of it shows (0.45 greyed
+                                  // the noon puffs)
+  SKY_AMBIENT: 0.30,              // sky colour mixed into the shaded underbelly
+  BASE_WARM: 0.55,                // low-sun warmth lit into the flat bases
+  WIDE_SILVER: 0.18,              // broad forward-scatter glow toward the sun
+  WIDE_SILVER_POWER: 2.5,         // ...its width (small = wide)
+  TOWER: 0.15,                    // weak weather cells cap their crowns this
+                                  // much lower (coverage is untouched, so
+                                  // the depth/occlusion pass is unchanged;
+                                  // 0.3 flattened most of the sky — the
+                                  // gate sits under 0.5 over most cells)
+  SUN_WARM_COLOR: 0xffb070,       // what lit faces turn toward at a low sun
   SEED: 37.73,                    // noise hash offset (clouds are weather,
                                   // not terrain — never world-seeded)
 };
@@ -2701,6 +2790,14 @@ export const VISUAL = {
     VIOLET_FLOOR: 0.14,
     DOWNSCALE: 4,            // bright+blur passes at quarter resolution
     BLUR_SPREAD: 1.6,        // gaussian tap spacing in downscaled texels
+    // The celestial discs ("moon sun more vibrant"): sky pixels are masked
+    // out of the bloom, except where their LINEAR luminance climbs past
+    // what the dome can ever reach (~0.7 at the brightest golden horizon)
+    // — the additive sun disc lands at ~1.3, the alpha-blended moon at
+    // ~0.9 — so the sun blooms hard, the moon gently, the sky never.
+    SKY_HOT_LUM: 0.82,       // luminance where a sky pixel starts to bloom
+    SKY_HOT_RANGE: 0.5,      // ...ramping to full over this much more
+    SKY_HOT_BOOST: 0.9,      // bright-pass weight at full
   },
 
   // Soft god rays from the sun when it is low in the sky: a screen-space
@@ -2733,11 +2830,23 @@ export const VISUAL = {
   // palette must stay recognisably Minecraft's.
   GRADING: {
     EXPOSURE: 1.0,           // linear gain before grading
-    SATURATION: 1.06,        // global saturation
-    GREEN_GAIN: 1.06,        // extra gain on green-dominant pixels (foliage)
-    WARMTH: 0.045,           // warm white-balance push, scaled by sun level
+    // THE VIBRANCY PASS ("the game visuals look more vibrant, lively"):
+    // every push below went up a step, a highlight SHOULDER replaced the
+    // hard clip so the sun, bloom and bright sky keep their gradation,
+    // the day vibrance protects already-saturated pixels (dirt and sand
+    // don't go neon while grass and sky deepen), and blue-dominant pixels
+    // (sky, water — and fog, which is sky-coloured, so the horizon match
+    // survives) take their own gain like foliage does.
+    SHOULDER_KNEE: 0.72,     // linear value above which highlights roll
+                             // off toward 1 instead of clipping
+    SATURATION: 1.09,        // global saturation (1.06 before)
+    GREEN_GAIN: 1.09,        // extra gain on green-dominant pixels (foliage)
+    BLUE_GAIN: 0.12,         // extra saturation on blue-dominant pixels at
+                             // full sun (sky, water, fog — colour-keyed,
+                             // never depth-keyed, so no horizon seam)
+    WARMTH: 0.05,            // warm white-balance push, scaled by sun level
     SHADOW_COOL_COLOR: 0x4a66a8, // the tone shadows lean toward...
-    SHADOW_COOL: 0.12,       // ...and how far the darkest tones lean
+    SHADOW_COOL: 0.15,       // ...and how far the darkest tones lean
     DITHER: 1 / 255,         // composite output dither (kills sky banding)
     VIGNETTE: 0.16,          // corner darkening (the shader-pack frame);
                              // 0 disables
@@ -2745,9 +2854,11 @@ export const VISUAL = {
     // three scale with sunLevel while the overworld sky is up, easing to
     // the neutral grade through dusk and to zero at night / in the
     // fixed-sky dimensions.
-    DAY_EXPOSURE: 0.07,      // extra exposure at full sun (linear space)
-    DAY_CONTRAST: 0.16,      // S-curve contrast at full sun
-    DAY_VIBRANCE: 0.22,      // extra saturation at full sun
+    DAY_EXPOSURE: 0.10,      // extra exposure at full sun (linear space)
+    DAY_CONTRAST: 0.22,      // S-curve contrast at full sun
+    DAY_VIBRANCE: 0.30,      // extra saturation at full sun, weighted
+                             // toward the LESS saturated pixels
+    VIBRANCE_PROTECT: 0.6,   // how much an already-saturated pixel is spared
   },
 
   // The water surface (render/water_fx.js — a patch on the same lit chunk
@@ -2789,7 +2900,8 @@ export const VISUAL = {
   // softens the corner darkening a touch (the "improved shadow softness").
   SHADOW: {
     BOUNCE_COLOR: 0xffc088,  // warm bounce tone
-    BOUNCE_STRENGTH: 0.10,   // added light at full shade in full day
+    BOUNCE_STRENGTH: 0.12,   // added light at full shade in full day
+                             // (0.10 -> 0.12, the vibrancy pass)
     COOL_COLOR: 0x8fa8d8,    // the cool lean of daylight shadows
     COOL_STRENGTH: 0.14,
   },
@@ -2809,7 +2921,8 @@ export const VISUAL = {
   // Textures untouched; static blocks pay one attribute byte per vertex
   // and a uniform branch.
   WIND: {
-    AMPLITUDE: 0.09,         // peak displacement in blocks at weight 1
+    AMPLITUDE: 0.11,         // peak displacement in blocks at weight 1
+                             // (0.09 -> 0.11: livelier grass and canopies)
     SPEED: 1.0,              // wind clock rate (1 = the shipped feel)
     LEAF_WEIGHT: 0.55,       // leaves sway at this fraction of a plant
                              // tip. A leaf CUBE is rigid, so whatever it
@@ -2829,13 +2942,15 @@ export const VISUAL = {
   // keep their baked look; 0 under fixed dimension skies. Textures are
   // untouched — this modulates the light on them.
   SUNLIGHT: {
-    STRENGTH: 0.26,          // lit-face boost at full day (away faces
-                             // drop by 0.7x this)
+    STRENGTH: 0.32,          // lit-face boost at full day (away faces
+                             // drop by 0.7x this; 0.26 -> 0.32 with the
+                             // vibrancy pass — more modelling on blocks)
     MOON_FACTOR: 0.35,       // night-time strength, x STRENGTH, fading
                              // in with the stars
   },
   CLOUD_SHADOW: {
-    STRENGTH: 0.30,          // sky-light dimming under a solid cloud
+    STRENGTH: 0.34,          // sky-light dimming under a solid cloud
+                             // (0.30 -> 0.34: readable shade patches)
     SOFTNESS: 0.34,          // shadow edge width (field units) — soft,
                              // like real cloud shade, and wider than the
                              // sky's own edges so the match never has to
@@ -3251,9 +3366,11 @@ export const PARTICLES = {
     // The outdoor ambience (final pass). Chances are per random-tick hit on
     // the eligible block, so density self-scales with how much canopy or
     // open grass is actually around the player.
-    LEAF_CHANCE: 0.06,            // per leaf-block hit with air below
+    LEAF_CHANCE: 0.09,            // per leaf-block hit with air below
+                                  // (0.06 -> 0.09, the lively pass)
     SEED_CHANCE: 0.030,           // per grass-top hit, daylight
-    FIREFLY_CHANCE: 0.05,         // per grass-top hit, night
+    FIREFLY_CHANCE: 0.08,         // per grass-top hit, night
+                                  // (0.05 -> 0.08, the lively pass)
     SEED_MIN_SUN: 0.55,           // sunLevel above which seeds drift
     FIREFLY_MAX_SUN: 0.12,        // sunLevel below which fireflies wake
   },
@@ -3276,16 +3393,73 @@ export const AUDIO = {
   // melody wandering the C major pentatonic on top, long silences between
   // phrases. Nothing is a recording and nothing loops — the piece is a
   // random walk with musical weights, so it never repeats and never ends.
+  // The CHILL retune ("soft music chill music"): the piece was there but
+  // easy to miss — a pad under a 720 Hz lowpass at 0.16 and a melody that
+  // rested 5-13 s between phrases. It is present now without being loud:
+  // maj9/min9 pads with a tape-wobble drift, a soft e-piano arpeggio and a
+  // whisper of brushed pulse by day, a vinyl texture bed, and a generated
+  // hall on the whole bus. Levels are music-bus fractions; the bus itself
+  // sits under the master and the compressor.
   MUSIC: {
-    VOLUME: 0.32,                 // music bus gain (under the master/compressor)
-    PAD_LEVEL: 0.16,              // chord pad level within the music bus
-    NOTE_LEVEL: 0.42,             // melody level within the music bus
-    CHORD_SECONDS: [11, 19],      // how long one chord breathes
-    NOTE_GAP: [1.4, 4.5],         // seconds between melody notes in a phrase
+    VOLUME: 0.40,                 // music bus gain (0.32 -> 0.40: audible
+                                  // under footsteps, still under the world)
+    PAD_LEVEL: 0.20,              // chord pad level within the music bus
+    PAD_CUTOFF: 640,              // pad lowpass (Hz) — warmer than the old 720
+    PAD_BREATHE_HZ: 0.06,         // ...swept +-PAD_BREATHE by a slow LFO
+    PAD_BREATHE: 110,
+    WOBBLE_CENTS: 5,              // tape-wobble detune depth on the pad/arp
+    WOBBLE_HZ: 0.28,              // ...and its rate (slow, like a worn reel)
+    NOTE_LEVEL: 0.44,             // melody level within the music bus
+    CHORD_SECONDS: [10, 16],      // how long one chord breathes
+    NOTE_GAP: [1.1, 3.6],         // seconds between melody notes in a phrase
     PHRASE_NOTES: [3, 7],         // notes per phrase...
-    PHRASE_REST: [5, 13],         // ...and the silence after one
-    NIGHT_SPARSE: 1.7,            // night: gaps and rests stretch by this
-    NIGHT_LEVEL: 0.7,             // ...and the whole bus softens to this
+    PHRASE_REST: [4, 9],          // ...and the silence after one (was 5-13)
+    ARP_LEVEL: 0.16,              // e-piano arpeggio level (day only)
+    ARP_CHANCE: 0.6,              // chance a chord carries an arpeggio
+    ARP_STEP: [0.72, 0.92],       // seconds between arpeggio notes
+    ARP_SKIP: 0.3,                // chance any one arpeggio note rests
+    PULSE_LEVEL: 0.55,            // brushed hat + muted thump (day only);
+                                  // 0 silences the pulse entirely
+    PULSE_BPM: 66,
+    PULSE_SWING: 0.58,            // long/short eighth ratio (0.5 = straight)
+    PULSE_DROP: 0.22,             // chance a hat drops out (the lo-fi stumble)
+    DAY_PARTS_ABOVE: 0.45,        // sun level above which arp + pulse play
+    TEXTURE_LEVEL: 0.012,         // vinyl bed (low-passed noise, breathing)
+    CRACKLE_LEVEL: 0.03,          // ...and its occasional crackle
+    CRACKLES_PER_SECOND: 1.2,
+    REVERB_SECONDS: 2.6,          // generated-impulse hall length
+    REVERB_WET: 0.34,             // hall return level into the bus
+    NIGHT_SPARSE: 1.6,            // night: gaps and rests stretch by this
+    NIGHT_LEVEL: 0.72,            // ...and the whole bus softens to this
+  },
+  // Mob voices (systems/mob_voices.js — "animals all have sound"): every
+  // type calls out on its own random timer, spatialised at the animal.
+  // Intervals are means in seconds; a call rolls MEAN x JITTER. The herd
+  // guard caps voices per window so a pen of sheep never chorus, and
+  // passives go quiet and rare at night (animals sleep). Creepers have no
+  // idle voice, as in vanilla.
+  MOB_VOICES: {
+    VOLUME: 0.55,                 // all voices, under the master
+    JITTER: [0.55, 1.6],          // interval = MEAN x a roll in this range
+    FIRST_CALL: [2, 9],           // seconds after load before a mob's first call
+    BURST_CAP: 3,                 // at most this many voices...
+    BURST_WINDOW: 1.4,            // ...per this many seconds
+    NIGHT_INTERVAL: 1.6,          // passives call this much more rarely at night
+    NIGHT_VOLUME: 0.6,            // ...and this much softer
+    TYPES: {
+      // PITCH scales the recipe; SCATTER is the per-call random spread;
+      // HURT_PITCH scales the generic hurt/death yelp for the type.
+      cow:      { MEAN: 13, VOLUME: 0.9,  PITCH: 1.0, SCATTER: 0.10, HURT_PITCH: 0.8, PASSIVE: true },
+      pig:      { MEAN: 10, VOLUME: 0.85, PITCH: 1.0, SCATTER: 0.12, HURT_PITCH: 1.1, PASSIVE: true },
+      sheep:    { MEAN: 12, VOLUME: 0.85, PITCH: 1.0, SCATTER: 0.10, HURT_PITCH: 1.0, PASSIVE: true },
+      chicken:  { MEAN: 7,  VOLUME: 0.7,  PITCH: 1.0, SCATTER: 0.12, HURT_PITCH: 1.0, PASSIVE: true },
+      zombie:   { MEAN: 9,  VOLUME: 1.0,  PITCH: 1.0, SCATTER: 0.10, HURT_PITCH: 0.85 },
+      skeleton: { MEAN: 10, VOLUME: 0.8,  PITCH: 1.0, SCATTER: 0.08, HURT_PITCH: 1.25 },
+      spider:   { MEAN: 9,  VOLUME: 0.8,  PITCH: 1.0, SCATTER: 0.10, HURT_PITCH: 1.15 },
+      enderman: { MEAN: 12, VOLUME: 0.9,  PITCH: 1.0, SCATTER: 0.06, HURT_PITCH: 0.75 },
+      ghast:    { MEAN: 16, VOLUME: 1.4,  PITCH: 1.0, SCATTER: 0.08, HURT_PITCH: 0.6 },
+      blaze:    { MEAN: 10, VOLUME: 0.9,  PITCH: 1.0, SCATTER: 0.08, HURT_PITCH: 1.1 },
+    },
   },
   MAX_VOICES: 24,                 // concurrent one-shots; the rest are dropped
   VOICE_MIN_GAP: 0.012,           // seconds between two copies of one sound

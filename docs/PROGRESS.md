@@ -312,6 +312,141 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**THE LIVELY PASS — twilight, a vibrant sun and moon, realistic cloud light,
+grading, every mob's voice, chill music; hands outward; r=28** (three
+requests in one message: "move that hand object to the right a bit, too
+middle... same for offhand"; "improve on overall game looking, make clouds
+more realistic, day and night transition better, moon sun more vibrant, the
+game visuals look more vibrant, lively, animals all have sound, soft music
+chill music"; "render distance always at 28 chunks or more"):
+- **Hands outward.** `HAND.POSITION.x` 0.5 -> 0.62 (the offhand mirrors at
+  -0.62): the held item sits ~130px further into its corner at 1280 wide,
+  the pickaxe head clear of the crosshair. Screenshot-verified both hands
+  at once.
+- **Render distance 28.** `VIEW.DISTANCE_CHUNKS` 25 -> 28 (2453 chunks, 448
+  blocks), fog/haze rescaled at the same ring fractions (308/435/375).
+  Node-verified with the real World + streaming: the ring settles complete
+  (2453/2453) at spawn in 28 s of CPU, re-fills 2453/2453 after a 12-chunk
+  move, parks, wakes on an edit. The loading bar grows ~25% over r=25 and
+  the world is still complete before play.
+- **THE MANDATED SPLIT, finally.** Growing `render/lighting.js` bound the
+  standing size-cap mandate, so the chunk material patch moved out first:
+  `render/chunk_shader.js` (324 lines — `CHUNK_LIGHT_UNIFORMS`,
+  `heldLightBrightness`, `patchChunkMaterial`, moved VERBATIM by script,
+  the four importers repointed). lighting.js is 735 lines, under the cap for
+  the first time since Phase 27's cloud shadows.
+- **Day/night transition** (`DAY_NIGHT`, lighting.js): the old dusk went from
+  full golden hour at t=0.500 to deep night at 0.525 — 2.5% of a 20-minute
+  day is THIRTY SECONDS, through one intermediate frame, every channel
+  snapping between straight lerps. It is a staged evening now over t
+  0.500-0.545 (54 s): golden hour -> civil twilight (orange-pink band under
+  a deepening periwinkle, the ground dimming ahead of the sky) -> the BLUE
+  HOUR (deep blue zenith, a dusky violet band where the sun went down with
+  the last glow in it, the first stars, terrain already at its night
+  level) -> night proper; mirrored before dawn. Interpolation is EASED
+  (`DAY_NIGHT.EASE` 0.6, a linear/smoothstep blend — pure lerps changed
+  gear audibly at every keyframe, pure smoothstep stalls at each). The
+  moon's dome wash got its OWN shader term: the one shared glow used to
+  snap from sunset gold to moon silver the frame the sun dipped 3° under
+  while its strength was still 0.9 — a pop at every dusk. GAMEPLAY
+  UNCHANGED to within seconds, measured: SKY_DARKEN still holds 9 from
+  0.525 to 0.975; the darken-8 hostile window is 0.5212 -> 0.9789 = 549 s
+  (was 0.5225 -> 0.9775 = 546 s); every channel monotonic through dusk and
+  dawn except the pre-existing golden-hour zenith lift.
+- **Sun and moon** (`CELESTIAL`, sky_fx.js, post_fx.js): the sun disc grades
+  from a white-hot centre to saturated gold at its rim, inside a two-radius
+  corona (a tight gold-orange ring + the wide soft halo, both windowed to
+  exactly zero before the quad rim — the no-box rule holds), and the disc
+  reddens toward the horizon (the additive quad's colour rides elevation,
+  `SUN_LOW_TINT`). The moon: brighter cool-white face, deeper maria and
+  craters, a tight bright limb ring inside a wider halo, the halo fading
+  in with the stars instead of hanging in the day sky. And the celestial
+  DISCS now bloom: sky pixels stay masked out of the bright pass except
+  where their linear luminance passes what the dome can reach (~0.7 at the
+  brightest golden horizon) — the additive sun lands at ~1.3, the moon at
+  ~0.9 — so the sun blooms hard, the moon gently, the sky never
+  (`BLOOM.SKY_HOT_*`).
+- **Cloud realism** (`CLOUDS`, sky_fx.js): what the marched deck lacked
+  against a real sky was LIGHT DIRECTION — every puff was a height gradient
+  identical from every side. Now a cheap shadow tap toward the sun (a
+  3-octave field at the ray's entry and exit columns, lerped along the
+  march — not per step) shades the far side of each mass and lifts the
+  near side; thin edges take the Beer-powder darkening real cloud has
+  (definition instead of glow); undersides pick up the sky's own colour
+  (blue by day, violet in the blue hour); a low sun lights the flat bases
+  warm from below and gilds the lit faces; a broad forward-scatter lobe
+  glows toward the sun; and weak weather cells cap their crowns lower than
+  the towering ones (`TOWER` — applied to marched HEIGHT only, so the
+  depth/occlusion pass is byte-identical and the occlusion contract holds).
+  Cost: +6 noise taps per cloud PIXEL, not per step (~+5% on the march).
+- **Vibrancy** (`VISUAL.GRADING`, post_fx.js): a highlight SHOULDER above
+  0.72 linear replaced the hard clip (the sun, bloom and a golden horizon
+  keep their gradation); the day push became VIBRANCE — weighted toward
+  the less saturated pixels, so grass and sky deepen while dirt, sand and
+  flowers are spared from neon; blue-dominant pixels take their own gain
+  like foliage does — keyed on COLOUR, never depth, so the sky-coloured fog
+  matches the dome and the ring edge stays invisible. Saturation 1.06 ->
+  1.09, day contrast 0.16 -> 0.22, day exposure 0.07 -> 0.10, shadow cool
+  0.12 -> 0.15, directional sun on faces 0.26 -> 0.32, cloud shade 0.30 ->
+  0.34, wind 0.09 -> 0.11, leaves and fireflies half again as common.
+- **Every mob has a voice** (`systems/mob_voices.js`, new — 196 lines;
+  `AUDIO.MOB_VOICES`): before this the only mob sound was one generic hurt
+  yelp. Now the cow moos (a rounded sawtooth glide with its sub and a
+  breath of noise), the pig grunts in pairs, the sheep bleats (two
+  sawtooths 22 cents apart beating against each other), the chicken runs
+  three clucks with the odd rising bawk, the zombie groans twice, the
+  skeleton's bones tick in an uneven run, the spider hisses over skitters,
+  the enderman purrs or vwoops, the ghast cries long and falling, the
+  blaze breathes fire with crackles — all synthesised (no recordings),
+  spatialised at the animal, on per-type random timers (means 7-16 s,
+  x0.55-1.6 jitter, a staggered first call), a herd guard of 3 voices per
+  1.4 s so a pen never chorus, passives rarer and softer at night. The
+  scheduling rides the mob manager's own per-frame walk (frozen/unloaded
+  mobs never speak; the pause overlay freezes the manager and the audio
+  layer refuses); per-type pitch also scales the hurt/death yelp.
+  `audio.layer()` is the one new public entry (a wrapper over the layer
+  player). Creepers stay silent between fuses, as in vanilla.
+- **Chill music** (music.js rewritten, 472 lines; `AUDIO.MUSIC`): the piece
+  was there but easy to miss — a pad under a 720 Hz lowpass at 0.16 and a
+  melody resting 5-13 s between phrases. Now: maj9/min9 pads (a sixth
+  voice on top) under a breathing 640 Hz lowpass with a tape-wobble LFO
+  drifting every voice a few cents; by day a soft electric-piano arpeggio
+  climbing the chord tones under six chords in ten, and a whisper of
+  brushed hat / muted thump / soft rim at 66 bpm with swing and random
+  drop-outs; a vinyl bed (low-passed noise breathing, Poisson crackles);
+  and a generated-impulse convolver hall (2.6 s) on the bus so everything
+  sits back in one room. Volume 0.32 -> 0.40, rests 4-9 s. Night still
+  thins it: arp and pulse rest, gaps stretch, the register drops. Still
+  ORIGINAL and generative — nothing is a recording or a transcription.
+- **Verified.** Two Chromium sweeps at 1280x720 through the day: noon field
+  and overhead clouds, the sun at 54°, golden hour with the sun on the
+  horizon, civil twilight, the blue hour toward and away from the sunset
+  (pink-lit mountains under violet, the first stars), late blue, the moon
+  in its halo at night, a night field, pre-dawn and civil dawn — every
+  stage reads as its own light, no pop between them, and the ring edge
+  stays hidden in every frame. Zero game console errors both sweeps (the
+  first sweep's one error was the gitignored test.html's own debug import,
+  repointed). The first sweep also caught a real miss: with the new side
+  shading at full strength under an overhead sun and TOWER 0.3 flattening
+  most cells, noon cumulus read as thin grey strips — side shading now
+  falls to a quarter at noon, TOWER 0.15, POWDER_MIX 0.30, and the second
+  sweep shows fat white puffs with soft grey bellies again. Music schedules
+  (second sweep: 6 chords, 18 melody notes, 38 arpeggio notes, 41 pulse
+  eighths in 34 s). Mob voices: a node drive of tick() fires the cow on
+  schedule; in the browser the first sweep logged NONE in 28 s, which the
+  probe explained — swiftshader runs ~0.05 game-second per wall second
+  (frame deltas clamped to DEBUG.MAX_DELTA), so a 2-9 s first call takes
+  minutes of wall time here — and the second sweep, timers pre-advanced,
+  logged 7 accepted voices (cow x3, sheep x2, pig x2) with each timer
+  resetting to its type's mean (cows 11.05 / 6.51 / 17.07 s). Node checks:
+  87/87 modules import; the keyframe script above; the r=28 ring. The
+  save suite re-run last, against the r=28 ring and the split: 17/17,
+  zero console errors.
+- **A harness trap worth recording**: the sandbox's game clock runs at a
+  small fraction of wall time. Anything gated on GAME seconds (mob voice
+  timers, the eat duration, mining) must be driven by advancing its own
+  timer or polling its own state — a wall-clock wait proves nothing.
+
 **THE ITEM IN HAND, POSED LIKE THE REAL GAME** ("make the item in hand like
 real game, if tools then look good, good direction, face slight upwards a bit
 to left, block just same thing"):

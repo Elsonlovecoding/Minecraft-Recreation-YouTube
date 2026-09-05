@@ -28,6 +28,7 @@ import { MOBS, LIGHTING, PLAYER, CHUNK } from '../config.js';
 import { Entity } from './entity.js';
 import { findPath } from './pathfinding.js';
 import { createMobModel, attachOverlayModel, SPIDER_LEG_POSE } from './models.js';
+import { createMobVoices } from '../systems/mob_voices.js';
 import { MOB_TYPES } from './registry.js';
 import { createSpawner } from './spawning.js';
 import { createPassiveBehaviour } from './passive.js';
@@ -37,7 +38,7 @@ import { createSkeletonBehaviour } from './skeleton.js';
 import { createEndermanBehaviour } from './enderman.js';
 import { rayAABB } from '../systems/combat.js';
 import { createExtrudedItemMesh } from './items.js';
-import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/lighting.js';
+import { CHUNK_LIGHT_UNIFORMS, heldLightBrightness } from '../render/chunk_shader.js';
 import { blockDef } from '../world/blocks.js';
 import { particles } from '../render/particles.js';
 import { audio } from '../systems/audio.js';
@@ -66,6 +67,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // skeleton arrows, creeper explosions and the hiss.
 export function createMobs({ world, scene, player, stats, items, dayNight, combat }) {
   const mobs = [];
+  const voices = createMobVoices(); // every type's idle calls (systems/mob_voices.js)
   const getBlock = (x, y, z) => world.getBlock(x, y, z);
 
   // Phase 14 splits: natural spawning (entities/spawning.js) and passive
@@ -743,13 +745,17 @@ export function createMobs({ world, scene, player, stats, items, dayNight, comba
         }
       }
 
+      // Every mob has a voice (systems/mob_voices.js): idle calls on a
+      // per-mob random timer, only while it lives in a loaded chunk.
+      if (chunkLoaded && !e.dead) voices.tick(mob, dt, dayNight.sunLevel < 0.25);
+
       // Phase 22 feedback: entities/entity.js stays three-free, so the
       // hurt/death particles and sounds are edge-detected here, where the
       // manager already walks every mob. One place covers EVERY damage
       // source — melee, arrows, blasts, burning, suffocation.
       if (e.health < mob.shownHealth) {
         const mid = { x: ep.x, y: ep.y + e.def.height * 0.6, z: ep.z };
-        const pitch = Math.max(0.6, Math.min(1.7, 1.7 / e.def.height));
+        const pitch = Math.max(0.6, Math.min(1.7, 1.7 / e.def.height)) * voices.pitchOf(mob);
         particles.damage(mid.x, mid.y, mid.z);
         if (e.dead) {
           particles.death(ep.x, ep.y, ep.z, e.def.height);

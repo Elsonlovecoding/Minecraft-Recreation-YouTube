@@ -126,7 +126,14 @@ const BRIGHT_FRAG = /* glsl */ `
     float w = bright
       + ${VISUAL.BLOOM.WARM_BOOST.toFixed(3)} * warm * (0.25 + lum)
       + ${VISUAL.BLOOM.VIOLET_BOOST.toFixed(3)} * violet * (0.25 + lum);
-    gl_FragColor = vec4(c * (w * (1.0 - sky)), 1.0);
+    // The celestial discs ("moon sun more vibrant"): sky pixels stay out
+    // of the bloom EXCEPT where their linear luminance climbs past what
+    // the dome can reach — the additive sun disc lands well above 1, the
+    // moon just over the knee, the brightest golden horizon under it.
+    float hot = sky * clamp((lum - ${VISUAL.BLOOM.SKY_HOT_LUM.toFixed(3)})
+      / ${VISUAL.BLOOM.SKY_HOT_RANGE.toFixed(3)}, 0.0, 1.0)
+      * ${VISUAL.BLOOM.SKY_HOT_BOOST.toFixed(3)};
+    gl_FragColor = vec4(c * (w * (1.0 - sky) + hot), 1.0);
   }
 `;
 
@@ -164,6 +171,16 @@ const COMPOSITE_FRAG = /* glsl */ `
     col += texture2D(tBloom, vUv).rgb * ${VISUAL.BLOOM.STRENGTH.toFixed(3)};
     col += uRayTint * (texture2D(tRays, vUv).r * uRayStrength);
 
+    // Highlight shoulder (the vibrancy pass): above the knee, values roll
+    // off toward 1 instead of clipping, so the sun's disc, the bloom and a
+    // bright golden horizon keep their gradation.
+    col = max(col, 0.0);
+    {
+      const float knee = ${VISUAL.GRADING.SHOULDER_KNEE.toFixed(3)};
+      vec3 over = max(col - knee, 0.0);
+      col = min(col, knee) + (1.0 - knee) * (1.0 - exp(-over / (1.0 - knee)));
+    }
+
     // linear -> sRGB (the one encode; the whole pipeline above is linear)
     col = clamp(col, 0.0, 1.0);
     vec3 lo = col * 12.92;
@@ -181,11 +198,22 @@ const COMPOSITE_FRAG = /* glsl */ `
       ${VISUAL.GRADING.DAY_CONTRAST.toFixed(4)} * uSunBoost);
     col *= vec3(1.0 + uWarm, 1.0 + uWarm * 0.35, 1.0 - uWarm);
     float luma = dot(col, ${LUMA});
+    // Vibrance, not plain saturation: the day push is weighted toward the
+    // LESS saturated pixels, so grass and sky deepen while already-vivid
+    // dirt, sand and flowers are spared from going neon.
+    float satNow = max(max(col.r, col.g), col.b) - min(min(col.r, col.g), col.b);
     col = mix(vec3(luma), col,
       ${VISUAL.GRADING.SATURATION.toFixed(3)}
-      + ${VISUAL.GRADING.DAY_VIBRANCE.toFixed(4)} * uSunBoost);
+      + ${VISUAL.GRADING.DAY_VIBRANCE.toFixed(4)} * uSunBoost
+        * (1.0 - ${VISUAL.GRADING.VIBRANCE_PROTECT.toFixed(3)} * satNow));
     float greenness = clamp((col.g - max(col.r, col.b)) * 2.5, 0.0, 1.0);
     col.g *= mix(1.0, ${VISUAL.GRADING.GREEN_GAIN.toFixed(3)}, greenness);
+    // Blue-dominant pixels (sky, water, and the sky-coloured fog — keyed
+    // on COLOUR, never depth, so the fog-equals-horizon match survives)
+    // take their own gain by day, like foliage does.
+    float blueness = clamp((col.b - max(col.r, col.g)) * 3.0, 0.0, 1.0);
+    col = mix(vec3(luma), col,
+      1.0 + ${VISUAL.GRADING.BLUE_GAIN.toFixed(3)} * blueness * uSunBoost);
     float shadow = pow(clamp(1.0 - luma, 0.0, 1.0), 2.0);
     col = mix(col, col * uCoolTint, ${VISUAL.GRADING.SHADOW_COOL.toFixed(3)} * shadow);
 

@@ -505,6 +505,14 @@ class Audio {
     ], { place, volume: volume * AUDIO.HURT_VOLUME, key: 'mobHurt' });
   }
 
+  // Generic entry for another module's OWN recipes (systems/mob_voices.js
+  // builds every mob's idle call from tone/noise parts): parts + options
+  // straight through to the layer player, budget and spatialisation
+  // included.
+  layer(name, parts, opts) {
+    return playLayer(name, parts, opts);
+  }
+
   death(place, pitch = 1, volume = 1) {
     return playLayer('death', [
       { kind: 'tone', type: 'sawtooth', freq: 300 * pitch, freqTo: 70 * pitch,
