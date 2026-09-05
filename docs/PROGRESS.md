@@ -375,8 +375,11 @@ vanilla's visual language.
   peaks +4.97° at 0.08 s and settles under 3% by 0.25 s (left mirrors),
   five stacked hits clamp at 0.16 rad, every channel returns to exactly
   zero. Browser proof through the REAL hooks (survival world): knockback +
-  damage rolls the camera's world matrix and the tilt shows in a screenshot
-  with the red flash; a 7-block drop dips the eye 1.620 -> 1.487 and back to
+  damage rolls the camera's world matrix +4.96° at the peak (read off the
+  right vector — `camera.rotation` is XYZ-ordered and its z is NOT the roll,
+  which cost one false failure), back within 0.3° by the end of the window,
+  and the tilt shows in a screenshot with the red flash; a 7-block drop dips
+  the eye 1.620 -> 1.487 and back to
   1.620 with fall damage taken; `combat.attack` on a cow lands (10 -> 9),
   kicks the FOV (2.5 set, 71.02 read one 0.1 s sandbox frame later) and
   pushes the camera 0.047 forward; the break hook dips 0.021.
