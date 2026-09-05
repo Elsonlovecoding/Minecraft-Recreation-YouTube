@@ -446,6 +446,33 @@ chill music"; "render distance always at 28 chunks or more"):
   small fraction of wall time. Anything gated on GAME seconds (mob voice
   timers, the eat duration, mining) must be driven by advancing its own
   timer or polling its own state — a wall-clock wait proves nothing.
+- **FOLLOW-UP — the yellow sunset** ("clouds are looking weird during
+  sunset, same as mountains, they look all yellow"). The player was right
+  and the evidence was already in the pass's own dawn shot: a flat gold
+  mountain range. Three causes, three fixes:
+  - `SKY.HAZE_NEAR` 40 -> 110 and the golden-hour keyframe HAZE 0.85/0.9 ->
+    0.5/0.55 (civil 0.75 -> 0.5, blue hour 0.45 -> 0.35). At 40 the fog
+    reached full horizon colour ~100 blocks out, so everything past it was
+    a horizon-coloured cut-out; a ridge at 250 blocks now sits ~25% fogged
+    at the peak instead of ~60%. fog.far at peak haze is 402 blocks, inside
+    the 448-block ring edge, so the fog-equals-horizon match still hides
+    the edge (the farthest peak at the fog's end still silhouettes in the
+    band's colour — it has to).
+  - The daylight pop grade now fades with sun ELEVATION as well as sun
+    level (`GRADING.POP_ZERO/FULL_ELEVATION`): it was at 85% strength with
+    the sun on the horizon, adding warmth and vibrance to a frame the sky
+    had already coloured.
+  - The cloud SHADE no longer takes the horizon tint — grey-blue x sunset
+    gold came out olive-brown, the "weird" cloud. Shaded cloud takes the
+    sky's mid colour (`SKY_AMBIENT` 0.30 -> 0.45: violet at dusk, blue at
+    noon); only the lit faces warm toward the horizon, and less
+    (`CLOUDS.SUN_WARMTH` 0.5, `BASE_WARM` 0.40).
+  - Verified with a seven-shot set at 1280x720 (sunset clouds and
+    mountains, civil-twilight clouds and mountains, dawn mountains and
+    western clouds, a late-afternoon control): grey stone, ore specks and
+    tree greens hold under a warm veil at every twilight stage, the clouds
+    read grey-lavender with warm bellies, the afternoon control is
+    unchanged; zero console errors.
 
 **THE ITEM IN HAND, POSED LIKE THE REAL GAME** ("make the item in hand like
 real game, if tools then look good, good direction, face slight upwards a bit
