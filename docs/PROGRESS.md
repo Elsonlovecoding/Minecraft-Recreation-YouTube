@@ -387,7 +387,8 @@ vanilla's visual language.
   its front edge and its body drops 190 -> 85 Hz; the break gets a low thud
   (m.body x 1.1, 0.16 s) under the crumble; PARTICLES.BREAK 14 -> 22 at
   speed 3.6, LAND 18 -> 22. audio.js 778 lines, controller 321, feel 123.
-- Smoke 88/88.
+- Smoke 88/88; the world-save suite re-run last (the controller and stats
+  both changed): 17/17, zero console errors.
 
 **LONG DAYS — 15 minutes of day, 5 of night** ("make day longer than night,
 15 min day, 5 min night"):
