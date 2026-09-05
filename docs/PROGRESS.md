@@ -312,6 +312,32 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**LONG DAYS — 15 minutes of day, 5 of night** ("make day longer than night,
+15 min day, 5 min night"):
+- **Two clocks, one knob.** `TIME.DAY_FRACTION` 0.75 (0.5 restores the old
+  half-and-half). The cycle now keeps a CLOCK fraction (wall time through
+  the 20-minute cycle) and a SOLAR fraction, and everything downstream
+  reads solar time: the sun's orbit, the DAY_NIGHT keyframes, the mist
+  windows, the bed's night check, saves and every `setTimeOfDay` caller —
+  so 0 sunrise / 0.25 noon / 0.5 sunset / 0.75 midnight mean what they
+  always did and not one keyframe moved. `clockToSolar`/`solarToClock`
+  (lighting.js) are piecewise-linear, exact inverses: solar time runs at
+  two-thirds clock speed while the sun is up and double speed while it is
+  down, so the sun is above the horizon for exactly 900 s of the 1200.
+- **What that does to the evening**: the 54-second dusk and dawn sequences
+  take 27 s of wall time each, and full darkness (SKY_DARKEN 9, solar
+  0.525-0.975) lasts 4.5 minutes of the 5. The sun's apparent speed
+  triples the moment it touches the horizon — deliberate, and the same
+  trick every "short night" game plays; a C1 speed blend would have to
+  slow noon to 0.4x or steal time from the night to pay for it.
+- **The debug clock** (F3 overlay) shows WALL time again — sunset reads
+  15:00 / 20:00, noon 7:30 — by mapping the solar fraction back
+  (`ui/debug.js` imports solarToClock); its labels follow the new twilight
+  bounds (sunset 0.5-0.545, sunrise 0.955-1.0).
+- Verified in node: the maps round-trip to 2e-16, are monotonic, put
+  sunset at clock 0.75 and noon at 0.375, and count 900 s of sun-up wall
+  time out of 1200; dusk 27 s, full dark 270 s. In Chromium: VERIFY3
+
 **THE LIVELY PASS — twilight, a vibrant sun and moon, realistic cloud light,
 grading, every mob's voice, chill music; hands outward; r=28** (three
 requests in one message: "move that hand object to the right a bit, too

@@ -465,10 +465,30 @@ function createCelestials(sky) {
   };
 }
 
+// Two clocks (config TIME.DAY_FRACTION — "15 min day, 5 min night"): the
+// CLOCK fraction is wall time through the cycle; the SOLAR fraction is
+// where the sun's position, the keyframes, the mist windows, saves and
+// every setTimeOfDay caller live (0 sunrise, 0.25 noon, 0.5 sunset, 0.75
+// midnight — unchanged). Solar time runs slower than the clock while the
+// sun is up and faster while it is down, piecewise-linearly, so the sun
+// is above the horizon for exactly DAY_FRACTION of the cycle. Both maps
+// wrap their input and are exact inverses.
+export function clockToSolar(c) {
+  const D = TIME.DAY_FRACTION;
+  const w = ((c % 1) + 1) % 1;
+  return w < D ? (w / D) * 0.5 : 0.5 + ((w - D) / (1 - D)) * 0.5;
+}
+export function solarToClock(s) {
+  const D = TIME.DAY_FRACTION;
+  const w = ((s % 1) + 1) % 1;
+  return w < 0.5 ? (w / 0.5) * D : D + ((w - 0.5) / 0.5) * (1 - D);
+}
+
 // Drives everything time-of-day: sky palette, fog colour (always the horizon
 // colour), baked-light uniforms, sun/moon positions, and the directional
 // light. Call update(delta, focus) once per frame; focus is the camera
-// position. t convention: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight.
+// position. t convention (SOLAR): 0 sunrise, 0.25 noon, 0.5 sunset, 0.75
+// midnight; `time` below is the CLOCK in seconds.
 export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
   const frames = DAY_NIGHT.KEYFRAMES.map((k) => ({
     t: k.T,
@@ -491,7 +511,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
   const lightDir = new THREE.Vector3();
   const WHITE = new THREE.Color(1, 1, 1);
 
-  let time = TIME.START_TIME * TIME.DAY_LENGTH_SECONDS;
+  let time = solarToClock(TIME.START_TIME) * TIME.DAY_LENGTH_SECONDS;
   let day = 0; // Phase 24: whole days elapsed — the moon-phase clock
   let lastSkyDarken = 0;
   let lastSunLevel = 1; // Phase 26: post/water read the sun state per frame
@@ -499,7 +519,7 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
 
   return {
     get timeOfDay() {
-      return time / TIME.DAY_LENGTH_SECONDS;
+      return clockToSolar(time / TIME.DAY_LENGTH_SECONDS); // SOLAR fraction
     },
     get dayIndex() {
       return day;
@@ -540,8 +560,8 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
     // lands in the next morning), so the moon phase advances like vanilla's.
     // A jump of under 2% of a day doesn't count — re-pinning the clock to
     // roughly "now" must not spin the moon.
-    setTimeOfDay(t) {
-      const next = (((t % 1) + 1) % 1) * TIME.DAY_LENGTH_SECONDS;
+    setTimeOfDay(t) { // t is a SOLAR fraction (0.5 = sunset, whatever the split)
+      const next = solarToClock(t) * TIME.DAY_LENGTH_SECONDS;
       if (next < time - 0.02 * TIME.DAY_LENGTH_SECONDS) day++;
       time = next;
     },
@@ -571,7 +591,10 @@ export function createDayNightCycle({ sky, fog, sun, ambient, clouds = null }) {
         time -= TIME.DAY_LENGTH_SECONDS;
         day++; // a new day — the moon turns a phase
       }
-      const t = time / TIME.DAY_LENGTH_SECONDS;
+      // Everything below runs on SOLAR time (see clockToSolar above), so
+      // the keyframes, the orbit and the mist windows keep their 0/0.25/
+      // 0.5/0.75 landmarks whatever the day/night split is.
+      const t = clockToSolar(time / TIME.DAY_LENGTH_SECONDS);
 
       // Wind clock for the waving leaves/plants — wrapped so the shader's
       // sine arguments never lose float precision over long sessions.

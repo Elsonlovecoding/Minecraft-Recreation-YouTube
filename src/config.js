@@ -2285,13 +2285,22 @@ export const INTERACTION = {
 // ---------------------------------------------------------------------------
 
 export const TIME = {
-  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes,
-                                  // split half and half by request — 10
-                                  // minutes of day, 10 of night, with quick
-                                  // 30-second dusk/dawn washes at the
-                                  // night's edges (DAY_NIGHT.KEYFRAMES)
-  START_TIME: 0.04,               // day fraction at boot (just after sunrise);
-                                  // t=0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
+  DAY_LENGTH_SECONDS: 1200,       // full day/night cycle: exactly 20 minutes
+  // LONG DAYS ("make day longer than night, 15 min day, 5 min night"): the
+  // sun is above the horizon for this fraction of the cycle. The cycle
+  // keeps two clocks — the CLOCK fraction (wall time through the cycle)
+  // and the SOLAR fraction, where the sun's position, the keyframes, the
+  // mist windows, saves and every setTimeOfDay caller live (t=0 sunrise,
+  // 0.25 noon, 0.5 sunset, 0.75 midnight, unchanged). Solar time runs at
+  // 0.5/DAY_FRACTION of clock speed while the sun is up and 0.5/(1 -
+  // DAY_FRACTION) while it is down: at 0.75 that is 15 minutes of day at
+  // two-thirds speed and 5 minutes of night at double speed. Everything
+  // downstream reads solar time and is unaware of the split; the dusk and
+  // dawn sequences (54 s of solar time each) take 27 s of wall time and
+  // full darkness (SKY_DARKEN 9, solar 0.525-0.975) lasts 4.5 minutes.
+  // 0.5 restores the old half-and-half cycle.
+  DAY_FRACTION: 0.75,
+  START_TIME: 0.04,               // SOLAR fraction at boot (just after sunrise)
 };
 
 export const LIGHTING = {

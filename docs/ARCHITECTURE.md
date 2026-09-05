@@ -162,7 +162,13 @@ src/
                          (no gold-to-silver snap at sunset), the sun disc
                          tinted by elevation, the moon halo fading in
                          with the stars. Gameplay clock unchanged (see
-                         config DAY_NIGHT)
+                         config DAY_NIGHT). TWO CLOCKS (TIME.DAY_FRACTION,
+                         "15 min day, 5 min night"): `time` is the wall
+                         CLOCK; clockToSolar/solarToClock (exported,
+                         piecewise-linear exact inverses) map it to the
+                         SOLAR fraction every consumer reads — orbit,
+                         keyframes, mist, saves, setTimeOfDay, the bed's
+                         night check — so 0.5 is sunset whatever the split
     chunk_shader.js      the CHUNK MATERIAL patch + its uniforms, split
                          out of lighting.js by the lively pass (the cut
                          ARCHITECTURE had mandated since Phase 27; moved
@@ -500,7 +506,11 @@ src/
     icons.js             item icons for hud/screens: assets/items sprites,
                          isometric atlas-rendered block cubes (Phase 7
                          split), tinted potion bottles (Phase 18)
-    debug.js             fps, coords, chunk count
+    debug.js             fps, coords, chunk count, the day clock (WALL
+                         minutes:seconds — maps the cycle's solar fraction
+                         back through solarToClock, so sunset reads 15:00
+                         under the 15/5 split) and its day/sunset/night/
+                         sunrise label
 
 assets/
   block_atlas.png        real Java Edition textures
