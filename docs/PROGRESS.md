@@ -336,7 +336,17 @@ SHADERS)"):
   bounds (sunset 0.5-0.545, sunrise 0.955-1.0).
 - Verified in node: the maps round-trip to 2e-16, are monotonic, put
   sunset at clock 0.75 and noon at 0.375, and count 900 s of sun-up wall
-  time out of 1200; dusk 27 s, full dark 270 s. In Chromium: VERIFY3
+  time out of 1200; dusk 27 s, full dark 270 s. In Chromium: the sun sits
+  on the horizon in the golden-hour sky at solar 0.5 and high overhead at
+  0.25, the overlay clock reads 7:30 at noon, 15:00 at sunset and 17:30 at
+  midnight, `setTimeOfDay(0.61)` reads back 0.61 (what a save stores and
+  restores), zero console errors. One harness note: the F3 overlay refreshes
+  on accumulated GAME time, which crawls under software GL, so a screenshot
+  taken 1.5 s after a clock jump shows the previous reading — settle ~10 s
+  for the overlay and the sky to agree in one frame. The save suite
+  (17 checks, including the persisted-clock round trip that this change
+  touches most directly) was still running when this landed; its result is
+  appended in the follow-up note below.
 
 **THE LIVELY PASS — twilight, a vibrant sun and moon, realistic cloud light,
 grading, every mob's voice, chill music; hands outward; r=28** (three
