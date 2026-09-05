@@ -312,6 +312,80 @@ SHADERS)"):
   with a floating crown, sunset with layered shelves over a half-occluded
   sun; zero game console errors every run.
 
+**VANILLA-IDIOM TEXTURES + THE JUICE PASS** ("Do the vanilla-accurate
+textures and juice pass" — the two biggest items on the honest-rating gap
+list). Ground rule stated up front and kept: nothing is copied from the
+game's own texture files; the tiles are ORIGINAL pixel art authored in
+vanilla's visual language.
+- **The atlas is generated now.** `tools/gen_block_atlas.py` (the 69 tile
+  painters + `build()` + a struct/zlib PNG writer, 744 lines) over
+  `tools/atlas_paint.py` (the brushes, 319 — split out under the size cap
+  with the output verified byte-identical by md5) writes
+  `assets/block_atlas.png` — all 69 shipped tiles in the fixed ATLAS_MAP
+  layout (69/70 still painted at boot). Dependency-free Python 3. Six
+  material generators over deterministic, TILE-PERIODIC hash noise (every
+  field wraps at 16px so faces repeat seamlessly): `speckle` (rank-quantised
+  fbm + per-texel grain into a 4-shade palette — stone, dirt, sand, wool,
+  netherrack, the granites, deepslate with a vertical stretch), `cobble`
+  (jittered-grid Worley stones with a dark mortar and a top-left light —
+  cobblestone, gravel, end stone, cobbled deepslate, the furnace body),
+  `bark` (broken vertical ridges), `planks` (four boards, grain along them,
+  staggered end joints), `bricks` (staggered courses with a bevel — stone
+  bricks, nether bricks), `ore_blobs` (angular 2-7-texel mineral clusters,
+  one highlight texel top-left and a shadow bottom-right, min-spaced
+  seeds), `bevel_block` (the cast-metal blocks), and string-art sprites for
+  every cutout (torch, flowers, dead bush, wart, brewing stand, the tool
+  faces of the crafting table, the lit furnace's fire). Rank-quantising the
+  noise means the shade proportions in the palettes come out EXACT rather
+  than depending on how the noise happens to distribute.
+- **Conventions kept**, measured tile by tile against the old atlas: grass
+  top / leaves / plants painted green for the biome tint to multiply (grass
+  mean (78,125,55), leaves (43,99,18), cover 0.67), water alpha 180 on every
+  texel, cactus side/top insets (0.88/0.77), the 13px-tall portal frame side
+  (0.81), iron bars 0.44, spawner 0.68, glass border-only. Palette means
+  steered to the classic blocks after a first sweep came out dark: stone
+  123, cobble lightened (stones 118-152 over 74 mortar), gravel 130s, planks
+  (164,132,80), sand (220,209,164), end stone lightened.
+- **Verified in-game**, not just on a contact sheet: a Chromium harness
+  built a wall of every solid block id (four courses, 14 wide) on a stone
+  stage at noon and shot it from three distances plus a spawn landscape and
+  a ground close-up — the grass side's turf edge, cobble mortar, plank
+  seams, ore clusters, the bookshelf's spines, the spawner lattice and the
+  brewing-stand cross all read at play distance; zero console errors. The
+  grass top's first cut read as 2-3px blotches on the ground close-up and
+  was regrained finer (octave 16 dominant, grain 0.55) — the classic turf
+  is a speckle, not a blotch. `docs/ATLAS_MAP.md`, ARCHITECTURE's asset and
+  "adding a block" notes and SPEC's texture line now say generated
+  original art.
+- **The feel layer** (`player/feel.js`, PLAYER.FEEL): the camera's physical
+  reactions as spring-damped IMPULSES, so a stack of hits can only add
+  energy that drains (clamped at MAX_ROLL 0.16 rad / MAX_DIP 0.35). Hurt
+  rolls the view toward the side the blow came from (the knockback
+  direction stats.applyKnockback records is consumed by the next damage();
+  fall/fire/drowning have no side and alternate a half-size roll) and adds
+  trauma that drives a two-sine tremble on yaw/pitch (~trauma², 0.5 s);
+  landing dips the eye by the fall (controller reads body.lastLanding the
+  frame it is set — hop 0.026 blocks, 6+ blocks 0.142); a melee hit that
+  lands punches the camera 0.05 blocks along the view and kicks the FOV
+  +2.5° (crit x1.6), easing back at 9/s; a block breaking dips a 0.02
+  hair. Springs are integrated in CLOSED FORM (the underdamped solution
+  per step) after the first semi-implicit Euler cut lost half its
+  amplitude at 60 Hz — now the motion is identical at any frame rate and a
+  big frame can never overshoot. Node check at 60 Hz: hurt from the right
+  peaks +4.97° at 0.08 s and settles under 3% by 0.25 s (left mirrors),
+  five stacked hits clamp at 0.16 rad, every channel returns to exactly
+  zero. Browser proof through the REAL hooks (survival world): knockback +
+  damage rolls the camera's world matrix and the tilt shows in a screenshot
+  with the red flash; a 7-block drop dips the eye 1.620 -> 1.487 and back to
+  1.620 with fall damage taken; `combat.attack` on a cow lands (10 -> 9),
+  kicks the FOV (2.5 set, 71.02 read one 0.1 s sandbox frame later) and
+  pushes the camera 0.047 forward; the break hook dips 0.021.
+- **Sound and particles to match**: the landed hit gains a 2.8 kHz click on
+  its front edge and its body drops 190 -> 85 Hz; the break gets a low thud
+  (m.body x 1.1, 0.16 s) under the crumble; PARTICLES.BREAK 14 -> 22 at
+  speed 3.6, LAND 18 -> 22. audio.js 778 lines, controller 321, feel 123.
+- Smoke 88/88.
+
 **LONG DAYS — 15 minutes of day, 5 of night** ("make day longer than night,
 15 min day, 5 min night"):
 - **Two clocks, one knob.** `TIME.DAY_FRACTION` 0.75 (0.5 restores the old

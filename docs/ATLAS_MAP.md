@@ -5,8 +5,19 @@ Index = row * 16 + column, row-major from top-left.
 
 **Do not renumber these.** The game code references them directly.
 
-Indices 0-57 are unchanged from the previous atlas.
-Indices 58-68 are new: deepslate variants and ground plants.
+**The atlas is GENERATED.** `python3 tools/gen_block_atlas.py` writes it:
+every tile 0-68 is original pixel art authored procedurally in the vanilla
+idiom (a few hand-picked shades per material, deterministic hash noise that
+wraps at the tile edge, string-art sprites for the cutouts), so the file is
+reproducible byte for byte and nothing in it is copied from any texture
+pack. Edit the generator, not the PNG; `--sheet out.png` renders a zoomed
+contact sheet for eyeballing a change. The generator keeps the conventions
+the meshes and tint depend on — grass top / leaves / plants painted green
+for the biome tint to multiply, cactus insets, the 13px portal frame side,
+water at alpha 180.
+
+Indices 0-57 keep the layout of the first atlas.
+Indices 58-68 are deepslate variants and ground plants.
 
 **Generated tiles.** Indices at the free tail of the grid are painted into the
 loaded atlas at boot by `render/atlas.js` — art this project ships no texture

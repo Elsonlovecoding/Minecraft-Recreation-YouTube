@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { PLAYER, DEBUG, CREATIVE } from '../config.js';
 import { PlayerBody, findSpawnPosition } from './body.js';
 import { gamemode } from './gamemode.js';
+import { createFeel } from './feel.js';
 
 // Re-exported: main.js and the node harness have imported both from here
 // since Phase 5 (Phase 21 moved the bodies into player/body.js).
@@ -45,6 +46,9 @@ export function createPlayerController({ world, camera, canvas }) {
   let bobIntensity = 0;
   const baseFov = camera.fov;
   let fov = camera.fov;
+  // The camera's reactions (roll, dip, punch, shake — player/feel.js);
+  // composed on top of the eye in syncCamera, fed by stats/combat/interaction.
+  const feel = createFeel();
   let inputOverride = false; // dev/test scaffolding: accept input without lock
   const hint = document.getElementById('lock-hint');
 
@@ -202,6 +206,9 @@ export function createPlayerController({ world, camera, canvas }) {
           delta,
         );
         if (body.lastStepUp > 0) stepSmooth += body.lastStepUp;
+        // The landing's one-frame signal (stats reads it too, later this
+        // frame, for fall damage): the view plants with the feet.
+        if (body.lastLanding > 0) feel.land(body.lastLanding);
       }
     }
     syncCamera(delta);
@@ -233,19 +240,27 @@ export function createPlayerController({ world, camera, canvas }) {
     bobY = -Math.abs(Math.cos(t)) * B.AMP_Y * bobIntensity;
     const rx = Math.cos(yaw); // camera-right on the horizontal plane
     const rz = -Math.sin(yaw);
+    // The feel layer's departures from the eye: a punch along the view, a
+    // dip, a roll about the view axis and a tremble on the look angles.
+    feel.update(delta);
+    const cp = Math.cos(pitch);
+    const punch = feel.punch;
     camera.position.set(
-      p.x + rx * bobX,
-      p.y + eyeHeight - stepSmooth + bobY,
-      p.z + rz * bobX,
+      p.x + rx * bobX - Math.sin(yaw) * cp * punch,
+      p.y + eyeHeight - stepSmooth + bobY + feel.dip + Math.sin(pitch) * punch,
+      p.z + rz * bobX - Math.cos(yaw) * cp * punch,
     );
-    camera.quaternion.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
+    camera.quaternion.setFromEuler(
+      euler.set(pitch + feel.shakePitch, yaw + feel.shakeYaw, feel.roll, 'YXZ'),
+    );
     // Sprinting (on land or as a swim) widens the FOV a touch
     const fovTarget = baseFov +
       (mode === 'walk' && (body.sprinting || body.swimSprinting)
         ? PLAYER.SPRINT_FOV_BOOST : 0);
     if (delta > 0) fov += (fovTarget - fov) * (1 - Math.exp(-PLAYER.FOV_LERP_RATE * delta));
-    if (Math.abs(camera.fov - fov) > 0.01) {
-      camera.fov = fov;
+    const shownFov = fov + feel.fovKick; // a landed hit's kick rides on top
+    if (Math.abs(camera.fov - shownFov) > 0.01) {
+      camera.fov = shownFov;
       camera.updateProjectionMatrix();
     }
   }
@@ -255,6 +270,7 @@ export function createPlayerController({ world, camera, canvas }) {
   return {
     update,
     body,
+    feel, // camera reactions — stats.damage, combat and interaction feed it
     get position() {
       return body.position;
     },

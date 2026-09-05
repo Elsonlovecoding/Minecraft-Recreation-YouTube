@@ -53,6 +53,8 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   let absorptionSeconds = 0;
   let regenEffectTimer = 0; // countdown to the next regeneration heal
   let flash = 0;         // damage screen-flash countdown
+  let hitDirX = 0;       // the last knockback's direction, consumed by the
+  let hitDirZ = 0;       // next damage() for the camera's damage tilt
   let contactTimer = 0;  // countdown until the next contact damage tick
   let fireTimer = STATS.FIRE_TICK_SECONDS;
   let drownTimer = STATS.DROWN_TICK_SECONDS;
@@ -97,6 +99,8 @@ export function createStats({ world, player, inventory, items, onDeath }) {
   function applyKnockback(dirX, dirZ) {
     const len = Math.hypot(dirX, dirZ);
     if (len < 1e-6) return;
+    hitDirX = dirX; // every caller follows with damage(), which tilts the view
+    hitDirZ = dirZ;
     const v = player.body.velocity;
     v.x = (dirX / len) * STATS.KNOCKBACK_HORIZONTAL;
     v.z = (dirZ / len) * STATS.KNOCKBACK_HORIZONTAL;
@@ -148,6 +152,11 @@ export function createStats({ world, player, inventory, items, onDeath }) {
     const p = player.body.position;
     particles.damage(p.x, p.y + PLAYER.HEIGHT * 0.55, p.z);
     audio.playerHurt();
+    // The camera rolls toward the blow (player/feel.js); a directionless
+    // hit — fall, fire, drowning — still jolts, just without a side.
+    player.feel?.hurt(hitDirX, hitDirZ, player.yaw ?? 0);
+    hitDirX = 0;
+    hitDirZ = 0;
     if (amount <= 0) return; // fully absorbed — the hit still stings visually
     health = Math.max(0, health - amount);
     gainExhaustion(STATS.EXHAUST_DAMAGE); // being hurt costs a little food
