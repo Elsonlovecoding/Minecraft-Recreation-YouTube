@@ -12,3 +12,5 @@ test.html
 # Dev-harness mesher A/B snapshot (the pre-split Phase 16 chunks.js; the
 # node suite regenerates it from git history and it must never ship)
 src/world/chunks_head.js
+# Python bytecode from running tools/gen_block_atlas.py (imports atlas_paint)
+__pycache__/
