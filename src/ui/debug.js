@@ -3,6 +3,7 @@
 
 import { DEBUG, OVERWORLD, CHUNK, TIME } from '../config.js';
 import { BLOCK, blockDef } from '../world/blocks.js';
+import { solarToClock } from '../render/lighting.js'; // the day clock shows WALL time
 
 let overlay = null;
 let smoothedFps = 0;
@@ -49,22 +50,25 @@ export function updateDebug(delta, camera, stats = null, timeOfDay = null) {
     (timeOfDay !== null ? `\nTIME ${dayClock(timeOfDay)} (${timeLabel(timeOfDay)})` : '');
 }
 
-// The day clock as minutes:seconds into the 20-minute day — "TIME 12:41 /
-// 20:00" is readable at a glance where the raw day fraction was not (the
-// follow-up report). Day starts at sunrise (t=0), so 10:00 is sunset.
+// The day clock as minutes:seconds of WALL time into the 20-minute cycle —
+// "TIME 12:41 / 20:00" is readable at a glance where the raw day fraction
+// was not (the follow-up report). `t` arrives as the SOLAR fraction (0.5 =
+// sunset) and is mapped back to the clock, so with TIME.DAY_FRACTION 0.75
+// sunset reads 15:00, not 10:00.
 function dayClock(t) {
   const total = Math.round(TIME.DAY_LENGTH_SECONDS);
-  const secs = Math.floor(t * total);
+  const secs = Math.floor(solarToClock(t) * total);
   const mmss = (v) => `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
   return `${mmss(secs)} / ${mmss(total)}`;
 }
 
-// Matches the DAY_NIGHT keyframe timing (the half-and-half retime): day
-// 0-0.5, sunset 0.5-0.525, night 0.525-0.975, sunrise 0.975-1.0.
+// Matches the DAY_NIGHT keyframe timing in SOLAR fractions: day 0-0.5,
+// sunset (golden hour through the blue hour) 0.5-0.545, night 0.545-0.955,
+// sunrise 0.955-1.0.
 function timeLabel(t) {
-  if (t >= 0.975) return 'sunrise';
+  if (t >= 0.955) return 'sunrise';
   if (t < 0.5) return 'day';
-  if (t < 0.525) return 'sunset';
+  if (t < 0.545) return 'sunset';
   return 'night';
 }
 

@@ -22,7 +22,7 @@
 
 import * as THREE from 'three';
 import { VISUAL, RENDER, SKY, LIGHTING } from '../config.js';
-import { patchChunkMaterial } from './lighting.js';
+import { patchChunkMaterial } from './chunk_shader.js';
 
 // Written once per frame by main.js (the CHUNK_LIGHT_UNIFORMS pattern):
 // time, the current sky palette (fog colour IS the horizon by the day/night

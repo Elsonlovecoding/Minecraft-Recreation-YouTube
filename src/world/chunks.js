@@ -19,7 +19,8 @@ import {
 } from '../config.js';
 import { BLOCK, BLOCKS, TORCH_LEAN, HAS_SHAPE } from './blocks.js';
 import { TILE, tilePixelRect } from '../render/atlas.js';
-import { computeLightWindow, patchChunkMaterial } from '../render/lighting.js';
+import { computeLightWindow } from '../render/lighting.js';
+import { patchChunkMaterial } from '../render/chunk_shader.js';
 import { patchWaterMaterial } from '../render/water_fx.js';
 import {
   PASS_NONE, PASS_OPAQUE, PASS_CUTOUT, PASS_WATER, PASS_LAVA, PASS_PORTAL,

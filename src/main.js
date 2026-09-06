@@ -12,8 +12,8 @@ import { updateWaterUniforms } from './render/water_fx.js';
 import { loadAtlas } from './render/atlas.js';
 import {
   createSky, createFog, createSunLight, createAmbientLight, createDayNightCycle,
-  CHUNK_LIGHT_UNIFORMS,
 } from './render/lighting.js';
+import { CHUNK_LIGHT_UNIFORMS } from './render/chunk_shader.js';
 import { createClouds } from './render/sky_fx.js';
 import { initDebug, updateDebug, logTerrainProfile, logColumn, logBlockCensus } from './ui/debug.js';
 import { initHud, updateHud, setBossBar, setSleepFade, showToast } from './ui/hud.js';

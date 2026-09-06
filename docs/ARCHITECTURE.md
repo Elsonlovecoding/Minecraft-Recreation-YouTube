@@ -132,8 +132,17 @@ src/
                          torches/portals, sky masked out), and the grading
                          composite (richer greens, warmer sun, cooler
                          shadows, the one linear->sRGB encode + dither).
-                         All tunables in config VISUAL; POST_ENABLED false
-                         restores the direct Phase 25 render path
+                         The lively pass: a highlight SHOULDER above
+                         GRADING.SHOULDER_KNEE instead of the hard clip,
+                         day VIBRANCE weighted toward less-saturated
+                         pixels, a colour-keyed blue gain (never depth-
+                         keyed, so fog still matches the dome), and the
+                         celestial discs let into the bloom by linear
+                         luminance (BLOOM.SKY_HOT_*: the additive sun sits
+                         above what the dome can reach; the sky never
+                         blooms). All tunables in config VISUAL;
+                         POST_ENABLED false restores the direct Phase 25
+                         render path
     water_fx.js          the Phase 26 water surface: a patch layered on the
                          lit chunk material — world-space vertex ripple
                          (render-only; physics never sees it), analytic
@@ -143,23 +152,41 @@ src/
                          sun glint. WATER_UNIFORMS written per frame from
                          main.js (the CHUNK_LIGHT_UNIFORMS pattern)
     atlas.js             texture atlas loading and UV lookup
-    lighting.js          light propagation, AO, day/night (the cycle drives
-                         the Phase 24 sky furniture below). The chunk
-                         shader patch also carries DRIFTING CLOUD SHADOWS
-                         (the Phase 27 "like shaders" follow-up): a cheap
-                         3-octave copy of the sky's cloud field, sampled
-                         at each open-sky column projected along the sun,
-                         dims the SKY light only — synced to the sky's
-                         drift by per-frame uniforms, off at night and
-                         under fixed dimension skies — WIND: vertices
-                         carrying the mesher's per-vertex wave weight
-                         (leaves; cross-plant tips) sway through a
-                         world-space wind field (config VISUAL.WIND),
-                         phase-continuous across blocks and chunks — and
-                         DIRECTIONAL SUNLIGHT (VISUAL.SUNLIGHT): face
-                         normals from screen derivatives brighten faces
-                         toward the sun/moon and shade faces away,
-                         swinging through the day, scaled by sky access
+    lighting.js          light propagation, AO, and the DAY/NIGHT CYCLE
+                         (drives the sky furniture below and writes the
+                         chunk-shader uniforms every frame). The lively
+                         pass made the cycle a staged TWILIGHT: eased
+                         keyframe interpolation (DAY_NIGHT.EASE), civil
+                         twilight and blue-hour frames at both ends of the
+                         day, the moon's dome wash on its own shader term
+                         (no gold-to-silver snap at sunset), the sun disc
+                         tinted by elevation, the moon halo fading in
+                         with the stars. Gameplay clock unchanged (see
+                         config DAY_NIGHT). TWO CLOCKS (TIME.DAY_FRACTION,
+                         "15 min day, 5 min night"): `time` is the wall
+                         CLOCK; clockToSolar/solarToClock (exported,
+                         piecewise-linear exact inverses) map it to the
+                         SOLAR fraction every consumer reads — orbit,
+                         keyframes, mist, saves, setTimeOfDay, the bed's
+                         night check — so 0.5 is sunset whatever the split
+    chunk_shader.js      the CHUNK MATERIAL patch + its uniforms, split
+                         out of lighting.js by the lively pass (the cut
+                         ARCHITECTURE had mandated since Phase 27; moved
+                         VERBATIM by script, the four importers repointed):
+                         CHUNK_LIGHT_UNIFORMS, heldLightBrightness and
+                         patchChunkMaterial — baked light x time of day,
+                         radial fog, block jitter, the held-torch point
+                         light, DRIFTING CLOUD SHADOWS (a cheap 3-octave
+                         copy of the sky's cloud field, sampled at each
+                         open-sky column projected along the sun, dims the
+                         SKY light only — synced to the sky's drift, off at
+                         night and under fixed skies), WIND (vertices
+                         carrying the mesher's per-vertex wave weight sway
+                         through a world-space wind field, config
+                         VISUAL.WIND), DIRECTIONAL SUNLIGHT (face normals
+                         from screen derivatives brighten faces toward the
+                         sun/moon and shade faces away), warm bounce /
+                         cool shade, dawn mist
     sky_fx.js            the sky furniture (Phase 24; clouds rebuilt
                          through the Phase 27 follow-ups, ending
                          VOLUMETRIC): the colour pass RAYMARCHES a slab
@@ -179,7 +206,21 @@ src/
                          the eight-phase ROUND moon (AA disc, seeded
                          maria + craters shared by every phase, soft
                          elliptical terminator, faint earthshine dark
-                         side) — split from lighting.js per the size cap
+                         side) — split from lighting.js per the size cap.
+                         The lively pass gave the march LIGHT DIRECTION:
+                         a cheap shadow tap toward the sun (a 3-octave
+                         field at the ray's entry and exit columns, lerped
+                         along the march) shades the far side of a mass
+                         and lifts the near side (strength falls with sun
+                         elevation), Beer-powder edge darkening, sky-
+                         coloured undersides, low-sun warmth lit into the
+                         bases and gilding the lit faces, a broad
+                         forward-scatter lobe, and TOWER (weak weather
+                         cells cap their crowns lower — marched height
+                         only, so the depth pass is untouched). The sun
+                         grades white-hot to gold at its rim inside a
+                         two-radius corona; the moon's halo carries a
+                         tight limb ring; both windowed to zero at the rim
     particles.js         the particle system (Phase 22): ONE fixed, capped,
                          pooled simulation drawn in two instanced draw calls
                          — textured cubes cropped from a block's own atlas
@@ -315,6 +356,22 @@ src/
                          end-portal swirls + hum), the looping water/lava
                          ambience beds and the rare underground cave tone.
                          Purely reactive — it reads state, never writes it
+    mob_voices.js        every mob's VOICE (the lively pass — "animals all
+                         have sound"): synthesised idle calls per type (cow
+                         moo, pig grunt pair, sheep bleat, chicken clucks/
+                         bawk, zombie groan, skeleton rattle, spider hiss,
+                         enderman purr/vwoop, ghast cry, blaze breath) as
+                         tone/noise layer recipes played through the new
+                         audio.layer() entry, spatialised at the animal.
+                         Scheduling rides the mob manager's per-frame walk
+                         (entities/mobs.js calls tick(mob, dt, night) for
+                         live mobs in loaded chunks): per-type random
+                         timers, a staggered first call, a herd guard
+                         (BURST_CAP voices per BURST_WINDOW), passives
+                         rarer and softer at night; pitchOf() scales the
+                         generic hurt/death yelp per type. Creepers stay
+                         silent between fuses. Knobs: config
+                         AUDIO.MOB_VOICES
     persistence.js       world saving (the save pass): IndexedDB store of
                          named worlds (id, name, per-world seed, mode,
                          clock/player/container state) plus RLE-compressed
@@ -325,14 +382,20 @@ src/
                          a compare-and-swap session stamp so two tabs can
                          never interleave one world's history, and a
                          restore hook world.js consults as chunks generate
-    music.js             generative background music (the final pass):
-                         ORIGINAL peaceful music in the Minecraft spirit,
-                         synthesised like every other sound — a maj7 chord
-                         pad walking a progression graph under a sparse
-                         pentatonic felt-piano melody, scheduled a second
+    music.js             generative background music (the final pass;
+                         made CHILL by the lively pass): ORIGINAL music in
+                         the Minecraft spirit, synthesised like every other
+                         sound — maj9/min9 chord pads walking a progression
+                         graph under a breathing lowpass with a tape-wobble
+                         LFO, a sparse pentatonic felt-piano melody, by day
+                         a soft e-piano arpeggio under some chords and a
+                         whisper of swung brushed pulse, a vinyl texture
+                         bed with Poisson crackles, and a generated-impulse
+                         convolver hall on the bus; scheduled a second
                          ahead each frame through audioBus(), thinning and
-                         dropping an octave at night. Nothing loops and
-                         nothing is a recording; the piece never repeats
+                         dropping an octave at night (arp and pulse rest).
+                         Nothing loops and nothing is a recording; the
+                         piece never repeats
     commands.js          chat commands (Phase 27, split out of main.js at
                          birth per the size cap): /tp <x> <z> lands the
                          player at a SAFE spot — the surface in open-sky
@@ -443,7 +506,11 @@ src/
     icons.js             item icons for hud/screens: assets/items sprites,
                          isometric atlas-rendered block cubes (Phase 7
                          split), tinted potion bottles (Phase 18)
-    debug.js             fps, coords, chunk count
+    debug.js             fps, coords, chunk count, the day clock (WALL
+                         minutes:seconds — maps the cycle's solar fraction
+                         back through solarToClock, so sunset reads 15:00
+                         under the 15/5 split) and its day/sunset/night/
+                         sunrise label
 
 assets/
   block_atlas.png        real Java Edition textures
@@ -467,7 +534,16 @@ come from the SAME table (`world/shape_tables.js`). Never write a shape twice:
 if the mesher and the physics ever disagree, players walk into thin air.
 
 **No file over ~800 lines.** If one is growing past that, split it and note the split
-in this document. Phase 27 added TWO new files (`ui/chat.js` 129,
+in this document. The lively pass (twilight, sun/moon, cloud light,
+grading, mob voices, chill music) added TWO new files — `render/chunk_shader.js`
+(324, the chunk material patch moved VERBATIM out of lighting.js: **the
+long-mandated lighting cut is DONE**, lighting.js is 735 after gaining the
+twilight code) and `systems/mob_voices.js` (196) — and left everything it
+touched under the cap: `render/sky_fx.js` 744, `render/post_fx.js` 411,
+`systems/music.js` 472 (rewritten), `systems/audio.js` 770 (+8: the
+`layer()` entry), `entities/mobs.js` 793 (+6: the voice hook — **at the
+tilde; its next growth must take the animate() limb routines out**).
+Phase 27 added TWO new files (`ui/chat.js` 129,
 `systems/commands.js` 95 — the command logic split out of main.js AT BIRTH:
 the chat wiring had taken main to 875, and moving /tp into its own system
 brought it back to 802, sitting right on the tilde; **if main.js grows
