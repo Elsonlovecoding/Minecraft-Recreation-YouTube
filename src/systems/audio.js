@@ -429,10 +429,6 @@ class Audio {
         lowpass: m.body * 4 },
       { kind: 'noise', at: 0.03, filterType: 'highpass', frequency: 2600 * p,
         seconds: 0.10, volume: 0.22 * m.bright },
-      // The weight of the block dropping out: a low thud under the crumble,
-      // so a break lands in the chest and not only in the ear.
-      { kind: 'noise', filterType: 'lowpass', frequency: m.body * p * 1.1,
-        seconds: 0.16, volume: 0.55, attack: 0.001 },
     ], { place, volume: volume * AUDIO.BREAK_VOLUME, key: `break:${group}` });
   }
 
@@ -475,14 +471,10 @@ class Audio {
   // The wooden thwack of a landed melee hit.
   hit(place, volume = 1) {
     return playLayer('hit', [
-      // A bright click on the front edge, then the body of the thwack a
-      // little lower than it was — the connect should be felt.
-      { kind: 'noise', filterType: 'highpass', frequency: 2800, seconds: 0.025,
-        volume: 0.4, attack: 0.0005 },
       { kind: 'noise', filterType: 'lowpass', frequency: 900, seconds: 0.09,
         volume: 0.7 },
-      { kind: 'tone', type: 'triangle', freq: 190, freqTo: 85, seconds: 0.11,
-        volume: 0.34, lowpass: 700 },
+      { kind: 'tone', type: 'triangle', freq: 220, freqTo: 110, seconds: 0.10,
+        volume: 0.32, lowpass: 700 },
     ], { place, volume });
   }
 

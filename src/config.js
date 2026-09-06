@@ -1023,31 +1023,6 @@ export const PLAYER = {
     CYCLES_PER_BLOCK: 0.35,     // stride cycles per block walked
     FADE_RATE: 8,               // 1/s bob fade in/out
   },
-  // Camera reactions (player/feel.js): spring-damped impulses, so each
-  // number is an energy that drains, never a pose that is held.
-  FEEL: {
-    ROLL_FREQ: 2.2,             // Hz of the roll spring (peak ~0.11 s in)
-    ROLL_DAMPING: 0.4,          // damping ratio (under 1 = one visible rebound)
-    HURT_ROLL: 2.0,             // rad/s roll impulse toward the attacker (~4.5°)
-    HURT_ROLL_BLIND: 1.0,       // ...for a hit with no direction (fall, fire)
-    HURT_TRAUMA: 0.55,          // shake energy a hit adds (jitter ~ energy²)
-    SHAKE_YAW: 0.05,            // rad of yaw tremble at full trauma
-    SHAKE_PITCH: 0.035,
-    SHAKE_SECONDS: 0.5,         // trauma drains to zero in this long
-    DIP_FREQ: 2.5,              // Hz of the vertical / forward springs
-    DIP_DAMPING: 0.6,
-    LAND_DIP: 4.5,              // blocks/s downward impulse for a full landing
-                                // (~0.14 blocks at the bottom)
-    LAND_FULL_FALL: 6,          // fall (blocks) that earns the full dip
-    LAND_MIN_FRACTION: 0.18,    // a hop's landing still gets this share
-    BREAK_DIP: 0.7,             // blocks/s: the block giving way
-    HIT_PUNCH: 1.6,             // blocks/s forward nudge on a landed hit
-    HIT_FOV_KICK: 2.5,          // degrees of instant FOV widening on a hit
-    CRIT_SCALE: 1.6,            // a critical's punch and kick multiplier
-    KICK_DECAY: 9,              // 1/s the FOV kick eases back
-    MAX_ROLL: 0.16,             // clamps (rad, blocks): stacked hits never
-    MAX_DIP: 0.35,              // flip or bury the view
-  },
 
   // Speeds (blocks per second)
   WALK_SPEED: 4.3,
@@ -3346,7 +3321,7 @@ export const PARTICLES = {
   CULL_DISTANCE: 72,              // never spawn further than this from the eye
   ATLAS_CROP: 0.25,               // block-break cubes sample a quarter tile
 
-  BREAK: { COUNT: 22, SIZE: 0.11, SPEED: 3.6, LIFE: [0.5, 1.1], GRAVITY: 1.0 },
+  BREAK: { COUNT: 14, SIZE: 0.11, SPEED: 3.0, LIFE: [0.5, 1.1], GRAVITY: 1.0 },
   PLACE: { COUNT: 7, SIZE: 0.09, SPEED: 1.4, LIFE: [0.25, 0.5], GRAVITY: 0.55 },
   STEP: { COUNT: 2, SIZE: 0.09, SPEED: 0.9, LIFE: [0.3, 0.6], GRAVITY: 0.8 },
   SPRINT_STEP_COUNT: 4,           // sprinting kicks up more
@@ -3355,7 +3330,7 @@ export const PARTICLES = {
                                   // put ~4.3 steps a second under the player,
                                   // faster than vanilla and part of why the
                                   // sprint loop read as a continuous noise)
-  LAND: { COUNT: 22, SIZE: 0.10, SPEED: 2.8, LIFE: [0.4, 0.8], GRAVITY: 0.9 },
+  LAND: { COUNT: 18, SIZE: 0.10, SPEED: 2.6, LIFE: [0.4, 0.8], GRAVITY: 0.9 },
   LAND_MIN_FALL: 1.2,             // blocks fallen before a landing burst shows
 
   SPLASH: { COUNT: 26, SIZE: 0.09, SPEED: 4.2, LIFE: [0.4, 0.9], GRAVITY: 1.1,

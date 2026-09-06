@@ -493,7 +493,6 @@ export function createInteraction({
       blockSoundGroup(def.name),
       { x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 },
     );
-    player.feel?.breakBlock(); // the view dips a hair as the block gives
     world.setBlock(target.x, target.y, target.z, BLOCK.AIR);
     // Shears harvest their own drop table where a block has one (Phase 21:
     // leaves give leaf blocks) and wear one durability for it, vanilla.

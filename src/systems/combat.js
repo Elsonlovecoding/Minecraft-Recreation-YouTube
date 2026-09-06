@@ -276,7 +276,6 @@ export function createCombat({
     if (mob.entity.damage(damage, dir.x, dir.z)) {
       const mp = mob.entity.position;
       audio.hit({ x: mp.x, y: mp.y + (mob.entity.def?.height ?? 1) / 2, z: mp.z });
-      player.feel?.hit(falling); // the view punches into a hit that lands
       stats.exhaust(STATS.EXHAUST_ATTACK);
       // Weapons and tools wear on a landed hit (the bow used as a club
       // doesn't, like vanilla; damageSelected no-ops for plain items).

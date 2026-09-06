@@ -247,20 +247,7 @@ src/
                          nothing and lose nothing
     controller.js        pointer-lock input, key bindings, the first-person
                          camera (bob, eye heights, FOV kick), fly mode, and
-                         the creative double-tap-space flight toggle; composes
-                         feel.js's offsets on top of the eye every frame
-    feel.js              the camera's physical reactions (the juice pass):
-                         spring-damped impulses — a roll toward the blow on
-                         damage (the vanilla damage tilt, plus a tremble), a
-                         dip that scales with the fall on landing, a forward
-                         punch + FOV kick on a melee hit that lands, a hair of
-                         dip as a block breaks. Springs are integrated in
-                         closed form (frame-rate independent), everything
-                         drains to exactly zero, MAX_ROLL/MAX_DIP clamp stacked
-                         hits. Fed by stats.damage (via the last knockback
-                         direction), controller (body.lastLanding),
-                         combat.attack and interaction.finishBreak; tunables
-                         in PLAYER.FEEL
+                         the creative double-tap-space flight toggle
     body.js              PlayerBody + findSpawnPosition (Phase 21 split out
                          of controller.js per the size cap — moved verbatim):
                          the AABB physics, swept collision against every
@@ -526,23 +513,8 @@ src/
                          sunrise label
 
 assets/
-  block_atlas.png        the block tiles — GENERATED original pixel art in
-                         the vanilla idiom (see tools/); docs/ATLAS_MAP.md is
-                         the index
+  block_atlas.png        real Java Edition textures
   entity/                mob textures
-
-tools/
-  gen_block_atlas.py     writes assets/block_atlas.png: every tile authored
-                         procedurally from a short palette + the brushes
-                         below (plus string-art sprites for the cutouts) —
-                         one painter per tile, the layout in build().
-                         Dependency-free Python 3; `--sheet out.png` renders
-                         a contact sheet. Edit this, never the PNG
-  atlas_paint.py         the brushes: deterministic tile-periodic hash noise
-                         (value noise / fbm / rank-quantised fields / Worley
-                         cells), the Tile class, and the material generators
-                         (speckle, cobble, bark, planks, bricks, ore
-                         clusters, bevelled metal)
 
 docs/
   SPEC.md                what we're building
@@ -718,9 +690,7 @@ Deploys to GitHub Pages unchanged.
 ## Adding a block
 
 1. Add to the registry in `world/blocks.js` with hardness, tool, drops
-2. Paint its tile in `tools/gen_block_atlas.py` (a new painter in `build()`
-   at the next free index), regenerate the atlas, register the tile index
-   in `render/atlas.js` and list it in `docs/ATLAS_MAP.md`
+2. Add its texture to the atlas and register the tile index in `render/atlas.js`
 3. If it is not a full cube, give it a `shape` (and, when the physics box
    differs, a `collision`) in `world/shapes.js` and mark it
    `special: 'shape'` — the generic emitter and the collision sweep both read
